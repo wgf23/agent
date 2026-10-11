@@ -8,6 +8,7 @@ const VERSION = "0.0.1";
 interface RunOptions {
 	model?: string;
 	maxSteps?: string;
+	yes?: boolean;
 }
 
 async function run(prompt: string, options: RunOptions): Promise<void> {
@@ -19,6 +20,7 @@ async function run(prompt: string, options: RunOptions): Promise<void> {
 		prompt,
 		model: options.model,
 		maxSteps,
+		yesAll: options.yes,
 	});
 }
 
@@ -27,9 +29,13 @@ const program = new Command();
 program
 	.name("my-agent")
 	.description("A terminal coding agent powered by DeepSeek.")
+	// Without positional options the root's -m/--max-steps/--yes swallow the same
+	// flags when they follow the `run` subcommand.
+	.enablePositionalOptions()
 	.argument("[prompt]", "prompt to run")
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps", "25")
+	.option("--yes", "auto-approve every tool call")
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
@@ -48,6 +54,7 @@ program
 	.argument("<prompt>", "prompt to run")
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps", "25")
+	.option("--yes", "auto-approve every tool call")
 	.action(async (prompt: string, options: RunOptions) => {
 		await run(prompt, options);
 	});

@@ -1,6 +1,12 @@
 import { runAgent } from "../agent/agent.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { loadConfig, type ModelSelection } from "../config/config.js";
+import { readProjectConfig } from "../config/project-file.js";
+import {
+	createAuthorizer,
+	headlessApproval,
+} from "../permissions/authorizer.js";
+import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import { resolveModelSpec } from "../providers/presets.js";
 
@@ -8,6 +14,7 @@ export interface RunHeadlessOptions {
 	prompt: string;
 	model?: string;
 	maxSteps?: number;
+	yesAll?: boolean;
 }
 
 export function exitCodeForReason(reason: AgentDoneReason): number {
@@ -40,6 +47,24 @@ export async function runHeadless(
 		apiKey: config.apiKey,
 	});
 
+	const workspaceRoot = process.cwd();
+	const project = await readProjectConfig(workspaceRoot);
+	if (!project.ok) {
+		console.error(project.error);
+		return 1;
+	}
+	const yesAll = options.yesAll ?? false;
+	const rules = {
+		...defaultRules(),
+		...(project.config.permissions ?? {}),
+	};
+	const authorize = createAuthorizer({
+		workspaceRoot,
+		rules,
+		approval: headlessApproval({ yesAll }),
+		yesAll,
+	});
+
 	const controller = new AbortController();
 	const onSigint = (): void => controller.abort();
 	process.on("SIGINT", onSigint);
@@ -49,10 +74,11 @@ export async function runHeadless(
 		const result = await runAgent({
 			provider,
 			model: config.model,
-			workspaceRoot: process.cwd(),
+			workspaceRoot,
 			prompt: options.prompt,
 			maxSteps: options.maxSteps,
 			signal: controller.signal,
+			authorize,
 			onEvent: (event: AgentEvent) => {
 				switch (event.type) {
 					case "text_delta":
