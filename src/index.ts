@@ -1,10 +1,26 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { loadConfig, type ModelSelection } from "./config/config.js";
-import { resolveModelSpec } from "./providers/presets.js";
+import { runHeadless } from "./cli/run.js";
 
 // The bundle ships to dist/, so package.json is not reliably adjacent at runtime.
 const VERSION = "0.0.1";
+
+interface RunOptions {
+	model?: string;
+	maxSteps?: string;
+}
+
+async function run(prompt: string, options: RunOptions): Promise<void> {
+	const maxSteps =
+		options.maxSteps === undefined
+			? undefined
+			: Number.parseInt(options.maxSteps, 10);
+	process.exitCode = await runHeadless({
+		prompt,
+		model: options.model,
+		maxSteps,
+	});
+}
 
 const program = new Command();
 
@@ -13,8 +29,9 @@ program
 	.description("A terminal coding agent powered by DeepSeek.")
 	.argument("[prompt]", "prompt to run")
 	.option("-m, --model <model>", "model to use")
+	.option("--max-steps <steps>", "maximum agent steps", "25")
 	.version(VERSION, "-V, --version")
-	.action((prompt: string | undefined, options: { model?: string }) => {
+	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
 			console.log(`my-agent v${VERSION}`);
 			console.log(
@@ -22,26 +39,17 @@ program
 			);
 			return;
 		}
-
-		let selection: ModelSelection | undefined;
-		if (options.model) {
-			const resolved = resolveModelSpec(options.model);
-			if (!resolved.ok) {
-				console.error(resolved.error);
-				process.exitCode = 1;
-				return;
-			}
-			selection = { preset: resolved.preset, model: resolved.model };
-		}
-
-		const result = loadConfig(selection);
-		if (!result.ok) {
-			console.error(result.error);
-			process.exitCode = 1;
-			return;
-		}
-
-		console.log("Agent not implemented yet (Phase 3).");
+		await run(prompt, options);
 	});
 
-program.parse();
+program
+	.command("run")
+	.description("Run a prompt headlessly and stream the answer")
+	.argument("<prompt>", "prompt to run")
+	.option("-m, --model <model>", "model to use")
+	.option("--max-steps <steps>", "maximum agent steps", "25")
+	.action(async (prompt: string, options: RunOptions) => {
+		await run(prompt, options);
+	});
+
+await program.parseAsync(process.argv);
