@@ -1,5 +1,11 @@
+import {
+	type BuiltinPresetName,
+	DEFAULT_PRESET,
+	PRESETS,
+} from "../providers/presets.js";
+
 export interface ProviderConfig {
-	preset: "deepseek";
+	preset: BuiltinPresetName;
 	model: string;
 	baseURL: string;
 	apiKey: string;
@@ -13,13 +19,23 @@ export type ConfigResult =
 	| { ok: true; config: ResolvedConfig }
 	| { ok: false; error: string };
 
-export function loadConfig(): ConfigResult {
-	const apiKey = process.env.DEEPSEEK_API_KEY;
+export interface ModelSelection {
+	preset: BuiltinPresetName;
+	model: string;
+}
+
+export function loadConfig(selection?: ModelSelection): ConfigResult {
+	const chosen: ModelSelection = selection ?? {
+		preset: DEFAULT_PRESET,
+		model: PRESETS[DEFAULT_PRESET].defaultModel,
+	};
+	const preset = PRESETS[chosen.preset];
+
+	const apiKey = process.env[preset.apiKeyEnv];
 	if (!apiKey) {
 		return {
 			ok: false,
-			error:
-				"Missing DEEPSEEK_API_KEY. Set it in your environment and try again.",
+			error: `Missing ${preset.apiKeyEnv}. Set it in your environment and try again.`,
 		};
 	}
 
@@ -27,9 +43,9 @@ export function loadConfig(): ConfigResult {
 		ok: true,
 		config: {
 			provider: {
-				preset: "deepseek",
-				model: "deepseek-flash",
-				baseURL: "https://api.deepseek.com",
+				preset: chosen.preset,
+				model: chosen.model,
+				baseURL: preset.baseURL,
 				apiKey,
 			},
 		},
