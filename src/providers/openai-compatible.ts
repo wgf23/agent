@@ -4,6 +4,7 @@ import type {
 	ChatCompletionMessageParam,
 	ChatCompletionTool,
 } from "openai/resources/chat/completions";
+import { friendlyProviderError } from "./errors.js";
 import type {
 	AssistantMessage,
 	FinishReason,
@@ -206,6 +207,7 @@ export interface OpenAICompatibleOptions {
 	id?: string;
 	baseURL: string;
 	apiKey: string;
+	apiKeyEnv: string;
 }
 
 export function createOpenAICompatibleProvider(
@@ -216,6 +218,7 @@ export function createOpenAICompatibleProvider(
 		baseURL: options.baseURL,
 		maxRetries: 3,
 	});
+	const debug = process.env.MY_AGENT_DEBUG !== undefined;
 
 	return {
 		id: options.id ?? "openai-compatible",
@@ -236,10 +239,23 @@ export function createOpenAICompatibleProvider(
 				params.reasoning_effort = req.reasoningEffort;
 			}
 
-			const stream = await client.chat.completions.create(params, {
-				signal: req.signal,
-			});
-			yield* mapChunks(stream as AsyncIterable<ChatChunk>);
+			try {
+				const stream = await client.chat.completions.create(params, {
+					signal: req.signal,
+				});
+				yield* mapChunks(stream as AsyncIterable<ChatChunk>);
+			} catch (error) {
+				if (req.signal?.aborted) return;
+				yield {
+					type: "error",
+					message: friendlyProviderError(error, {
+						baseURL: options.baseURL,
+						apiKeyEnv: options.apiKeyEnv,
+						debug,
+					}),
+					retryable: false,
+				};
+			}
 		},
 	};
 }

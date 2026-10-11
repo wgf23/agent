@@ -1,10 +1,9 @@
+import os from "node:os";
 import { render } from "ink";
-import { loadConfig, type ModelSelection } from "../config/config.js";
-import { readProjectConfig } from "../config/project-file.js";
+import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
-import { resolveModelSpec } from "../providers/presets.js";
 import { App } from "./App.js";
 import { createApprovalBridge } from "./approval.js";
 
@@ -15,41 +14,36 @@ export interface RunTuiOptions {
 }
 
 export async function runTui(options: RunTuiOptions): Promise<void> {
-	let selection: ModelSelection | undefined;
-	if (options.model !== undefined) {
-		const resolved = resolveModelSpec(options.model);
-		if (!resolved.ok) {
-			console.error(resolved.error);
-			process.exitCode = 1;
-			return;
-		}
-		selection = { preset: resolved.preset, model: resolved.model };
-	}
-
-	const loaded = loadConfig(selection);
-	if (!loaded.ok) {
-		console.error(loaded.error);
-		process.exitCode = 1;
-		return;
-	}
-
-	const config = loaded.config.provider;
-	const provider = createOpenAICompatibleProvider({
-		id: config.preset,
-		baseURL: config.baseURL,
-		apiKey: config.apiKey,
+	const resolved = resolveConfig({
+		cliModel: options.model,
+		cliMaxSteps: options.maxSteps,
+		workspaceRoot: options.workspaceRoot,
+		env: process.env,
+		homeDir: os.homedir(),
 	});
-
-	const project = await readProjectConfig(options.workspaceRoot);
-	if (!project.ok) {
-		console.error(project.error);
+	if (!resolved.ok) {
+		console.error(resolved.error);
 		process.exitCode = 1;
 		return;
 	}
+
+	const { provider: settings, apiKey, permissions } = resolved.config;
+	if (apiKey === undefined) {
+		console.error(missingApiKeyMessage(settings.apiKeyEnv));
+		process.exitCode = 1;
+		return;
+	}
+
+	const provider = createOpenAICompatibleProvider({
+		id: settings.preset,
+		baseURL: settings.baseURL,
+		apiKey,
+		apiKeyEnv: settings.apiKeyEnv,
+	});
 
 	const rules = {
 		...defaultRules(),
-		...(project.config.permissions ?? {}),
+		...permissions,
 	};
 	const approval = createApprovalBridge();
 	const authorize = createAuthorizer({
@@ -59,14 +53,22 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		yesAll: false,
 	});
 
+	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
+	// endpoints, so only forward them when the deepseek preset is active.
+	const deepseek = settings.preset === "deepseek";
+
 	const instance = render(
 		<App
 			provider={provider}
 			authorize={authorize}
 			approval={approval}
-			model={config.model}
+			model={settings.model}
 			workspaceRoot={options.workspaceRoot}
-			maxSteps={options.maxSteps}
+			maxSteps={settings.maxSteps}
+			thinking={deepseek ? settings.thinking : undefined}
+			reasoningEffort={deepseek ? settings.reasoningEffort : undefined}
+			baseURL={settings.baseURL}
+			apiKeyEnv={settings.apiKeyEnv}
 		/>,
 	);
 	await instance.waitUntilExit();

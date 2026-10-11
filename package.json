@@ -3,15 +3,21 @@
 	"version": "0.0.1",
 	"type": "module",
 	"private": true,
+	"license": "UNLICENSED",
+	"main": "dist/index.js",
 	"bin": {
 		"my-agent": "dist/index.js"
 	},
+	"files": [
+		"dist",
+		"README.md"
+	],
 	"engines": {
 		"node": ">=20"
 	},
 	"scripts": {
 		"dev": "tsx src/index.ts",
-		"build": "tsup src/index.ts --format esm --no-dts --out-dir dist",
+		"build": "tsup && node scripts/postbuild.mjs",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",

@@ -3,8 +3,13 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
-import type { Message, Provider } from "../providers/types.js";
-import { errorMessage } from "../util/errors.js";
+import { friendlyProviderError } from "../providers/errors.js";
+import type {
+	Message,
+	Provider,
+	ReasoningEffort,
+	ThinkingSetting,
+} from "../providers/types.js";
 import type { ApprovalBridge } from "./approval.js";
 import { MessageList } from "./components/MessageList.js";
 import { PermissionDialog } from "./components/PermissionDialog.js";
@@ -19,6 +24,10 @@ export interface AppProps {
 	model: string;
 	workspaceRoot: string;
 	maxSteps?: number;
+	thinking?: ThinkingSetting;
+	reasoningEffort?: ReasoningEffort;
+	baseURL?: string;
+	apiKeyEnv?: string;
 	onExit?: () => void;
 }
 
@@ -36,6 +45,10 @@ export function App({
 	model,
 	workspaceRoot,
 	maxSteps,
+	thinking,
+	reasoningEffort,
+	baseURL,
+	apiKeyEnv,
 	onExit,
 }: AppProps): ReactElement {
 	const app = useApp();
@@ -71,6 +84,8 @@ export function App({
 					prompt: text,
 					history: historyRef.current,
 					maxSteps,
+					thinking,
+					reasoningEffort,
 					signal: controller.signal,
 					authorize,
 					onEvent: (event) => dispatch({ type: "agent", event }),
@@ -79,7 +94,14 @@ export function App({
 			} catch (error) {
 				dispatch({
 					type: "agent",
-					event: { type: "error", message: errorMessage(error) },
+					event: {
+						type: "error",
+						message: friendlyProviderError(error, {
+							baseURL: baseURL ?? "",
+							apiKeyEnv: apiKeyEnv ?? "DEEPSEEK_API_KEY",
+							debug: process.env.MY_AGENT_DEBUG !== undefined,
+						}),
+					},
 				});
 			} finally {
 				if (controllerRef.current === controller) {
@@ -87,7 +109,17 @@ export function App({
 				}
 			}
 		},
-		[provider, model, workspaceRoot, maxSteps, authorize],
+		[
+			provider,
+			model,
+			workspaceRoot,
+			maxSteps,
+			thinking,
+			reasoningEffort,
+			baseURL,
+			apiKeyEnv,
+			authorize,
+		],
 	);
 
 	const clear = useCallback(() => {

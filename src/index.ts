@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
 import { runTui } from "./tui/index.js";
 
@@ -35,7 +36,7 @@ program
 	.enablePositionalOptions()
 	.argument("[prompt]", "prompt to run")
 	.option("-m, --model <model>", "model to use")
-	.option("--max-steps <steps>", "maximum agent steps", "25")
+	.option("--max-steps <steps>", "maximum agent steps")
 	.option("--yes", "auto-approve every tool call")
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
@@ -55,10 +56,19 @@ program
 	.description("Run a prompt headlessly and stream the answer")
 	.argument("<prompt>", "prompt to run")
 	.option("-m, --model <model>", "model to use")
-	.option("--max-steps <steps>", "maximum agent steps", "25")
+	.option("--max-steps <steps>", "maximum agent steps")
 	.option("--yes", "auto-approve every tool call")
 	.action(async (prompt: string, options: RunOptions) => {
 		await run(prompt, options);
+	});
+
+program
+	.command("config")
+	.description(
+		"Print the resolved configuration and where each value came from",
+	)
+	.action(() => {
+		process.exitCode = runConfigCommand();
 	});
 
 await program.parseAsync(process.argv);

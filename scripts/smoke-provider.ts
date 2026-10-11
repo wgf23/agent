@@ -15,6 +15,7 @@ const provider = createOpenAICompatibleProvider({
 	id: preset.name,
 	baseURL: preset.baseURL,
 	apiKey,
+	apiKeyEnv: preset.apiKeyEnv,
 });
 
 const getTime: ToolDefinition = {

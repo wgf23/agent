@@ -1,8 +1,6 @@
-import {
-	type BuiltinPresetName,
-	DEFAULT_PRESET,
-	PRESETS,
-} from "../providers/presets.js";
+import os from "node:os";
+import type { BuiltinPresetName } from "../providers/presets.js";
+import { missingApiKeyMessage, resolveConfig } from "./resolve.js";
 
 export interface ProviderConfig {
 	preset: BuiltinPresetName;
@@ -25,27 +23,29 @@ export interface ModelSelection {
 }
 
 export function loadConfig(selection?: ModelSelection): ConfigResult {
-	const chosen: ModelSelection = selection ?? {
-		preset: DEFAULT_PRESET,
-		model: PRESETS[DEFAULT_PRESET].defaultModel,
-	};
-	const preset = PRESETS[chosen.preset];
+	const resolved = resolveConfig({
+		cliModel:
+			selection === undefined
+				? undefined
+				: `${selection.preset}/${selection.model}`,
+		workspaceRoot: process.cwd(),
+		env: process.env,
+		homeDir: os.homedir(),
+	});
+	if (!resolved.ok) return { ok: false, error: resolved.error };
 
-	const apiKey = process.env[preset.apiKeyEnv];
-	if (!apiKey) {
-		return {
-			ok: false,
-			error: `Missing ${preset.apiKeyEnv}. Set it in your environment and try again.`,
-		};
+	const { provider, apiKey } = resolved.config;
+	if (apiKey === undefined) {
+		return { ok: false, error: missingApiKeyMessage(provider.apiKeyEnv) };
 	}
 
 	return {
 		ok: true,
 		config: {
 			provider: {
-				preset: chosen.preset,
-				model: chosen.model,
-				baseURL: preset.baseURL,
+				preset: provider.preset,
+				model: provider.model,
+				baseURL: provider.baseURL,
 				apiKey,
 			},
 		},

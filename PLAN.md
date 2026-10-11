@@ -264,7 +264,7 @@ my-agent/
 
 ### 3.4 配置示例
 
-`my-agent.json`（DeepSeek 预设）：
+`my-agent.json`（项目配置，可设置 provider 与 permissions）：
 
 ```json
 {
@@ -272,12 +272,29 @@ my-agent/
     "preset": "deepseek",
     "model": "deepseek-flash",
     "thinking": "enabled",
-    "reasoningEffort": "high"
+    "reasoningEffort": "high",
+    "maxSteps": 25
   },
   "permissions": {
-    "bash": { "git status*": "allow", "rm *": "deny", "*": "ask" },
+    "bash": [
+      { "pattern": "git status*", "action": "allow" },
+      { "pattern": "rm *", "action": "deny" }
+    ],
     "write_file": "ask",
     "edit_file": "ask"
+  }
+}
+```
+
+权限规则按顺序匹配，首条命中的 `pattern` 生效；`pattern` 支持 `*` 通配，可直接写成标量动作（如 `"write_file": "ask"`）。
+
+全局配置 `~/.config/my-agent/config.json`（只能设置 provider，不能设置 permissions）：
+
+```json
+{
+  "provider": {
+    "thinking": "disabled",
+    "reasoningEffort": "low"
   }
 }
 ```
@@ -293,6 +310,8 @@ my-agent/
   }
 }
 ```
+
+API Key 只能来自环境变量（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`，或 `apiKeyEnv` 指向的变量），配置文件中不允许出现 `apiKey` 字段；`MY_AGENT_MODEL` 可覆盖模型名。
 
 配置优先级：CLI 参数 > 环境变量 > 项目 `my-agent.json` > 全局 `~/.config/my-agent/config.json` > 内置默认值。
 
