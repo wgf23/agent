@@ -19,7 +19,10 @@
 	},
 	"dependencies": {
 		"commander": "^15.0.0",
-		"openai": "^7.32.0"
+		"fast-glob": "^3.3.3",
+		"ignore": "^7.0.12",
+		"openai": "^7.32.0",
+		"zod": "^4.6.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.15",
