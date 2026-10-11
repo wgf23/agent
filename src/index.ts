@@ -1,11 +1,15 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
 import { runTui } from "./tui/index.js";
 
-// The bundle ships to dist/, so package.json is not reliably adjacent at runtime.
-const VERSION = "0.0.1";
+// src/ and dist/ both sit one level below package.json, so this resolves from
+// either the tsx source run or the built bundle.
+const { version: VERSION } = JSON.parse(
+	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
 
 interface RunOptions {
 	model?: string;

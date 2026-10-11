@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseRgLine } from "../../src/tools/grep.js";
 import { execute } from "../../src/tools/registry.js";
 import { makeWorkspace, removeWorkspace } from "./helpers.js";
 
@@ -70,6 +71,28 @@ describe("grep", () => {
 		expect(insensitive).toEqual({
 			ok: true,
 			output: "a.txt:1:TODO one\nb.txt:1:TODO two\nc.txt:1:todo lower",
+		});
+	});
+});
+
+describe("parseRgLine", () => {
+	it("keeps a Windows drive letter out of the file/line separator", () => {
+		expect(
+			parseRgLine("C:\\src\\tools\\registry.ts:42:const value = 1;"),
+		).toEqual({
+			file: "C:\\src\\tools\\registry.ts",
+			lineNumber: "42",
+			text: "const value = 1;",
+		});
+	});
+
+	it("parses a workspace-relative file:line:text", () => {
+		expect(
+			parseRgLine("src/tools/grep.ts:7:export function parseRgLine("),
+		).toEqual({
+			file: "src/tools/grep.ts",
+			lineNumber: "7",
+			text: "export function parseRgLine(",
 		});
 	});
 });

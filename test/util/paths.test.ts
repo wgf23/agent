@@ -49,31 +49,40 @@ describe("resolveInWorkspace", () => {
 		);
 	});
 
-	it("rejects a symlink pointing to /etc", async () => {
-		await symlink("/etc", join(workspace, "etc-link"));
-		expect(() => resolveInWorkspace(workspace, "etc-link")).toThrow(
-			"escapes the workspace through a symlink",
-		);
-		expect(() => resolveInWorkspace(workspace, "etc-link/passwd")).toThrow(
-			"escapes the workspace through a symlink",
-		);
-	});
+	it.skipIf(process.platform === "win32")(
+		"rejects a symlink pointing to /etc (skipped on Windows: no /etc and symlinks need elevation)",
+		async () => {
+			await symlink("/etc", join(workspace, "etc-link"));
+			expect(() => resolveInWorkspace(workspace, "etc-link")).toThrow(
+				"escapes the workspace through a symlink",
+			);
+			expect(() => resolveInWorkspace(workspace, "etc-link/passwd")).toThrow(
+				"escapes the workspace through a symlink",
+			);
+		},
+	);
 
-	it("rejects a symlink to a directory outside the workspace", async () => {
-		const outside = await makeWorkspace("my-agent-outside-");
-		await writeFile(join(outside, "secret.txt"), "x", "utf8");
-		await symlink(outside, join(workspace, "outside-link"));
-		expect(() =>
-			resolveInWorkspace(workspace, "outside-link/secret.txt"),
-		).toThrow("escapes the workspace through a symlink");
-		await removeWorkspace(outside);
-	});
+	it.skipIf(process.platform === "win32")(
+		"rejects a symlink to a directory outside the workspace (skipped on Windows: symlinks need elevation)",
+		async () => {
+			const outside = await makeWorkspace("my-agent-outside-");
+			await writeFile(join(outside, "secret.txt"), "x", "utf8");
+			await symlink(outside, join(workspace, "outside-link"));
+			expect(() =>
+				resolveInWorkspace(workspace, "outside-link/secret.txt"),
+			).toThrow("escapes the workspace through a symlink");
+			await removeWorkspace(outside);
+		},
+	);
 
-	it("allows a symlink that points inside the workspace", async () => {
-		await mkdir(join(workspace, "real"));
-		await symlink(join(workspace, "real"), join(workspace, "inside-link"));
-		expect(resolveInWorkspace(workspace, "inside-link/file.txt")).toBe(
-			join(realpathSync(workspace), "inside-link", "file.txt"),
-		);
-	});
+	it.skipIf(process.platform === "win32")(
+		"allows a symlink that points inside the workspace (skipped on Windows: symlinks need elevation)",
+		async () => {
+			await mkdir(join(workspace, "real"));
+			await symlink(join(workspace, "real"), join(workspace, "inside-link"));
+			expect(resolveInWorkspace(workspace, "inside-link/file.txt")).toBe(
+				join(realpathSync(workspace), "inside-link", "file.txt"),
+			);
+		},
+	);
 });

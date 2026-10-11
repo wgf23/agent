@@ -86,6 +86,17 @@ function runCommand(
 
 		const kill = () => {
 			if (child.pid === undefined) return;
+			// Windows has no process group here; taskkill walks the child tree.
+			// spawn reports a missing taskkill through its error event, not a throw.
+			if (process.platform === "win32") {
+				const killer = spawn(
+					"taskkill",
+					["/pid", String(child.pid), "/T", "/F"],
+					{ stdio: "ignore" },
+				);
+				killer.on("error", () => child.kill());
+				return;
+			}
 			try {
 				process.kill(-child.pid, "SIGKILL");
 			} catch {

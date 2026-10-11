@@ -42,6 +42,19 @@ describe("read_file", () => {
 		expect(result).toEqual({ ok: true, output: "2\tb\n3\tc" });
 	});
 
+	it("numbers CRLF lines and keeps the carriage returns", async () => {
+		await writeFile(join(workspace, "crlf.txt"), "alpha\r\nbeta\r\n", "utf8");
+		const result = await execute(
+			"read_file",
+			{ path: "crlf.txt" },
+			{ workspaceRoot: workspace },
+		);
+		expect(result).toEqual({
+			ok: true,
+			output: "1\talpha\r\n2\tbeta\r\n3\t",
+		});
+	});
+
 	it("errors on a missing file", async () => {
 		const result = await execute(
 			"read_file",

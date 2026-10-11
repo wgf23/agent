@@ -108,7 +108,9 @@ If `<project root>/AGENTS.md` exists, its contents are added to the system promp
 ## Known limits
 
 - `bash` is not sandboxed. It runs with your user's permissions; that is why it asks first.
+- `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
 - The context is not summarized. When it grows past the budget, older tool output is replaced with a placeholder.
+- The TUI keeps one conversation per run. There is no session persistence or resume.
 
 ## Development
 

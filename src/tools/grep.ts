@@ -141,12 +141,19 @@ function runRipgrep(
 	return { ok: true, matches };
 }
 
-function parseRgLine(
+export function parseRgLine(
 	line: string,
 ): { file: string; lineNumber: string; text: string } | undefined {
-	const match = /^(.*?):(\d+):(.*)$/.exec(line);
+	// A Windows path begins with a drive letter, so its colon belongs to the file
+	// name rather than the file/line separator. Match on the remainder.
+	const drive = /^[A-Za-z]:[\\/]/.test(line) ? 2 : 0;
+	const match = /^(.*?):(\d+):(.*)$/.exec(line.slice(drive));
 	if (!match) return undefined;
-	return { file: match[1], lineNumber: match[2], text: match[3] };
+	return {
+		file: line.slice(0, drive) + match[1],
+		lineNumber: match[2],
+		text: match[3],
+	};
 }
 
 async function runJsSearch(

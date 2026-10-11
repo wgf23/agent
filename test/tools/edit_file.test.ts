@@ -31,6 +31,22 @@ describe("edit_file", () => {
 		);
 	});
 
+	it("keeps CRLF line endings on a single-line replacement", async () => {
+		await writeFile(join(workspace, "crlf.txt"), "one\r\ntwo\r\n", "utf8");
+		const result = await execute(
+			"edit_file",
+			{ path: "crlf.txt", old_string: "two", new_string: "2" },
+			{ workspaceRoot: workspace },
+		);
+		expect(result).toEqual({
+			ok: true,
+			output: "Replaced 1 occurrence(s) in crlf.txt",
+		});
+		expect(await readFile(join(workspace, "crlf.txt"), "utf8")).toBe(
+			"one\r\n2\r\n",
+		);
+	});
+
 	it("errors when old_string is not found", async () => {
 		await writeFile(join(workspace, "f.txt"), "hello", "utf8");
 		const result = await execute(

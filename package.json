@@ -1,6 +1,6 @@
 {
 	"name": "my-agent",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"type": "module",
 	"private": true,
 	"license": "UNLICENSED",
@@ -21,7 +21,8 @@
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
-		"smoke:provider": "tsx scripts/smoke-provider.ts"
+		"smoke:provider": "tsx scripts/smoke-provider.ts",
+		"e2e": "tsx scripts/e2e.ts"
 	},
 	"dependencies": {
 		"commander": "^15.0.0",

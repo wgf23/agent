@@ -14,6 +14,7 @@ export interface RunHeadlessOptions {
 	model?: string;
 	maxSteps?: number;
 	yesAll?: boolean;
+	onEvent?: (event: AgentEvent) => void;
 }
 
 export function exitCodeForReason(reason: AgentDoneReason): number {
@@ -85,6 +86,7 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			onEvent: (event: AgentEvent) => {
+				options.onEvent?.(event);
 				switch (event.type) {
 					case "text_delta":
 						process.stdout.write(event.text);
