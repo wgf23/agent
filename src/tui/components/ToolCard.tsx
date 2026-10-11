@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
 import { addedLines, lineDiff } from "../diff.js";
+import { capUiOutput } from "../output.js";
 import type { ToolStatus, TuiToolCall } from "../state.js";
 import { argString } from "../summarize.js";
 import { Diff } from "./Diff.js";
@@ -61,7 +62,7 @@ function ToolBody({ card, expanded }: ToolCardProps): ReactElement | null {
 		}
 	}
 	if (card.output === "") return null;
-	const lines = card.output.split("\n");
+	const lines = capUiOutput(card.output).split("\n");
 	const shown = expanded ? lines : lines.slice(0, OUTPUT_PREVIEW_LINES);
 	const hidden = lines.length - shown.length;
 	const color =

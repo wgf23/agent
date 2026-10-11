@@ -18,6 +18,7 @@ import {
 import { defaultRules } from "../../src/permissions/rules.js";
 import type { Provider } from "../../src/providers/types.js";
 import { App, type AppProps } from "../../src/tui/App.js";
+import { createApprovalBridge } from "../../src/tui/approval.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
@@ -43,6 +44,7 @@ function app(provider: Provider, extra: Partial<AppProps> = {}) {
 		<App
 			provider={provider}
 			authorize={readOnlyAuthorize}
+			approval={createApprovalBridge()}
 			model="deepseek-flash"
 			workspaceRoot="/ws"
 			{...extra}

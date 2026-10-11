@@ -15,6 +15,7 @@ export interface ApprovalRequest {
 	toolName: string;
 	subject: string;
 	dangerous: boolean;
+	rule: string | null;
 }
 
 export type ApprovalDecision = ApprovalChoice | { deny: string };
@@ -49,21 +50,25 @@ export function createAuthorizer(options: AuthorizerOptions): Authorize {
 		}
 
 		const dangerous = call.name === "bash" && isDangerousCommand(subject);
+		const pattern = rulePattern(call.name, subject);
 
 		if (action === "allow" && !dangerous) {
 			return { allowed: true };
 		}
 
-		if (options.yesAll) {
-			await options.approval({ toolName: call.name, subject, dangerous });
-			return { allowed: true };
-		}
-
-		const decision = await options.approval({
+		const request = {
 			toolName: call.name,
 			subject,
 			dangerous,
-		});
+			rule: dangerous ? null : pattern,
+		};
+
+		if (options.yesAll) {
+			await options.approval(request);
+			return { allowed: true };
+		}
+
+		const decision = await options.approval(request);
 
 		if (typeof decision === "object") {
 			return { allowed: false, reason: decision.deny };
@@ -83,7 +88,6 @@ export function createAuthorizer(options: AuthorizerOptions): Authorize {
 			return { allowed: true };
 		}
 
-		const pattern = rulePattern(call.name, subject);
 		const entry: RuleEntry = { pattern, action: "allow" };
 		await addPermissionRule(options.workspaceRoot, call.name, pattern, "allow");
 		rules[call.name] = mergeRule(rules[call.name], entry);

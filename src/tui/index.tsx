@@ -1,14 +1,12 @@
 import { render } from "ink";
 import { loadConfig, type ModelSelection } from "../config/config.js";
 import { readProjectConfig } from "../config/project-file.js";
-import {
-	createAuthorizer,
-	headlessApproval,
-} from "../permissions/authorizer.js";
+import { createAuthorizer } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import { resolveModelSpec } from "../providers/presets.js";
 import { App } from "./App.js";
+import { createApprovalBridge } from "./approval.js";
 
 export interface RunTuiOptions {
 	workspaceRoot: string;
@@ -53,10 +51,11 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		...defaultRules(),
 		...(project.config.permissions ?? {}),
 	};
+	const approval = createApprovalBridge();
 	const authorize = createAuthorizer({
 		workspaceRoot: options.workspaceRoot,
 		rules,
-		approval: headlessApproval({ yesAll: false, log: () => {} }),
+		approval: approval.request,
 		yesAll: false,
 	});
 
@@ -64,6 +63,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		<App
 			provider={provider}
 			authorize={authorize}
+			approval={approval}
 			model={config.model}
 			workspaceRoot={options.workspaceRoot}
 			maxSteps={options.maxSteps}

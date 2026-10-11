@@ -5,7 +5,9 @@ import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { Message, Provider } from "../providers/types.js";
 import { errorMessage } from "../util/errors.js";
+import type { ApprovalBridge } from "./approval.js";
 import { MessageList } from "./components/MessageList.js";
+import { PermissionDialog } from "./components/PermissionDialog.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { initialTuiState, tuiReducer } from "./state.js";
@@ -13,6 +15,7 @@ import { initialTuiState, tuiReducer } from "./state.js";
 export interface AppProps {
 	provider: Provider;
 	authorize: Authorize;
+	approval: ApprovalBridge;
 	model: string;
 	workspaceRoot: string;
 	maxSteps?: number;
@@ -29,6 +32,7 @@ interface CommandContext {
 export function App({
 	provider,
 	authorize,
+	approval,
 	model,
 	workspaceRoot,
 	maxSteps,
@@ -47,6 +51,12 @@ export function App({
 	useEffect(() => {
 		return () => controllerRef.current?.abort();
 	}, []);
+
+	useEffect(() => {
+		return approval.subscribe((request) => {
+			dispatch({ type: "permission", request });
+		});
+	}, [approval]);
 
 	const send = useCallback(
 		async (text: string) => {
@@ -129,9 +139,18 @@ export function App({
 			{state.lastError !== null ? (
 				<Text color="red">{`! ${state.lastError}`}</Text>
 			) : null}
+			{state.permission !== null ? (
+				<PermissionDialog
+					request={state.permission}
+					onChoice={(choice) => approval.respond(choice)}
+				/>
+			) : null}
 			<PromptInput
 				value={state.input}
-				disabled={state.status === "streaming"}
+				disabled={
+					state.status === "streaming" || state.status === "awaiting_permission"
+				}
+				active={state.permission === null}
 				onChange={(text) => dispatch({ type: "set_input", text })}
 				onSubmit={submit}
 				onHistoryPrev={() => dispatch({ type: "history_prev" })}

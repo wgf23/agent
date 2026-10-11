@@ -1,7 +1,8 @@
 import type { AgentEvent } from "../agent/events.js";
+import type { PendingPermission } from "./approval.js";
 import { summarizeArgs } from "./summarize.js";
 
-export type TuiStatus = "idle" | "streaming" | "error";
+export type TuiStatus = "idle" | "streaming" | "error" | "awaiting_permission";
 
 export interface TuiUsage {
 	input: number;
@@ -62,6 +63,7 @@ export interface TuiState {
 	model: string;
 	expandTools: boolean;
 	expandReasoning: boolean;
+	permission: PendingPermission | null;
 }
 
 export interface TuiInit {
@@ -79,7 +81,8 @@ export type TuiAction =
 	| { type: "history_prev" }
 	| { type: "history_next" }
 	| { type: "toggle_tools" }
-	| { type: "toggle_reasoning" };
+	| { type: "toggle_reasoning" }
+	| { type: "permission"; request: PendingPermission | null };
 
 export const CANCEL_MESSAGE = "[cancelled]";
 
@@ -98,6 +101,7 @@ export function initialTuiState(init: TuiInit): TuiState {
 		model: init.model,
 		expandTools: false,
 		expandReasoning: false,
+		permission: null,
 	};
 }
 
@@ -188,6 +192,23 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
 		case "toggle_reasoning":
 			return { ...state, expandReasoning: !state.expandReasoning };
+
+		case "permission": {
+			if (action.request === null) {
+				if (state.permission === null) return state;
+				return {
+					...state,
+					permission: null,
+					status:
+						state.status === "awaiting_permission" ? "streaming" : state.status,
+				};
+			}
+			return {
+				...state,
+				permission: action.request,
+				status: "awaiting_permission",
+			};
+		}
 	}
 }
 

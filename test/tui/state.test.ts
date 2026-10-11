@@ -219,6 +219,26 @@ describe("tuiReducer", () => {
 		});
 	});
 
+	it("keeps earlier turns referentially stable across 500 text deltas", () => {
+		let state = tuiReducer(base(), { type: "submit", text: "hi", at: 1 });
+		const user = state.messages[0];
+		state = tuiReducer(state, {
+			type: "agent",
+			event: { type: "text_delta", text: "x" },
+		});
+		const firstAssistant = state.messages[1];
+
+		for (let index = 1; index < 500; index += 1) {
+			state = tuiReducer(state, {
+				type: "agent",
+				event: { type: "text_delta", text: "x" },
+			});
+		}
+
+		expect(state.messages[0]).toBe(user);
+		expect(state.messages[1]).not.toBe(firstAssistant);
+	});
+
 	it("toggles tool and reasoning expansion", () => {
 		const start = base();
 		expect(start.expandTools).toBe(false);

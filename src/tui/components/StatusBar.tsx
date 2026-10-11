@@ -33,6 +33,7 @@ export function StatusBar({
 	runStartedAt,
 }: StatusBarProps): ReactElement {
 	const streaming = status === "streaming";
+	const awaiting = status === "awaiting_permission";
 	const ratio = cacheHitRatio(usage);
 	const now = useTicker(streaming);
 	const frame = useSpinner(streaming);
@@ -50,6 +51,7 @@ export function StatusBar({
 				<Text dimColor>{`  cache ${Math.round(ratio * 100)}%`}</Text>
 			) : null}
 			{elapsed !== null ? <Text dimColor>{`  ${elapsed}s`}</Text> : null}
+			{awaiting ? <Text color="yellow"> waiting for approval</Text> : null}
 			{streaming ? (
 				<Text color="yellow">{`  ${SPINNER_FRAMES[frame]}`}</Text>
 			) : null}

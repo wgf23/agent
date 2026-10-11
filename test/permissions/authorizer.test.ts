@@ -69,6 +69,7 @@ describe("createAuthorizer", () => {
 			toolName: "write_file",
 			subject: "docs/x.md",
 			dangerous: false,
+			rule: "docs/x.md",
 		});
 	});
 
@@ -228,6 +229,7 @@ describe("headlessApproval", () => {
 			toolName: "write_file",
 			subject: "docs/x.md",
 			dangerous: false,
+			rule: "docs/x.md",
 		});
 
 		expect(decision).toEqual({
@@ -242,6 +244,7 @@ describe("headlessApproval", () => {
 			toolName: "write_file",
 			subject: "docs/x.md",
 			dangerous: false,
+			rule: "docs/x.md",
 		});
 
 		expect(decision).toBe("allow_once");
@@ -253,11 +256,21 @@ describe("headlessApproval", () => {
 		await headlessApproval({
 			yesAll: false,
 			log: (line) => denied.push(line),
-		})({ toolName: "write_file", subject: "docs/x.md", dangerous: false });
+		})({
+			toolName: "write_file",
+			subject: "docs/x.md",
+			dangerous: false,
+			rule: "docs/x.md",
+		});
 		await headlessApproval({
 			yesAll: true,
 			log: (line) => approved.push(line),
-		})({ toolName: "bash", subject: "rm -rf dist", dangerous: true });
+		})({
+			toolName: "bash",
+			subject: "rm -rf dist",
+			dangerous: true,
+			rule: null,
+		});
 
 		expect(denied).toEqual(["[approval] write_file docs/x.md denied\n"]);
 		expect(approved).toEqual([

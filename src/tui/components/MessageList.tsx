@@ -1,8 +1,10 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 import { Markdown } from "../markdown.js";
 import type { TuiMessage } from "../state.js";
 import { ToolCard } from "./ToolCard.js";
+
+export const MESSAGE_WINDOW = 60;
 
 export interface MessageListProps {
 	messages: TuiMessage[];
@@ -15,9 +17,14 @@ export function MessageList({
 	expandTools,
 	expandReasoning,
 }: MessageListProps): ReactElement {
+	const hidden = Math.max(0, messages.length - MESSAGE_WINDOW);
+	const visible = hidden > 0 ? messages.slice(hidden) : messages;
 	return (
 		<Box flexDirection="column">
-			{messages.map((message) => (
+			{hidden > 0 ? (
+				<Text dimColor>{`${hidden} earlier turns hidden`}</Text>
+			) : null}
+			{visible.map((message) => (
 				<MessageView
 					key={message.id}
 					message={message}
@@ -29,15 +36,17 @@ export function MessageList({
 	);
 }
 
-function MessageView({
-	message,
-	expandTools,
-	expandReasoning,
-}: {
+interface MessageViewProps {
 	message: TuiMessage;
 	expandTools: boolean;
 	expandReasoning: boolean;
-}): ReactElement {
+}
+
+const MessageView = memo(function MessageView({
+	message,
+	expandTools,
+	expandReasoning,
+}: MessageViewProps): ReactElement {
 	if (message.role === "user") {
 		return (
 			<Text color="green">
@@ -70,7 +79,7 @@ function MessageView({
 			))}
 		</Box>
 	);
-}
+});
 
 function ReasoningFold({
 	reasoning,
