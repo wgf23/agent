@@ -1,6 +1,7 @@
 {
 	"name": "my-agent",
 	"version": "0.1.0",
+	"packageManager": "pnpm@12.11.2",
 	"type": "module",
 	"private": true,
 	"license": "UNLICENSED",
