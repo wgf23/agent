@@ -74,17 +74,26 @@ describe("runAgent", () => {
 			],
 		]);
 
+		const events: AgentEvent[] = [];
 		const result = await runAgent({
 			provider,
 			model: "deepseek-flash",
 			workspaceRoot: workspace,
 			prompt: "read a.txt",
-			onEvent: () => {},
+			onEvent: (event) => events.push(event),
 		});
 
 		expect(result.reason).toBe("finished");
 		expect(result.steps).toBe(2);
 		expect(provider.requests).toHaveLength(2);
+		expect(events).toContainEqual({
+			type: "tool_finished",
+			id: "call_1",
+			name: "read_file",
+			ok: true,
+			status: "ok",
+			summary: "1\talpha",
+		});
 		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
 			role: "tool",
 			toolCallId: "call_1",
@@ -158,15 +167,25 @@ describe("runAgent", () => {
 			],
 		]);
 
+		const events: AgentEvent[] = [];
 		const result = await runAgent({
 			provider,
 			model: "deepseek-flash",
 			workspaceRoot: workspace,
 			prompt: "write new.txt",
-			onEvent: () => {},
+			onEvent: (event) => events.push(event),
 		});
 
 		expect(result.reason).toBe("finished");
+		expect(events).toContainEqual({
+			type: "tool_finished",
+			id: "call_1",
+			name: "write_file",
+			ok: false,
+			status: "blocked",
+			summary:
+				"Tool write_file is not authorized yet. Only read-only tools run in this mode.",
+		});
 		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
 			role: "tool",
 			toolCallId: "call_1",
@@ -194,16 +213,25 @@ describe("runAgent", () => {
 			],
 		]);
 
+		const events: AgentEvent[] = [];
 		const result = await runAgent({
 			provider,
 			model: "deepseek-flash",
 			workspaceRoot: workspace,
 			prompt: "read missing.txt",
-			onEvent: () => {},
+			onEvent: (event) => events.push(event),
 		});
 
 		expect(result.reason).toBe("finished");
 		expect(result.steps).toBe(2);
+		expect(events).toContainEqual({
+			type: "tool_finished",
+			id: "call_1",
+			name: "read_file",
+			ok: false,
+			status: "error",
+			summary: "read_file: file not found: missing.txt",
+		});
 		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
 			role: "tool",
 			toolCallId: "call_1",

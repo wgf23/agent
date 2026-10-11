@@ -13,6 +13,7 @@ export type AgentEvent =
 			id: string;
 			name: string;
 			ok: boolean;
+			status: "ok" | "error" | "blocked";
 			summary: string;
 	  }
 	| Usage

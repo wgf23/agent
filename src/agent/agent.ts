@@ -58,6 +58,7 @@ interface CallSlot {
 	call: ToolCallBlock;
 	tool?: Tool;
 	result?: ToolResult;
+	blocked?: boolean;
 }
 
 export async function runAgent(
@@ -222,6 +223,7 @@ export async function runAgent(
 				const decision = await authorize(slot.call, tool);
 				if (!decision.allowed) {
 					slot.result = { ok: false, error: decision.reason };
+					slot.blocked = true;
 				}
 			}
 
@@ -247,11 +249,16 @@ export async function runAgent(
 					ok: false as const,
 					error: "Tool did not run",
 				};
+				let status: "ok" | "error" | "blocked" = result.ok ? "ok" : "error";
+				if (slot.blocked === true) {
+					status = "blocked";
+				}
 				emit({
 					type: "tool_finished",
 					id: slot.call.id,
 					name: slot.call.name,
 					ok: result.ok,
+					status,
 					summary: summarize(result),
 				});
 				messages.push({

@@ -63,7 +63,7 @@ export async function runHeadless(
 						break;
 					case "tool_finished":
 						process.stderr.write(
-							`[tool] ${event.name} ${event.ok ? "ok" : "blocked"}: ${event.summary}\n`,
+							`[tool] ${event.name} ${event.status}: ${event.summary}\n`,
 						);
 						break;
 					case "error":
