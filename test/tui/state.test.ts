@@ -23,7 +23,7 @@ describe("tuiReducer", () => {
 
 		expect(state.messages).toEqual([
 			{ id: 1, role: "user", text: "hi" },
-			{ id: 2, role: "assistant", text: "Hello" },
+			{ id: 2, role: "assistant", text: "Hello", reasoning: "", tools: [] },
 		]);
 		expect(state.status).toBe("streaming");
 	});
@@ -110,5 +110,128 @@ describe("tuiReducer", () => {
 		state = tuiReducer(state, { type: "history_next" });
 		expect(state.input).toBe("");
 		expect(state.historyIndex).toBeNull();
+	});
+
+	it("records tool_started then tool_finished on the assistant turn", () => {
+		let state = tuiReducer(base(), { type: "submit", text: "read it", at: 1 });
+		state = tuiReducer(state, {
+			type: "agent",
+			event: {
+				type: "tool_started",
+				id: "call_1",
+				name: "read_file",
+				args: { path: "a.txt" },
+			},
+		});
+		state = tuiReducer(state, {
+			type: "agent",
+			event: {
+				type: "tool_finished",
+				id: "call_1",
+				name: "read_file",
+				ok: true,
+				status: "ok",
+				summary: "1\talpha",
+				output: "1\talpha\n2\tbeta",
+			},
+		});
+
+		expect(state.messages).toEqual([
+			{ id: 1, role: "user", text: "read it" },
+			{
+				id: 2,
+				role: "assistant",
+				text: "",
+				reasoning: "",
+				tools: [
+					{
+						id: "call_1",
+						name: "read_file",
+						args: { path: "a.txt" },
+						summary: "a.txt",
+						status: "ok",
+						output: "1\talpha\n2\tbeta",
+					},
+				],
+			},
+		]);
+	});
+
+	it("renders a tool-only turn as an assistant message with no text", () => {
+		let state = tuiReducer(base(), { type: "submit", text: "go", at: 1 });
+		state = tuiReducer(state, {
+			type: "agent",
+			event: {
+				type: "tool_started",
+				id: "call_1",
+				name: "bash",
+				args: { command: "ls" },
+			},
+		});
+		state = tuiReducer(state, {
+			type: "agent",
+			event: {
+				type: "tool_finished",
+				id: "call_1",
+				name: "bash",
+				ok: true,
+				status: "ok",
+				summary: "",
+				output: "a.txt",
+			},
+		});
+
+		expect(state.messages[1]).toEqual({
+			id: 2,
+			role: "assistant",
+			text: "",
+			reasoning: "",
+			tools: [
+				{
+					id: "call_1",
+					name: "bash",
+					args: { command: "ls" },
+					summary: "ls",
+					status: "ok",
+					output: "a.txt",
+				},
+			],
+		});
+	});
+
+	it("accumulates reasoning deltas on the assistant turn", () => {
+		let state = tuiReducer(base(), { type: "submit", text: "go", at: 1 });
+		state = tuiReducer(state, {
+			type: "agent",
+			event: { type: "reasoning_delta", text: "pon" },
+		});
+		state = tuiReducer(state, {
+			type: "agent",
+			event: { type: "reasoning_delta", text: "der" },
+		});
+
+		expect(state.messages[1]).toEqual({
+			id: 2,
+			role: "assistant",
+			text: "",
+			reasoning: "ponder",
+			tools: [],
+		});
+	});
+
+	it("toggles tool and reasoning expansion", () => {
+		const start = base();
+		expect(start.expandTools).toBe(false);
+		expect(start.expandReasoning).toBe(false);
+
+		const tools = tuiReducer(start, { type: "toggle_tools" });
+		expect(tools.expandTools).toBe(true);
+		expect(tools.expandReasoning).toBe(false);
+
+		const both = tuiReducer(tools, { type: "toggle_reasoning" });
+		expect(both.expandTools).toBe(true);
+		expect(both.expandReasoning).toBe(true);
+
+		expect(tuiReducer(both, { type: "toggle_tools" }).expandTools).toBe(false);
 	});
 });

@@ -61,7 +61,10 @@ export async function runHeadless(
 	const authorize = createAuthorizer({
 		workspaceRoot,
 		rules,
-		approval: headlessApproval({ yesAll }),
+		approval: headlessApproval({
+			yesAll,
+			log: (line) => process.stderr.write(line),
+		}),
 		yesAll,
 	});
 

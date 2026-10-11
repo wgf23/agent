@@ -11,6 +11,8 @@ export interface PromptInputProps {
 	onHistoryNext: () => void;
 	onCancel: () => void;
 	onExit: () => void;
+	onToggleTools: () => void;
+	onToggleReasoning: () => void;
 }
 
 export function PromptInput({
@@ -22,6 +24,8 @@ export function PromptInput({
 	onHistoryNext,
 	onCancel,
 	onExit,
+	onToggleTools,
+	onToggleReasoning,
 }: PromptInputProps): ReactElement {
 	// A keystroke and the Enter that follows can arrive before React commits the
 	// previous dispatch, so the latest text is tracked in a ref rather than props.
@@ -31,6 +35,14 @@ export function PromptInput({
 	useInput((input, key) => {
 		if (key.ctrl && input === "c") {
 			onExit();
+			return;
+		}
+		if (key.ctrl && input === "o") {
+			onToggleTools();
+			return;
+		}
+		if (key.ctrl && input === "t") {
+			onToggleReasoning();
 			return;
 		}
 		if (key.escape) {

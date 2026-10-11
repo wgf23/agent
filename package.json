@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"commander": "^15.0.0",
+		"diff": "^9.0.0",
 		"fast-glob": "^3.3.3",
 		"ignore": "^7.0.12",
 		"ink": "^8.0.0",

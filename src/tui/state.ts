@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../agent/events.js";
+import { summarizeArgs } from "./summarize.js";
 
 export type TuiStatus = "idle" | "streaming" | "error";
 
@@ -11,11 +12,41 @@ export interface TuiUsage {
 
 export type TuiRole = "user" | "assistant" | "system";
 
-export interface TuiMessage {
+export type ToolStatus = "running" | "ok" | "error" | "blocked";
+
+export interface TuiToolCall {
+	id: string;
+	name: string;
+	args: unknown;
+	summary: string;
+	status: ToolStatus;
+	output: string;
+}
+
+export interface TuiUserMessage {
 	id: number;
-	role: TuiRole;
+	role: "user";
 	text: string;
 }
+
+export interface TuiSystemMessage {
+	id: number;
+	role: "system";
+	text: string;
+}
+
+export interface TuiAssistantMessage {
+	id: number;
+	role: "assistant";
+	text: string;
+	reasoning: string;
+	tools: TuiToolCall[];
+}
+
+export type TuiMessage =
+	| TuiUserMessage
+	| TuiSystemMessage
+	| TuiAssistantMessage;
 
 export interface TuiState {
 	messages: TuiMessage[];
@@ -29,6 +60,8 @@ export interface TuiState {
 	nextId: number;
 	workspaceRoot: string;
 	model: string;
+	expandTools: boolean;
+	expandReasoning: boolean;
 }
 
 export interface TuiInit {
@@ -44,7 +77,9 @@ export type TuiAction =
 	| { type: "set_input"; text: string }
 	| { type: "append_system"; text: string }
 	| { type: "history_prev" }
-	| { type: "history_next" };
+	| { type: "history_next" }
+	| { type: "toggle_tools" }
+	| { type: "toggle_reasoning" };
 
 export const CANCEL_MESSAGE = "[cancelled]";
 
@@ -61,6 +96,8 @@ export function initialTuiState(init: TuiInit): TuiState {
 		nextId: 1,
 		workspaceRoot: init.workspaceRoot,
 		model: init.model,
+		expandTools: false,
+		expandReasoning: false,
 	};
 }
 
@@ -145,31 +182,72 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				input: state.history[index] ?? "",
 			};
 		}
+
+		case "toggle_tools":
+			return { ...state, expandTools: !state.expandTools };
+
+		case "toggle_reasoning":
+			return { ...state, expandReasoning: !state.expandReasoning };
 	}
+}
+
+function upsertAssistant(
+	state: TuiState,
+	update: (message: TuiAssistantMessage) => TuiAssistantMessage,
+): TuiState {
+	const last = state.messages[state.messages.length - 1];
+	if (last !== undefined && last.role === "assistant") {
+		return {
+			...state,
+			messages: [...state.messages.slice(0, -1), update(last)],
+		};
+	}
+	const created = update({
+		id: state.nextId,
+		role: "assistant",
+		text: "",
+		reasoning: "",
+		tools: [],
+	});
+	return {
+		...state,
+		messages: [...state.messages, created],
+		nextId: state.nextId + 1,
+	};
 }
 
 function applyAgentEvent(state: TuiState, event: AgentEvent): TuiState {
 	switch (event.type) {
-		case "text_delta": {
-			const last = state.messages[state.messages.length - 1];
-			if (last !== undefined && last.role === "assistant") {
-				return {
-					...state,
-					messages: [
-						...state.messages.slice(0, -1),
-						{ ...last, text: last.text + event.text },
-					],
-				};
-			}
-			return {
-				...state,
-				messages: [
-					...state.messages,
-					{ id: state.nextId, role: "assistant", text: event.text },
+		case "text_delta":
+			return upsertAssistant(state, (message) => ({
+				...message,
+				text: message.text + event.text,
+			}));
+		case "reasoning_delta":
+			return upsertAssistant(state, (message) => ({
+				...message,
+				reasoning: message.reasoning + event.text,
+			}));
+		case "tool_started":
+			return upsertAssistant(state, (message) => ({
+				...message,
+				tools: [
+					...message.tools,
+					{
+						id: event.id,
+						name: event.name,
+						args: event.args,
+						summary: summarizeArgs(event.name, event.args),
+						status: "running",
+						output: "",
+					},
 				],
-				nextId: state.nextId + 1,
-			};
-		}
+			}));
+		case "tool_finished":
+			return upsertAssistant(state, (message) => ({
+				...message,
+				tools: finishTool(message.tools, event),
+			}));
 		case "usage":
 			return {
 				...state,
@@ -190,4 +268,29 @@ function applyAgentEvent(state: TuiState, event: AgentEvent): TuiState {
 		default:
 			return state;
 	}
+}
+
+function finishTool(
+	tools: TuiToolCall[],
+	event: Extract<AgentEvent, { type: "tool_finished" }>,
+): TuiToolCall[] {
+	const index = tools.findIndex((tool) => tool.id === event.id);
+	if (index === -1) {
+		return [
+			...tools,
+			{
+				id: event.id,
+				name: event.name,
+				args: undefined,
+				summary: "",
+				status: event.status,
+				output: event.output,
+			},
+		];
+	}
+	return tools.map((tool, position) =>
+		position === index
+			? { ...tool, status: event.status, output: event.output }
+			: tool,
+	);
 }

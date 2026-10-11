@@ -48,6 +48,7 @@ const DEFAULT_MAX_STEPS = 25;
 const DEFAULT_MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
 const SUMMARY_MAX_CHARS = 200;
+const UI_OUTPUT_MAX_CHARS = 4000;
 
 type StepResult =
 	| { kind: "ok"; text: string; toolCalls: ToolCallBlock[] }
@@ -260,6 +261,7 @@ export async function runAgent(
 					ok: result.ok,
 					status,
 					summary: summarize(result),
+					output: uiOutput(result.ok ? result.output : result.error),
 				});
 				messages.push({
 					role: "tool",
@@ -299,6 +301,12 @@ function summarize(result: ToolResult): string {
 	return firstLine.length > SUMMARY_MAX_CHARS
 		? `${firstLine.slice(0, SUMMARY_MAX_CHARS)}...`
 		: firstLine;
+}
+
+function uiOutput(text: string): string {
+	return text.length > UI_OUTPUT_MAX_CHARS
+		? `${text.slice(0, UI_OUTPUT_MAX_CHARS)}[truncated]`
+		: text;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

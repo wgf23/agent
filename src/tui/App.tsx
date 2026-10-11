@@ -121,7 +121,11 @@ export function App({
 				status={state.status}
 				runStartedAt={state.runStartedAt}
 			/>
-			<MessageList messages={state.messages} />
+			<MessageList
+				messages={state.messages}
+				expandTools={state.expandTools}
+				expandReasoning={state.expandReasoning}
+			/>
 			{state.lastError !== null ? (
 				<Text color="red">{`! ${state.lastError}`}</Text>
 			) : null}
@@ -134,6 +138,8 @@ export function App({
 				onHistoryNext={() => dispatch({ type: "history_next" })}
 				onCancel={cancel}
 				onExit={exit}
+				onToggleTools={() => dispatch({ type: "toggle_tools" })}
+				onToggleReasoning={() => dispatch({ type: "toggle_reasoning" })}
 			/>
 		</Box>
 	);

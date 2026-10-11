@@ -1,9 +1,25 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { cleanup, render } from "ink-testing-library";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
+import {
+	createAuthorizer,
+	headlessApproval,
+} from "../../src/permissions/authorizer.js";
+import { defaultRules } from "../../src/permissions/rules.js";
 import type { Provider } from "../../src/providers/types.js";
 import { App, type AppProps } from "../../src/tui/App.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
+import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
 afterEach(() => {
 	cleanup();
@@ -131,5 +147,130 @@ describe("App", () => {
 
 		stdin.write("\u001b");
 		await waitFor(() => expect(lastFrame()).toContain("[cancelled]"));
+	});
+});
+
+describe("tool cards and folds", () => {
+	let workspace: string;
+
+	beforeAll(async () => {
+		workspace = await makeWorkspace("my-agent-tui-");
+		await writeFile(
+			join(workspace, "notes.txt"),
+			["line 1", "line 2", "line 3", "line 4", "line 5"].join("\n"),
+			"utf8",
+		);
+	});
+
+	afterAll(async () => {
+		await removeWorkspace(workspace);
+	});
+
+	it("shows a read_file card with collapsed output, then expands it on ctrl+o", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "read_file",
+					args: { path: "notes.txt" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "Here is the summary" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const { stdin, lastFrame } = render(
+			app(provider, { workspaceRoot: workspace }),
+		);
+
+		stdin.write("read notes");
+		stdin.write("\r");
+
+		await waitFor(() => expect(lastFrame()).toContain("read_file notes.txt"));
+		await waitFor(() => expect(lastFrame()).toContain("line 1"));
+		expect(lastFrame()).toContain("line 3");
+		expect(lastFrame()).not.toContain("line 5");
+		await waitFor(() =>
+			expect(lastFrame()).toContain("... 2 more lines (ctrl+o to expand)"),
+		);
+		await waitFor(() => expect(lastFrame()).toContain("Here is the summary"));
+
+		stdin.write("\u000f");
+		await waitFor(() => expect(lastFrame()).toContain("line 5"));
+		expect(lastFrame()).not.toContain("ctrl+o to expand");
+	});
+
+	it("shows a blocked card with the literal reason and does not log to stderr", async () => {
+		const log = vi.fn();
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval: headlessApproval({ yesAll: false, log }),
+			yesAll: false,
+		});
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "write_file",
+					args: { path: "new.txt", content: "x" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const stderrSpy = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const { stdin, lastFrame } = render(
+				app(provider, { workspaceRoot: workspace, authorize }),
+			);
+
+			stdin.write("write new.txt");
+			stdin.write("\r");
+
+			await waitFor(() =>
+				expect(lastFrame()).toContain(
+					"Approval required for write_file new.txt. Re-run with --yes to approve.",
+				),
+			);
+			await waitFor(() => expect(lastFrame()).toContain("write_file new.txt"));
+			expect(stderrSpy).not.toHaveBeenCalled();
+			expect(log).toHaveBeenCalledWith(
+				"[approval] write_file new.txt denied\n",
+			);
+		} finally {
+			stderrSpy.mockRestore();
+		}
+	});
+
+	it("shows a thinking fold for reasoning and expands it on ctrl+t", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "reasoning_delta", text: "pondering" },
+				{ type: "text_delta", text: "answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const { stdin, lastFrame } = render(app(provider));
+
+		stdin.write("think");
+		stdin.write("\r");
+
+		await waitFor(() =>
+			expect(lastFrame()).toContain("▸ thinking (9 chars, ctrl+t to expand)"),
+		);
+		expect(lastFrame()).not.toContain("pondering");
+
+		stdin.write("\u0014");
+		await waitFor(() => expect(lastFrame()).toContain("pondering"));
 	});
 });

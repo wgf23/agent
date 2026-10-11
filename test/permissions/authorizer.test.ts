@@ -193,7 +193,7 @@ describe("createAuthorizer", () => {
 			rules: defaultRules(),
 			approval: headlessApproval({
 				yesAll: true,
-				write: (line) => lines.push(line),
+				log: (line) => lines.push(line),
 			}),
 			yesAll: true,
 		});
@@ -210,7 +210,7 @@ describe("createAuthorizer", () => {
 		const authorize = createAuthorizer({
 			workspaceRoot: workspace,
 			rules: defaultRules(),
-			approval: headlessApproval({ yesAll: true, write: () => {} }),
+			approval: headlessApproval({ yesAll: true, log: () => {} }),
 			yesAll: true,
 		});
 
@@ -222,7 +222,7 @@ describe("createAuthorizer", () => {
 
 describe("headlessApproval", () => {
 	it("denies with the literal re-run reason when yesAll is false", async () => {
-		const approval = headlessApproval({ yesAll: false, write: () => {} });
+		const approval = headlessApproval({ yesAll: false, log: () => {} });
 
 		const decision = await approval({
 			toolName: "write_file",
@@ -236,7 +236,7 @@ describe("headlessApproval", () => {
 	});
 
 	it("approves with allow_once when yesAll is true", async () => {
-		const approval = headlessApproval({ yesAll: true, write: () => {} });
+		const approval = headlessApproval({ yesAll: true, log: () => {} });
 
 		const decision = await approval({
 			toolName: "write_file",
@@ -252,11 +252,11 @@ describe("headlessApproval", () => {
 		const approved: string[] = [];
 		await headlessApproval({
 			yesAll: false,
-			write: (line) => denied.push(line),
+			log: (line) => denied.push(line),
 		})({ toolName: "write_file", subject: "docs/x.md", dangerous: false });
 		await headlessApproval({
 			yesAll: true,
-			write: (line) => approved.push(line),
+			log: (line) => approved.push(line),
 		})({ toolName: "bash", subject: "rm -rf dist", dangerous: true });
 
 		expect(denied).toEqual(["[approval] write_file docs/x.md denied\n"]);

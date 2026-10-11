@@ -93,21 +93,21 @@ export function createAuthorizer(options: AuthorizerOptions): Authorize {
 
 export interface HeadlessApprovalOptions {
 	yesAll: boolean;
-	write?: (line: string) => void;
+	log: (line: string) => void;
 }
 
 export function headlessApproval(options: HeadlessApprovalOptions): Approval {
-	const write = options.write ?? ((line: string) => process.stderr.write(line));
+	const { log } = options;
 
 	return (request) => {
 		if (!options.yesAll) {
-			write(`[approval] ${request.toolName} ${request.subject} denied\n`);
+			log(`[approval] ${request.toolName} ${request.subject} denied\n`);
 			return {
 				deny: `Approval required for ${request.toolName} ${request.subject}. Re-run with --yes to approve.`,
 			};
 		}
 		const danger = request.dangerous ? " (dangerous)" : "";
-		write(
+		log(
 			`[approval] ${request.toolName} ${request.subject} approved by --yes${danger}\n`,
 		);
 		return "allow_once";

@@ -3,7 +3,18 @@ import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
 import { cacheHitRatio, type TuiStatus, type TuiUsage } from "../state.js";
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+export const SPINNER_FRAMES = [
+	"⠋",
+	"⠙",
+	"⠹",
+	"⠸",
+	"⠼",
+	"⠴",
+	"⠦",
+	"⠧",
+	"⠇",
+	"⠏",
+];
 const SPINNER_INTERVAL_MS = 80;
 
 export interface StatusBarProps {

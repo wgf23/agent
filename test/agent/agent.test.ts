@@ -93,6 +93,7 @@ describe("runAgent", () => {
 			ok: true,
 			status: "ok",
 			summary: "1\talpha",
+			output: "1\talpha\n2\tbeta",
 		});
 		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
 			role: "tool",
@@ -185,6 +186,8 @@ describe("runAgent", () => {
 			status: "blocked",
 			summary:
 				"Tool write_file is not authorized yet. Only read-only tools run in this mode.",
+			output:
+				"Tool write_file is not authorized yet. Only read-only tools run in this mode.",
 		});
 		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
 			role: "tool",
@@ -231,6 +234,7 @@ describe("runAgent", () => {
 			ok: false,
 			status: "error",
 			summary: "read_file: file not found: missing.txt",
+			output: "read_file: file not found: missing.txt",
 		});
 		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
 			role: "tool",
@@ -238,6 +242,44 @@ describe("runAgent", () => {
 			content: "read_file: file not found: missing.txt",
 			isError: true,
 		});
+	});
+
+	it("caps the UI output at 4000 characters without changing the model result", async () => {
+		await writeFile(path.join(workspace, "big.txt"), "x".repeat(5000), "utf8");
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "read_file",
+					args: { path: "big.txt" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		const events: AgentEvent[] = [];
+		await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "read big.txt",
+			onEvent: (event) => events.push(event),
+		});
+
+		const finished = events.find(
+			(event): event is Extract<AgentEvent, { type: "tool_finished" }> =>
+				event.type === "tool_finished",
+		);
+		expect(finished?.output.endsWith("[truncated]")).toBe(true);
+		expect(finished?.output.length).toBe(4000 + "[truncated]".length);
+		expect(toolMessages(provider.requests[1].messages)[0].content).toHaveLength(
+			5002,
+		);
 	});
 
 	it("retries a retryable error that arrives before any output", async () => {

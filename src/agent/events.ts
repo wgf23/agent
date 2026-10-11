@@ -15,6 +15,7 @@ export type AgentEvent =
 			ok: boolean;
 			status: "ok" | "error" | "blocked";
 			summary: string;
+			output: string;
 	  }
 	| Usage
 	| { type: "error"; message: string }

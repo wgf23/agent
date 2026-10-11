@@ -56,7 +56,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	const authorize = createAuthorizer({
 		workspaceRoot: options.workspaceRoot,
 		rules,
-		approval: headlessApproval({ yesAll: false }),
+		approval: headlessApproval({ yesAll: false, log: () => {} }),
 		yesAll: false,
 	});
 
