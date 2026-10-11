@@ -6,6 +6,7 @@
 		"moduleResolution": "NodeNext",
 		"outDir": "dist",
 		"rootDir": ".",
+		"jsx": "react-jsx",
 		"types": ["node"],
 		"skipLibCheck": true
 	},

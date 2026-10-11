@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { runHeadless } from "./cli/run.js";
+import { runTui } from "./tui/index.js";
 
 // The bundle ships to dist/, so package.json is not reliably adjacent at runtime.
 const VERSION = "0.0.1";
@@ -11,15 +12,15 @@ interface RunOptions {
 	yes?: boolean;
 }
 
+function parseMaxSteps(value: string | undefined): number | undefined {
+	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
 async function run(prompt: string, options: RunOptions): Promise<void> {
-	const maxSteps =
-		options.maxSteps === undefined
-			? undefined
-			: Number.parseInt(options.maxSteps, 10);
 	process.exitCode = await runHeadless({
 		prompt,
 		model: options.model,
-		maxSteps,
+		maxSteps: parseMaxSteps(options.maxSteps),
 		yesAll: options.yes,
 	});
 }
@@ -39,10 +40,11 @@ program
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
-			console.log(`my-agent v${VERSION}`);
-			console.log(
-				'Pass a prompt to get started, for example: my-agent "list the files"',
-			);
+			await runTui({
+				workspaceRoot: process.cwd(),
+				model: options.model,
+				maxSteps: parseMaxSteps(options.maxSteps),
+			});
 			return;
 		}
 		await run(prompt, options);

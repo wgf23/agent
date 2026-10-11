@@ -1,0 +1,166 @@
+import { Box, Text, useApp } from "ink";
+import type { ReactElement } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
+import { runAgent } from "../agent/agent.js";
+import type { Authorize } from "../agent/authorize.js";
+import type { Message, Provider } from "../providers/types.js";
+import { errorMessage } from "../util/errors.js";
+import { MessageList } from "./components/MessageList.js";
+import { PromptInput } from "./components/PromptInput.js";
+import { StatusBar } from "./components/StatusBar.js";
+import { initialTuiState, tuiReducer } from "./state.js";
+
+export interface AppProps {
+	provider: Provider;
+	authorize: Authorize;
+	model: string;
+	workspaceRoot: string;
+	maxSteps?: number;
+	onExit?: () => void;
+}
+
+interface CommandContext {
+	model: string;
+	exit: () => void;
+	clear: () => void;
+	system: (line: string) => void;
+}
+
+export function App({
+	provider,
+	authorize,
+	model,
+	workspaceRoot,
+	maxSteps,
+	onExit,
+}: AppProps): ReactElement {
+	const app = useApp();
+	const exit = onExit ?? app.exit;
+	const [state, dispatch] = useReducer(
+		tuiReducer,
+		{ workspaceRoot, model },
+		initialTuiState,
+	);
+	const historyRef = useRef<Message[]>([]);
+	const controllerRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		return () => controllerRef.current?.abort();
+	}, []);
+
+	const send = useCallback(
+		async (text: string) => {
+			const controller = new AbortController();
+			controllerRef.current = controller;
+			dispatch({ type: "submit", text, at: Date.now() });
+			try {
+				const result = await runAgent({
+					provider,
+					model,
+					workspaceRoot,
+					prompt: text,
+					history: historyRef.current,
+					maxSteps,
+					signal: controller.signal,
+					authorize,
+					onEvent: (event) => dispatch({ type: "agent", event }),
+				});
+				historyRef.current = withoutSystem(result.messages);
+			} catch (error) {
+				dispatch({
+					type: "agent",
+					event: { type: "error", message: errorMessage(error) },
+				});
+			} finally {
+				if (controllerRef.current === controller) {
+					controllerRef.current = null;
+				}
+			}
+		},
+		[provider, model, workspaceRoot, maxSteps, authorize],
+	);
+
+	const clear = useCallback(() => {
+		historyRef.current = [];
+		dispatch({ type: "clear" });
+	}, []);
+
+	const submit = useCallback(
+		(raw: string) => {
+			const text = raw.trim();
+			if (text === "") return;
+			if (text.startsWith("/")) {
+				runCommand(text, {
+					model,
+					exit,
+					clear,
+					system: (line) => dispatch({ type: "append_system", text: line }),
+				});
+				return;
+			}
+			if (controllerRef.current !== null) return;
+			void send(text);
+		},
+		[model, exit, clear, send],
+	);
+
+	const cancel = useCallback(() => {
+		if (controllerRef.current !== null) {
+			controllerRef.current.abort();
+			controllerRef.current = null;
+		}
+		dispatch({ type: "cancel" });
+	}, []);
+
+	return (
+		<Box flexDirection="column">
+			<StatusBar
+				model={model}
+				cwd={workspaceRoot}
+				usage={state.usage}
+				status={state.status}
+				runStartedAt={state.runStartedAt}
+			/>
+			<MessageList messages={state.messages} />
+			{state.lastError !== null ? (
+				<Text color="red">{`! ${state.lastError}`}</Text>
+			) : null}
+			<PromptInput
+				value={state.input}
+				disabled={state.status === "streaming"}
+				onChange={(text) => dispatch({ type: "set_input", text })}
+				onSubmit={submit}
+				onHistoryPrev={() => dispatch({ type: "history_prev" })}
+				onHistoryNext={() => dispatch({ type: "history_next" })}
+				onCancel={cancel}
+				onExit={exit}
+			/>
+		</Box>
+	);
+}
+
+function runCommand(text: string, context: CommandContext): void {
+	const command = text.split(/\s+/)[0];
+	switch (command) {
+		case "/help":
+			context.system("Commands: /help, /clear, /model, /quit");
+			return;
+		case "/clear":
+			context.clear();
+			return;
+		case "/quit":
+			context.exit();
+			return;
+		case "/model":
+			context.system(`Model: ${context.model}`);
+			return;
+		default:
+			context.system(`Unknown command: ${command}. Type /help.`);
+	}
+}
+
+// runAgent prepends the system prompt on every call, so the next turn's history
+// must drop it to avoid stacking a copy per turn.
+function withoutSystem(messages: Message[]): Message[] {
+	return messages[0]?.role === "system" ? messages.slice(1) : messages;
+}

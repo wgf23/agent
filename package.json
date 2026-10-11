@@ -21,12 +21,16 @@
 		"commander": "^15.0.0",
 		"fast-glob": "^3.3.3",
 		"ignore": "^7.0.12",
+		"ink": "^8.0.0",
 		"openai": "^7.32.0",
+		"react": "^19.3.0",
 		"zod": "^4.6.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.15",
 		"@types/node": "^26.6.5",
+		"@types/react": "^19.3.0",
+		"ink-testing-library": "^4.0.0",
 		"tsup": "^8.5.1",
 		"tsx": "^4.23.15",
 		"typescript": "^7.0.2",
