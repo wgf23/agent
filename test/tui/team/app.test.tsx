@@ -141,6 +141,23 @@ describe("TeamApp", () => {
 		await waitFor(() => expect(lastFrame()).toContain("Direct messages"));
 	});
 
+	it("clears the input after a slash command runs", async () => {
+		const providers = {
+			planner: createMockProvider([]),
+			worker: createMockProvider([]),
+		};
+		const { stdin, lastFrame } = renderTeam(makeTeam(providers));
+		await waitFor(() => expect(lastFrame()).toContain("> planner"));
+
+		stdin.write("/help");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
+		stdin.write("\r");
+
+		await waitFor(() => expect(lastFrame()).toContain("Commands:"));
+		expect(lastFrame()).not.toContain("> /help ");
+	});
+
 	it("cycles the selected rob with tab", async () => {
 		const providers = {
 			planner: createMockProvider([]),

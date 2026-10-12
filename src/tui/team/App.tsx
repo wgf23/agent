@@ -158,6 +158,7 @@ export function TeamApp({
 					},
 					allowAll: setAllowAll,
 				});
+				dispatch({ type: "set_input", text: "" });
 				return;
 			}
 			const target = parseTarget(text, state.robs, state.selected);
