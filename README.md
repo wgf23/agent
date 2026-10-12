@@ -144,14 +144,44 @@ my-agent skill remove <name>
 
 Skills install into `~/.config/my-agent/skills`, which acts as an npm project (my-agent creates its `package.json`). Set `MY_AGENT_SKILLS_DIR` to use a different prefix; tests and sandboxes point it at a temp directory. npm runs with `--ignore-scripts --no-audit --no-fund`. A package that does not declare a valid skill is uninstalled again.
 
+## Robs
+
+A `my-agent.json` can define a team of robs. Each rob runs its own agent with its own role, permissions, and history. In the TUI, `@name <task>` dispatches work, and `@name <text>` sent while the rob is busy interjects mid-turn.
+
+```json
+{
+  "robs": [
+    { "name": "planner", "role": "coordinate the others" },
+    {
+      "name": "reviewer",
+      "role": "review code",
+      "backend": {
+        "kind": "cli",
+        "command": "opencode",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash"
+      },
+      "permissions": { "read_file": "allow", "bash": "allow" }
+    }
+  ]
+}
+```
+
+A rob is `native` by default. A `cli` rob hands each turn to an external agent program:
+
+- `command: "pi"` runs pi; `provider` and `model` are required. It keeps one pi session per rob under `.my-agent/pi-sessions/<name>` and bridges approvals through a pi extension.
+- `command: "opencode"` runs a private, long-lived `opencode serve` process with one persistent session per rob, on its own random local port and password. `provider` and `model` are optional; set both to pin an opencode model that exists in your own opencode setup. Every turn reuses the same session, so the rob remembers earlier messages. Messages that arrive while a turn is running are delivered as `steer` prompts, so an interjection redirects the running turn instead of waiting for the next one.
+
+`send_message` and `delegate` are native-only. Listing either in a `cli` rob's `permissions` is a config error. A `cli` rob has no interactive approval dialog in this version (see Known limits).
+
 ## Known limits
 
 - `bash` is not sandboxed. It runs with your user's permissions; that is why it asks first.
 - `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
 - The context is not summarized. When it grows past the budget, older tool output is replaced with a placeholder.
 - The TUI keeps one conversation per run. There is no session persistence or resume.
-- Robs that use the `pi` CLI backend cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing those tools in a `pi` rob's `permissions` is a config error. Their `ask` tools go through the approval bridge, but if the bridge extension loads and does not register its hook, those tools run without approval. A failed load stops the run.
-- Only `pi` is supported as a CLI backend. `claude`, `codex`, and `kimi` are not implemented.
+- Robs that use a `cli` backend (`pi` or `opencode`) cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing either tool in their `permissions` is a config error. The `opencode` backend has no approval channel: a tool that resolves to `ask` is simply unavailable, denied tools are absent, and no dialog is shown. The `pi` backend routes `ask` tools through its approval extension, but if the extension loads without registering its hook those tools run unapproved; a failed load stops the run.
+- CLI backends are `pi` and `opencode`. `claude`, `codex`, and `kimi` are not implemented.
 
 ## Development
 

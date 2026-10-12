@@ -9,8 +9,9 @@
 - R4.1：关闭 G1 到 G4（角色提示、流式回答、模型错误结果、子 agent 用量）。提交 `c2ea6d8`。
 - R4.2：关闭 G5 和 G7（`--mode rpc` 的中途插话、`tool_call` 扩展审批桥）。提交信息为 `feat: pi interjection, approvals, or peer tools, as verified`。
 - R4.3：修复 pi CLI 后端的空闲 steer 丢失（`turnActive` 回合状态、`queue_update.steering` 补投递、`success:false` 重发、未投递计数失败）。提交信息为 `fix: pi steer delivery, no silent message loss`。
+- R5：opencode CLI 后端（`opencode serve` 私有常驻进程、每 rob 一个持久会话、回合中途 steer、`dispose` 关闭进程与 SSE、serve 模式权限强制）。实现见 `src/rob/opencode-backend.ts`。
 
-claude、codex、kimi 的 CLI 后端仍未实现。R4 只支持 pi。
+claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 opencode。
 
 ### 与设计的偏差
 
@@ -217,6 +218,30 @@ RobBackend
 2. R4 第一版认为「需要审批的写入」在 pi 下无法逐次审批，只能是「允许」或「不给这个工具」。R4.2 推翻了这一点：pi 扩展的 `tool_call` 钩子可以发 `ctx.ui.confirm` 并阻塞，配合 `--mode rpc` 做到逐次审批。
 3. pi 的 `--mode rpc` 是 R4.2 的事件来源，`--mode json` 的事件形状相同但无法中途送命令。
 4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。R4.2 验证了扩展工具可以用 Unix socket 回调我们的进程，机制可行但未实现；见 `docs/design/pi-capabilities.md`。
+
+### 已验证：opencode（2.0.24）
+
+后端为每个 rob 起一个私有的 `opencode serve --port 0 --hostname 127.0.0.1` 进程，env 传 `OPENCODE_PASSWORD`（随机）与 `OPENCODE_CONFIG_CONTENT`（注入一个 primary agent，id 为 `myagent-<robname>`，`system` 为 rob 角色，`permissions` 为翻译后的规则集）。进程在 stdout 打印 `server listening on http://127.0.0.1:<port>` 后，轮询 `GET /api/info` 到 200 视为就绪。所有请求用 HTTP basic（用户名 `opencode`）。首个 run 才启动，之后复用同一进程与同一会话；会话 404 时重建。`dispose` 发 SIGTERM 并关闭 SSE。
+
+回合中途插话用 `POST /api/session/{id}/prompt`，body `{ "text": "...", "delivery": "steer" }`。真实验证：`sleep 8` 任务进行中收到 steer，最终回答变成 steer 文本（`OC_STEERED`）。abort 时 `POST /api/session/{id}/interrupt`。
+
+`GET /api/event`（SSE，按 `data.sessionID` 过滤）的事件映射：
+
+| opencode 事件 | AgentEvent |
+|---|---|
+| `session.text.delta` / `session.text.ended` | `text_delta`（`text.ended` 只补发流式未覆盖的剩余） |
+| `session.reasoning.delta` | `reasoning_delta` |
+| `session.tool.called` | `tool_started`（工具名由 `session.tool.input.started` 记下） |
+| `session.tool.success` | `tool_finished`（ok，输出截断 4000） |
+| `session.tool.failed` | `tool_finished`（error，取 `error.message`） |
+| `session.step.ended` | `usage`（该步 tokens：input/output/reasoning/cache.read/cache.write） |
+| `session.execution.succeeded` | `done`（finished） |
+| `session.execution.failed` | `error` + `done`（error，取 `data.error.message`） |
+| `session.execution.interrupted` | `done`（aborted） |
+
+完成判定用显式的 `session.execution.succeeded` / `failed` / `interrupted`，不轮询回退。用量按每步 `session.step.ended` 累加；`session.usage.updated` 是会话累计值，跨回合重复计数，故不采用。
+
+serve 模式权限强制（本轮补验，关闭唯一未验证的安全声明）：agent 的 `permissions` 规则集在 serve 模式生效。规则集以 `[{action:"*",resource:"*",effect:"deny"}]` 起底再追加 allow。实测：允许 `edit` 时 write 工具创建了文件；拒绝 `edit` 时模型回答写工具不可用，文件未创建；`effect:"ask"` 时发出 `permission.asked` 并阻塞回合（无文件）。会话级 `permissions` 规则集同样生效（allow-all agent + 会话级 deny edit 时不写入）。agent 级已足够，实现只在 `OPENCODE_CONFIG_CONTENT` 注入规则集。opencode 工具名到我们的名字：`read→read_file`、`write→write_file`、`edit→edit_file`、`shell→bash`，`glob`/`grep` 同名。
 
 ### 建议
 
