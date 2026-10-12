@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { DEFAULT_PORT } from "../shared/protocol.js";
 import { runConfigCommand } from "./cli/config.js";
+import { runInitCommand } from "./cli/init.js";
 import { type OutputFormat, runHeadless } from "./cli/run.js";
 import {
 	runSessionsForkCommand,
@@ -204,6 +205,14 @@ program
 	.description("Store an API key and choose the provider, model, and endpoint")
 	.action(async () => {
 		process.exitCode = await runSetupCommand();
+	});
+
+program
+	.command("init")
+	.description("Draft an AGENTS.md for the current workspace")
+	.option("-f, --force", "overwrite an existing AGENTS.md")
+	.action(async (options: { force?: boolean }) => {
+		process.exitCode = await runInitCommand({ force: options.force });
 	});
 
 program
