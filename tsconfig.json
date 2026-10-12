@@ -11,5 +11,6 @@
 		"types": ["node"],
 		"skipLibCheck": true
 	},
-	"include": ["src", "test", "scripts", "shared"]
+	"include": ["src", "test", "scripts", "shared"],
+	"exclude": ["test/web"]
 }

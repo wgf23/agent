@@ -1,0 +1,431 @@
+import type {
+	AgentEvent,
+	ApprovalRequestInfo,
+	BotInfo,
+	BotState,
+	BotStatus,
+	DmInfo,
+	HubMode,
+	ServerEvent,
+	SessionSummaryInfo,
+	ToolCallView,
+	TranscriptMessage,
+	UsageTotals,
+} from "./protocol";
+
+export type ConnectionStatus = "connecting" | "open" | "closed";
+
+export interface NoticeView {
+	bot: string;
+	text: string;
+}
+
+export interface ClientState {
+	mode: HubMode;
+	workspaceRoot: string;
+	model: string;
+	bots: BotInfo[];
+	botStates: Record<string, BotState>;
+	sessions: SessionSummaryInfo[];
+	activeSessionId: string | null;
+	transcripts: Record<string, TranscriptMessage[]>;
+	approvals: ApprovalRequestInfo[];
+	allowAll: boolean;
+	dms: DmInfo[];
+	notices: NoticeView[];
+	connection: ConnectionStatus;
+	usage: UsageTotals;
+	lastError: string | null;
+}
+
+export type ClientAction =
+	| { type: "server"; event: ServerEvent }
+	| { type: "connection"; status: ConnectionStatus }
+	| { type: "submit"; bot: string; text: string }
+	| { type: "approval_removed"; id: string };
+
+export function initialState(): ClientState {
+	return {
+		mode: "solo",
+		workspaceRoot: "",
+		model: "",
+		bots: [],
+		botStates: {},
+		sessions: [],
+		activeSessionId: null,
+		transcripts: {},
+		approvals: [],
+		allowAll: false,
+		dms: [],
+		notices: [],
+		connection: "connecting",
+		usage: { input: 0, output: 0 },
+		lastError: null,
+	};
+}
+
+export function clientReducer(
+	state: ClientState,
+	action: ClientAction,
+): ClientState {
+	switch (action.type) {
+		case "connection":
+			return { ...state, connection: action.status };
+
+		case "submit": {
+			const transcript = transcriptOf(state, action.bot);
+			const existing = state.botStates[action.bot];
+			// An interjection while the bot is busy or awaiting approval must not
+			// clobber that status; only idle/stopped bots flip to "working".
+			const status: BotStatus =
+				existing !== undefined &&
+				(existing.status === "working" ||
+					existing.status === "waiting_approval")
+					? existing.status
+					: "working";
+			return {
+				...state,
+				transcripts: {
+					...state.transcripts,
+					[action.bot]: appendMessage(transcript, {
+						role: "user",
+						text: action.text,
+						reasoning: "",
+						tools: [],
+					}),
+				},
+				botStates: existing
+					? { ...state.botStates, [action.bot]: { ...existing, status } }
+					: state.botStates,
+				lastError: null,
+			};
+		}
+
+		case "approval_removed":
+			return {
+				...state,
+				approvals: state.approvals.filter((a) => a.id !== action.id),
+			};
+
+		case "server":
+			return applyServerEvent(state, action.event);
+	}
+}
+
+function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
+	switch (event.type) {
+		case "hello": {
+			// Solo mode carries exactly one bot and a single transcript; team mode
+			// starts each bot empty and fills in via agent_event.
+			const transcripts: Record<string, TranscriptMessage[]> = {};
+			if (event.mode === "solo" && event.bots.length > 0) {
+				transcripts[event.bots[0].name] = event.transcript;
+			}
+			return {
+				...state,
+				mode: event.mode,
+				workspaceRoot: event.workspaceRoot,
+				model: event.model,
+				bots: event.bots,
+				botStates: Object.fromEntries(
+					event.states.map((s) => [s.bot, s] as const),
+				),
+				sessions: event.sessions,
+				activeSessionId: event.activeSessionId,
+				transcripts,
+				approvals: event.approvals,
+				allowAll: event.allowAll,
+				usage: { input: 0, output: 0 },
+				lastError: null,
+				connection: "open",
+			};
+		}
+
+		case "session_opened":
+			return {
+				...state,
+				activeSessionId: event.sessionId,
+				transcripts: {
+					...state.transcripts,
+					[event.bot]: event.messages,
+				},
+			};
+
+		case "sessions":
+			return { ...state, sessions: event.sessions };
+
+		case "bot_status":
+			return {
+				...state,
+				botStates: { ...state.botStates, [event.state.bot]: event.state },
+			};
+
+		case "agent_event": {
+			const transcript = applyAgentEvent(
+				transcriptOf(state, event.bot),
+				event.event,
+			);
+			let next = setTranscript(state, event.bot, transcript);
+			switch (event.event.type) {
+				case "usage":
+					next = {
+						...next,
+						usage: {
+							input: next.usage.input + event.event.inputTokens,
+							output: next.usage.output + event.event.outputTokens,
+						},
+					};
+					break;
+				case "done":
+					next = setBotStatus(next, event.bot, "idle");
+					break;
+				case "error":
+					next = setBotStatus(next, event.bot, "idle");
+					next = setTranscript(
+						next,
+						event.bot,
+						appendMessage(transcript, {
+							role: "system",
+							text: `⚠ ${event.event.message}`,
+							reasoning: "",
+							tools: [],
+						}),
+					);
+					break;
+				default:
+					break;
+			}
+			return next;
+		}
+
+		case "approval_requested":
+			return { ...state, approvals: [...state.approvals, event.request] };
+
+		case "approval_resolved":
+			return {
+				...state,
+				approvals: state.approvals.filter((a) => a.id !== event.id),
+			};
+
+		case "notice":
+			return {
+				...state,
+				notices: [...state.notices, { bot: event.bot, text: event.text }].slice(
+					-100,
+				),
+				transcripts: {
+					...state.transcripts,
+					[event.bot]: appendMessage(transcriptOf(state, event.bot), {
+						role: "system",
+						text: event.text,
+						reasoning: "",
+						tools: [],
+					}),
+				},
+			};
+
+		case "dm":
+			return { ...state, dms: [...state.dms, event.entry].slice(-100) };
+
+		case "allow_all":
+			return { ...state, allowAll: event.on };
+
+		case "error": {
+			let next = state;
+			if (event.bot !== undefined) {
+				next = setTranscript(
+					next,
+					event.bot,
+					appendMessage(transcriptOf(next, event.bot), {
+						role: "system",
+						text: `⚠ ${event.message}`,
+						reasoning: "",
+						tools: [],
+					}),
+				);
+			}
+			return { ...next, lastError: event.message };
+		}
+	}
+}
+
+// Mirrors src/tui/state.ts applyAgentEvent: streaming deltas accumulate onto
+// the trailing assistant message, tool events mutate its tool cards, and the
+// transcript-only events (usage / done / error) are handled by the caller.
+export function applyAgentEvent(
+	transcript: TranscriptMessage[],
+	event: AgentEvent,
+): TranscriptMessage[] {
+	switch (event.type) {
+		case "text_delta":
+			return upsertAssistant(transcript, (m) => ({
+				...m,
+				text: m.text + event.text,
+			}));
+		case "reasoning_delta":
+			return upsertAssistant(transcript, (m) => ({
+				...m,
+				reasoning: m.reasoning + event.text,
+			}));
+		case "tool_started":
+			return upsertAssistant(transcript, (m) => ({
+				...m,
+				tools: [
+					...m.tools,
+					{
+						id: event.id,
+						name: event.name,
+						args: event.args,
+						summary: summarizeArgs(event.name, event.args),
+						status: "running",
+						output: "",
+					},
+				],
+			}));
+		case "tool_finished":
+			return upsertAssistant(transcript, (m) => ({
+				...m,
+				tools: finishTool(m.tools, event),
+			}));
+		case "compacted":
+			return appendMessage(transcript, {
+				role: "system",
+				text: `compacted ${event.removedMessages} messages`,
+				reasoning: "",
+				tools: [],
+			});
+		default:
+			return transcript;
+	}
+}
+
+function upsertAssistant(
+	transcript: TranscriptMessage[],
+	update: (m: TranscriptMessage) => TranscriptMessage,
+): TranscriptMessage[] {
+	const last = transcript[transcript.length - 1];
+	if (last !== undefined && last.role === "assistant") {
+		return [...transcript.slice(0, -1), update(last)];
+	}
+	const created = update({
+		id: nextId(transcript),
+		role: "assistant",
+		text: "",
+		reasoning: "",
+		tools: [],
+	});
+	return [...transcript, created];
+}
+
+function finishTool(
+	tools: ToolCallView[],
+	event: Extract<AgentEvent, { type: "tool_finished" }>,
+): ToolCallView[] {
+	const index = tools.findIndex((tool) => tool.id === event.id);
+	if (index === -1) {
+		return [
+			...tools,
+			{
+				id: event.id,
+				name: event.name,
+				args: undefined,
+				summary: event.summary,
+				status: event.status,
+				output: event.output,
+			},
+		];
+	}
+	return tools.map((tool, position) =>
+		position === index
+			? { ...tool, status: event.status, output: event.output }
+			: tool,
+	);
+}
+
+function transcriptOf(state: ClientState, bot: string): TranscriptMessage[] {
+	return state.transcripts[bot] ?? [];
+}
+
+function setTranscript(
+	state: ClientState,
+	bot: string,
+	messages: TranscriptMessage[],
+): ClientState {
+	return { ...state, transcripts: { ...state.transcripts, [bot]: messages } };
+}
+
+function setBotStatus(
+	state: ClientState,
+	bot: string,
+	status: BotStatus,
+): ClientState {
+	const existing = state.botStates[bot];
+	return {
+		...state,
+		botStates: {
+			...state.botStates,
+			[bot]: existing
+				? { ...existing, status }
+				: {
+						bot,
+						status,
+						messageCount: 0,
+						pending: 0,
+						lastMessage: null,
+						usage: { input: 0, output: 0 },
+					},
+		},
+	};
+}
+
+function appendMessage(
+	transcript: TranscriptMessage[],
+	message: Omit<TranscriptMessage, "id">,
+): TranscriptMessage[] {
+	return [...transcript, { ...message, id: nextId(transcript) }];
+}
+
+// Server transcripts use sequential ids, but compaction can shift them; derive
+// the next id from the max already present so optimistic appends stay unique.
+function nextId(transcript: TranscriptMessage[]): number {
+	let max = 0;
+	for (const message of transcript) {
+		if (message.id > max) max = message.id;
+	}
+	return max + 1;
+}
+
+const BASH_COMMAND_MAX_CHARS = 80;
+const UNKNOWN_JSON_MAX_CHARS = 60;
+
+// Local copy of src/tui/summarize.ts so the web build has no dependency on the
+// Node-side module graph.
+function summarizeArgs(name: string, args: unknown): string {
+	switch (name) {
+		case "read_file":
+		case "write_file":
+		case "edit_file":
+			return argString(args, "path") ?? "";
+		case "bash": {
+			const command = argString(args, "command") ?? "";
+			return command.slice(0, BASH_COMMAND_MAX_CHARS);
+		}
+		case "glob":
+			return argString(args, "pattern") ?? "";
+		case "grep": {
+			const pattern = argString(args, "pattern") ?? "";
+			const path = argString(args, "path");
+			return path === undefined || path === ""
+				? pattern
+				: `${pattern} in ${path}`;
+		}
+		default:
+			return JSON.stringify(args ?? {}).slice(0, UNKNOWN_JSON_MAX_CHARS);
+	}
+}
+
+function argString(args: unknown, key: string): string | undefined {
+	if (typeof args !== "object" || args === null) return undefined;
+	const value = (args as Record<string, unknown>)[key];
+	return typeof value === "string" ? value : undefined;
+}
