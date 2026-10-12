@@ -227,6 +227,62 @@ describe("resolveConfig compaction", () => {
 	});
 });
 
+describe("resolveConfig sandbox", () => {
+	it("uses the built-in sandbox defaults", async () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.sandbox).toEqual({
+			mode: "auto",
+			network: false,
+			writablePaths: [],
+		});
+	});
+
+	it("merges project over global over defaults per field", async () => {
+		await writeGlobal({ sandbox: { mode: "require", network: true } });
+		await writeProject({
+			sandbox: { network: false, writablePaths: ["/data"] },
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.sandbox).toEqual({
+			mode: "require",
+			network: false,
+			writablePaths: ["/data"],
+		});
+	});
+
+	it("reads sandbox from the global file", async () => {
+		await writeGlobal({ sandbox: { mode: "off" } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.sandbox).toEqual({
+			mode: "off",
+			network: false,
+			writablePaths: [],
+		});
+	});
+
+	it("rejects an invalid sandbox block and names the file", async () => {
+		await writeProject({ sandbox: { mode: "sometimes" } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Invalid sandbox");
+		expect(result.error).toContain(path.join(workspaceRoot, "my-agent.json"));
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({

@@ -17,6 +17,7 @@ import {
 } from "../providers/presets.js";
 import type { ReasoningEffort, ThinkingSetting } from "../providers/types.js";
 import type { RobConfig } from "../rob/types.js";
+import { DEFAULT_SANDBOX, type SandboxSettings } from "../sandbox/index.js";
 import { errorMessage } from "../util/errors.js";
 import { readCredentials } from "./credentials.js";
 import { parseRobs, projectFilePath } from "./project-file.js";
@@ -50,6 +51,13 @@ export const compactionOptionsSchema = z.object({
 });
 export type CompactionOptions = z.infer<typeof compactionOptionsSchema>;
 
+export const sandboxOptionsSchema = z.object({
+	mode: z.enum(["auto", "require", "off"]).optional(),
+	network: z.boolean().optional(),
+	writablePaths: z.array(z.string().min(1)).optional(),
+});
+export type SandboxOptions = z.infer<typeof sandboxOptionsSchema>;
+
 export interface ProviderSettings {
 	preset: BuiltinPresetName;
 	model: string;
@@ -78,6 +86,7 @@ export interface ResolvedConfig {
 	permissions: PermissionRules;
 	robs: RobConfig[];
 	compaction: CompactionSettings;
+	sandbox: SandboxSettings;
 }
 
 export type ResolveConfigResult =
@@ -208,6 +217,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		project.layer.compaction,
 		global.layer.compaction,
 	);
+	const sandbox = resolveSandbox(project.layer.sandbox, global.layer.sandbox);
 
 	return {
 		ok: true,
@@ -238,6 +248,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				model: rob.model ?? model,
 			})),
 			compaction,
+			sandbox,
 		},
 	};
 }
@@ -247,6 +258,7 @@ interface Layer {
 	permissions?: PermissionRules;
 	robs?: RobConfig[];
 	compaction?: CompactionOptions;
+	sandbox?: SandboxOptions;
 }
 
 function loadLayer(
@@ -337,9 +349,21 @@ function loadLayer(
 		compaction = parsed.data;
 	}
 
+	let sandbox: SandboxOptions | undefined;
+	if (raw.sandbox !== undefined) {
+		const parsed = sandboxOptionsSchema.safeParse(raw.sandbox);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid sandbox in ${filePath}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		sandbox = parsed.data;
+	}
+
 	return {
 		ok: true,
-		layer: { provider: provider.data, permissions, robs, compaction },
+		layer: { provider: provider.data, permissions, robs, compaction, sandbox },
 	};
 }
 
@@ -397,6 +421,20 @@ function resolveCompaction(
 			project?.keepRecentTokens ??
 			global?.keepRecentTokens ??
 			DEFAULT_COMPACTION.keepRecentTokens,
+	};
+}
+
+function resolveSandbox(
+	project: SandboxOptions | undefined,
+	global: SandboxOptions | undefined,
+): SandboxSettings {
+	return {
+		mode: project?.mode ?? global?.mode ?? DEFAULT_SANDBOX.mode,
+		network: project?.network ?? global?.network ?? DEFAULT_SANDBOX.network,
+		writablePaths:
+			project?.writablePaths ??
+			global?.writablePaths ??
+			DEFAULT_SANDBOX.writablePaths,
 	};
 }
 
