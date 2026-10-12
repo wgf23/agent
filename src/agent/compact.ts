@@ -85,11 +85,17 @@ export function splitForCompaction(
 	};
 }
 
-// Tag for the message that replaces older turns with a model-written summary.
+// The tag marks the message for the TUI's compacted line and proves to the
+// persistence layer that this context must survive. The role is "user" because
+// every persistence path drops role "system" (the system prompt is rebuilt per
+// turn), so a system summary would be discarded on the next save or resume.
 export const COMPACTED_SUMMARY_PREFIX = "[compacted summary]";
 
 export function compactSummaryMessage(summary: string): Message {
-	return { role: "system", content: `${COMPACTED_SUMMARY_PREFIX}\n${summary}` };
+	return {
+		role: "user",
+		content: `${COMPACTED_SUMMARY_PREFIX}\n${summary}`,
+	};
 }
 
 const SUMMARY_INSTRUCTION =

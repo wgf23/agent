@@ -9,6 +9,7 @@ import type {
 	Provider,
 	ToolMessage,
 } from "../../src/providers/types.js";
+import { withoutSystem } from "../../src/session/store.js";
 import type { Tool } from "../../src/tools/types.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
@@ -525,7 +526,7 @@ describe("runAgent compaction", () => {
 		expect(provider.requests).toHaveLength(2);
 		const second = provider.requests[1].messages;
 		expect(second).toContainEqual({
-			role: "system",
+			role: "user",
 			content: "[compacted summary]\nSUMMARY-TEXT",
 		});
 		expect(
@@ -602,5 +603,58 @@ describe("runAgent compaction", () => {
 					message.role === "user" && message.content.includes(oldest),
 			),
 		).toBe(true);
+	});
+
+	it("keeps the summary across turns when the persisted history is replayed", async () => {
+		const summaryText = "The user asked to remember MANGO.";
+		const firstProvider = createMockProvider([
+			[
+				{ type: "text_delta", text: summaryText },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "OK" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		const first = await runAgent({
+			provider: firstProvider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "new question",
+			history: [
+				{ role: "user", content: `remember MANGO ${"x".repeat(4000)}` },
+				{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+			],
+			compaction: { auto: true, thresholdTokens: 100, keepRecentTokens: 1 },
+			onEvent: () => {},
+		});
+
+		expect(first.messages).toContainEqual({
+			role: "user",
+			content: `[compacted summary]\n${summaryText}`,
+		});
+
+		// The persistence boundary drops system messages before the next run.
+		const secondProvider = createMockProvider([
+			[
+				{ type: "text_delta", text: "MANGO" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		await runAgent({
+			provider: secondProvider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "what word were you told to remember?",
+			history: withoutSystem(first.messages),
+			onEvent: () => {},
+		});
+
+		expect(secondProvider.requests[0].messages).toContainEqual({
+			role: "user",
+			content: `[compacted summary]\n${summaryText}`,
+		});
 	});
 });

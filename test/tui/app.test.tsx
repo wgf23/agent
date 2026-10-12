@@ -294,6 +294,7 @@ describe("App", () => {
 		await waitFor(() =>
 			expect(lastFrame()).toContain("· compacted 2 messages"),
 		);
+		expect(lastFrame()).toContain("· compacted summary (7 chars)");
 		expect(lastFrame()).not.toContain("old question");
 		expect(lastFrame()).toContain("recent question");
 
@@ -304,7 +305,59 @@ describe("App", () => {
 
 		await waitFor(() => expect(onTurnEnd).toHaveBeenCalledTimes(1));
 		expect(onTurnEnd.mock.calls[0][0]).toContainEqual({
-			role: "system",
+			role: "user",
+			content: "[compacted summary]\nSUMMARY",
+		});
+	});
+
+	it("sends the compacted summary on the turn after /compact", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "SUMMARY" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "follow up answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const { stdin, lastFrame } = render(
+			app(provider, {
+				compaction: {
+					auto: true,
+					thresholdTokens: 100000,
+					keepRecentTokens: 1,
+				},
+				initialHistory: [
+					{ role: "user", content: "old question" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "old answer" }],
+					},
+					{ role: "user", content: "recent question" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "recent answer" }],
+					},
+				],
+			}),
+		);
+
+		await waitFor(() => expect(lastFrame()).toContain("old question"));
+		stdin.write("/compact");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
+		stdin.write("\r");
+		await waitFor(() =>
+			expect(lastFrame()).toContain("· compacted 2 messages"),
+		);
+
+		stdin.write("follow up");
+		stdin.write("\r");
+
+		await waitFor(() => expect(provider.requests).toHaveLength(2));
+		expect(provider.requests[1].messages).toContainEqual({
+			role: "user",
 			content: "[compacted summary]\nSUMMARY",
 		});
 	});

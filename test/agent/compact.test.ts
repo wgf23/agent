@@ -140,9 +140,9 @@ describe("splitForCompaction", () => {
 });
 
 describe("compactSummaryMessage", () => {
-	it("wraps the summary in a tagged system message", () => {
+	it("wraps the summary in a tagged user message so persistence keeps it", () => {
 		expect(compactSummaryMessage("we agreed on the plan")).toEqual({
-			role: "system",
+			role: "user",
 			content: "[compacted summary]\nwe agreed on the plan",
 		});
 	});

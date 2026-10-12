@@ -119,6 +119,8 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
+			// No lastInputTokens: the stored session usage is cumulative across
+			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
 				options.onEvent?.(event);
 				switch (event.type) {

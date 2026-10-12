@@ -124,6 +124,27 @@ describe("saveSession and loadSession", () => {
 		]);
 	});
 
+	it("keeps a compacted summary user message and drops the system prompt", async () => {
+		const session = makeSession({
+			messages: [
+				{ role: "system", content: "provider system prompt" },
+				{ role: "user", content: "[compacted summary]\nMANGO was remembered" },
+				{ role: "user", content: "recent question" },
+			],
+		});
+
+		const saved = await saveSession(session);
+
+		expect(saved.ok).toBe(true);
+		const loaded = await loadSession(workspaceRoot, session.id);
+		expect(loaded.ok).toBe(true);
+		if (!loaded.ok) return;
+		expect(loaded.session.messages).toEqual([
+			{ role: "user", content: "[compacted summary]\nMANGO was remembered" },
+			{ role: "user", content: "recent question" },
+		]);
+	});
+
 	it("names the file in a friendly error for corrupt JSON", async () => {
 		const session = makeSession();
 		const filePath = sessionFile(workspaceRoot, session.id);

@@ -50,7 +50,7 @@
   默认 `auto` 为 `true`，`thresholdTokens` 为 100000，`keepRecentTokens` 为 20000。
 - 估算：优先用最近一次 provider `usage.inputTokens` 作为当前上下文大小；没有则用字符数除以 4 估算。
 - 触发：每回合发送前，若估算超过 `thresholdTokens` 且 `auto` 为真，或用户执行 `/compact` 强制。
-- 动作：保留最近 `keepRecentTokens` 估算对应的消息，其余交给一次**无工具的摘要调用**（复用当前 provider），得到一段摘要；用单条 system 消息 `[compacted summary]\n...` 替换被压缩部分。压缩后提示 `· compacted N messages`。
+- 动作：保留最近 `keepRecentTokens` 估算对应的消息，其余交给一次**无工具的摘要调用**（复用当前 provider），得到一段摘要；用单条 user 消息 `[compacted summary]\n...` 替换被压缩部分。用 user 而不是 system，因为持久化会丢弃所有 system 消息（system 每回合重建）。压缩后提示 `· compacted N messages`。
 - 摘要调用失败：本轮不压缩，照常发送，并提示失败原因。
 - 摘要请求本身有成本，记录 token 但不计入会话最近一次上下文估算，避免自激。
 

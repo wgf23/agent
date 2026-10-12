@@ -182,6 +182,8 @@ export function App({
 					signal: controller.signal,
 					authorize,
 					compaction,
+					// No lastInputTokens: state.usage.input is cumulative across
+					// turns, so auto compaction trusts the character estimate instead.
 					onEvent: (event) => dispatch({ type: "agent", event }),
 				});
 				historyRef.current = withoutSystem(result.messages);
