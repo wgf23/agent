@@ -37,17 +37,20 @@ my-agent            # interactive TUI
 
 ## TUI
 
-Slash commands: `/help`, `/clear`, `/model`, `/quit`.
+Slash commands: `/help`, `/clear`, `/model`, `/allow-all`, `/quit`.
 
 Keys:
 
 - `Enter` submits.
 - `Ctrl+J` inserts a newline (multiline input).
+- `Ctrl+A` toggles allow-all.
 - `Esc` cancels the running turn.
 - `Ctrl+C` quits.
 - `Ctrl+O` toggles tool output.
 - `Ctrl+T` toggles the reasoning fold.
 - `Up`/`Down` walk the input history (single-line input only).
+
+`/allow-all` toggles a run-wide switch that answers every permission request with allow once, so the model never stops for the dialog; `/allow-all on` and `/allow-all off` set it explicitly, and `Ctrl+A` toggles it. The status row shows an `allow-all` marker while it is on, and a dangerous call it approves prints one line, `allow-all: auto-approved dangerous <tool> <subject>`, to the transcript. Deny rules still win, nothing is written to `my-agent.json`, and the switch is per-run. It dies with the process and never persists. In team mode one switch covers every rob. `--yes` behavior is unchanged.
 
 ## Configuration
 

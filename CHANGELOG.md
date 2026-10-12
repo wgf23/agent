@@ -7,6 +7,7 @@
 - Persistent `opencode` CLI backend for robs: a private long-lived `opencode serve` process with one session per rob, mid-turn `steer` interjections, and SIGTERM teardown on stop. Configure with `{ "kind": "cli", "command": "opencode", "provider": "deepseek", "model": "deepseek-v4-flash" }`.
 - `opencode` robs now expose `ask`-level tools and answer each opencode `permission.asked` request through the rob's authorizer and the shared FIFO approval queue, so the dialog shows the rob's name and `allow once` / `allow always` / `deny` behave like every other rob. A pending request is rejected on turn abort or dispose so opencode never blocks on a stopped server.
 - Interactive `my-agent setup` wizard and first-run TUI setup that stores an API key in `~/.config/my-agent/credentials.json`, with environment variables taking precedence.
+- Runtime allow-all mode in the TUI: `/allow-all` (or `Ctrl+A`) toggles a run-wide switch that grants every permission request, `/allow-all on` and `/allow-all off` set it explicitly, an `allow-all` marker appears in the status row while it is on, and each dangerous call it approves prints one `allow-all: auto-approved dangerous <tool> <subject>` line to the transcript. Deny rules still win, nothing persists to `my-agent.json`, one switch covers every rob, and `--yes` is unchanged.
 
 ### Changed
 
