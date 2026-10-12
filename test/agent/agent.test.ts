@@ -436,10 +436,11 @@ describe("runAgent", () => {
 	});
 
 	it("advertises and executes an extra tool", async () => {
-		const echoTool: Tool = {
+		const echoSchema = z.object({ text: z.string() });
+		const echoTool: Tool<typeof echoSchema> = {
 			name: "echo",
 			description: "Echo the text back.",
-			schema: z.object({ text: z.string() }),
+			schema: echoSchema,
 			readOnly: true,
 			async execute(args) {
 				return { ok: true, output: `echo:${args.text}` };

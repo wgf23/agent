@@ -24,10 +24,14 @@ export function getTool(name: string): Tool | undefined {
 }
 
 export function toolDefinition(tool: Tool): ToolDefinition {
+	const parameters =
+		tool.schema !== undefined
+			? Object.fromEntries(Object.entries(z.toJSONSchema(tool.schema)))
+			: (tool.parameters ?? { type: "object", properties: {} });
 	return {
 		name: tool.name,
 		description: tool.description,
-		parameters: Object.fromEntries(Object.entries(z.toJSONSchema(tool.schema))),
+		parameters,
 	};
 }
 
@@ -40,16 +44,20 @@ export async function executeTool(
 	rawArgs: unknown,
 	ctx: ToolContext,
 ): Promise<ToolResult> {
-	const parsed = tool.schema.safeParse(rawArgs);
-	if (!parsed.success) {
-		return {
-			ok: false,
-			error: `Invalid arguments for ${tool.name}: ${z.prettifyError(parsed.error)}`,
-		};
-	}
-
 	try {
-		return await tool.execute(parsed.data, ctx);
+		// A zod tool validates before its handler runs; an external tool owns its
+		// own validation and receives the raw arguments.
+		if (tool.schema !== undefined) {
+			const parsed = tool.schema.safeParse(rawArgs);
+			if (!parsed.success) {
+				return {
+					ok: false,
+					error: `Invalid arguments for ${tool.name}: ${z.prettifyError(parsed.error)}`,
+				};
+			}
+			return await tool.execute(parsed.data, ctx);
+		}
+		return await tool.execute(rawArgs, ctx);
 	} catch (error) {
 		return {
 			ok: false,

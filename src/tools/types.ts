@@ -12,12 +12,15 @@ export type ToolResult =
 	| { ok: true; output: string }
 	| { ok: false; error: string };
 
-export interface Tool<
-	TSchema extends z.ZodObject<z.ZodRawShape> = z.ZodObject<z.ZodRawShape>,
-> {
+// A zod tool sets `schema` and the registry validates arguments with it. An
+// external tool (MCP) sets `parameters` (JSON Schema) instead and receives raw,
+// unvalidated arguments, because the server owns validation and its schema is
+// not zod. Exactly one of the two is present.
+export interface Tool<TSchema extends z.ZodType = z.ZodType> {
 	name: string;
 	description: string;
-	schema: TSchema;
 	readOnly: boolean;
+	schema?: TSchema;
+	parameters?: Record<string, unknown>;
 	execute(args: z.infer<TSchema>, ctx: ToolContext): Promise<ToolResult>;
 }
