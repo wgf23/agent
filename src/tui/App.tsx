@@ -1,6 +1,13 @@
 import { Box, Text, useApp, useInput } from "ink";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useReducer,
+	useRef,
+	useState,
+} from "react";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import {
@@ -10,6 +17,8 @@ import {
 	splitForCompaction,
 	summarizeMessages,
 } from "../agent/compact.js";
+import { type Command, expandCommand } from "../commands/commands.js";
+import { loadCommands } from "../commands/load.js";
 import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
 import { friendlyProviderError } from "../providers/errors.js";
 import type {
@@ -35,7 +44,7 @@ import {
 	type TuiUsage,
 	tuiReducer,
 } from "./state.js";
-import { COMMANDS } from "./suggestions.js";
+import { COMMANDS, setCustomCommands } from "./suggestions.js";
 import { useAllowAllState } from "./use-allow-all.js";
 
 export interface AppProps {
@@ -105,6 +114,7 @@ export function App({
 	const controllerRef = useRef<AbortController | null>(null);
 	const startupAppended = useRef(false);
 	const allowAllOn = useAllowAllState(allowAll);
+	const [commands, setCommands] = useState<Command[]>([]);
 
 	useEffect(() => {
 		return () => controllerRef.current?.abort();
@@ -142,6 +152,23 @@ export function App({
 		let cancelled = false;
 		void loadWorkspaceFiles(workspaceRoot).then((files) => {
 			if (!cancelled) dispatch({ type: "files_loaded", files });
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [workspaceRoot]);
+
+	useEffect(() => {
+		let cancelled = false;
+		void loadCommands(workspaceRoot).then((loaded) => {
+			if (cancelled) return;
+			setCommands(loaded);
+			setCustomCommands(
+				loaded.map((command) => ({
+					name: `/${command.name}`,
+					hint: command.description,
+				})),
+			);
 		});
 		return () => {
 			cancelled = true;
@@ -295,6 +322,12 @@ export function App({
 			const text = raw.trim();
 			if (text === "") return;
 			if (text.startsWith("/")) {
+				const expanded = expandCommand(text, commands);
+				if (expanded !== null) {
+					if (controllerRef.current !== null) return;
+					void send(expanded);
+					return;
+				}
 				runCommand(text, {
 					model,
 					exit,
@@ -309,7 +342,7 @@ export function App({
 			if (controllerRef.current !== null) return;
 			void send(text);
 		},
-		[model, exit, clear, compact, send, setAllowAll],
+		[model, exit, clear, compact, send, setAllowAll, commands],
 	);
 
 	const cancel = useCallback(() => {

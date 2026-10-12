@@ -233,6 +233,20 @@ my-agent skill remove <name>
 
 Skills install into `~/.config/my-agent/skills`, which acts as an npm project (my-agent creates its `package.json`). Set `MY_AGENT_SKILLS_DIR` to use a different prefix; tests and sandboxes point it at a temp directory. npm runs with `--ignore-scripts --no-audit --no-fund`. A package that does not declare a valid skill is uninstalled again.
 
+## Custom commands
+
+Define your own slash commands as markdown files under `<workspace>/.my-agent/commands`. Each file starts with the same YAML frontmatter as a skill (`name` in lowercase kebab-case, one-line `description`), and the body is the prompt the model receives:
+
+```markdown
+---
+name: greet
+description: Greet someone by name
+---
+Say hello to $ARGUMENTS.
+```
+
+Typing `/greet Ada` sends `Say hello to Ada.`. `$ARGUMENTS` is replaced by the text after the command name; a body without it appends the arguments. The suggestion menu lists custom commands after the built-ins, and the names cannot reuse the built-in commands (`help`, `clear`, `compact`, `model`, `allow-all`, `quit`). A missing directory or a malformed file is skipped.
+
 ## Robs
 
 A `my-agent.json` can define a team of robs. Each rob runs its own agent with its own role, permissions, and history. In the TUI, `@name <task>` dispatches work, and `@name <text>` sent while the rob is busy interjects mid-turn.
