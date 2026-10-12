@@ -4,7 +4,24 @@
 
 ## 实现状态
 
-计划中，尚未实现。里程碑见本文末尾。
+已全部实现（M0–M5），分支 `feat/web-client`。
+
+- 服务端 `src/serve/`：`hub`（接口与事件总线）、`solo`（`runAgent` + `drainInput` + session store）、`team`（包 `Team`，映射 `TeamEvent`）、`server`（Fastify：SSE、POST 路由、`@fastify/static` + SPA 回退）、`open-browser`。
+- 协议 `shared/protocol.ts`，前后端共用（无 import，Vite 与 tsc 都能直接读）。
+- CLI `my-agent serve`，默认端口 4317，默认绑 `127.0.0.1`。
+- 前端 `web/`：Vite + React + TS，`state.ts` 纯 reducer、`useHub.ts` 管 SSE 与 POST，组件对应线框图的 ①–⑤。
+- 测试：`test/serve/`（Solo 闭环、插话、审批拒绝、会话切换、中断、Team 中断、真实 HTTP/SSE 端到端）与 `test/web/state.test.ts`（reducer）。
+
+### 与设计的偏差
+
+- **插话语义**：设计原写「与 TUI 的 `drainInput` 一致」，但 TUI 在 `streaming` 时直接丢弃提交（`src/tui/App.tsx` 的 `if (controllerRef.current !== null) return`）。Web 客户端改为真正的插话：消息入队，在下个步边界注入；若回合先结束，队列里剩下的消息自动作为新回合续跑，绝不丢失。「停止」清空待发队列。
+- **对内核的改动不止一处**：除 `Rob.abortTurn` 与 `Team.interrupt`，`ApprovalQueue` 另加 `denyRob`，让中断先拒绝该 rob 的待决审批，否则 authorizer 会一直等待。`abortTurn` 只在 rob 处于 `working`/`waiting_approval` 时 abort，避免在空闲时取消 `waitForBatch` 而结束 run 循环。
+- **根 tsconfig 加 `esModuleInterop`**：`fastify` 与 `@fastify/static` 的声明用 `export =`，默认导入需要它。同时 `include` 加 `shared`、`exclude` 加 `test/web`（该测试 import 前端源码，前端用 bundler 解析，不走 NodeNext）。
+- **前端 JSON 处理**：`web/tsconfig.json` 用单文件 + `tsc --noEmit`，未用 `tsc -b` 的项目引用（引用要求 `composite`，与 `noEmit` 冲突）。前端独立用 TypeScript 5.9，根仓库是 7.x。
+- **`summarizeArgs` 在前端有一份本地副本**，避免前端构建依赖 Node 侧模块图；`shared/protocol.ts` 里的 `AgentEvent` 同样是 `src/agent/events.ts` 的镜像。
+- **组件测试**：只提交了纯 reducer 测试。DOM 级渲染测试需要 jsdom，未纳入首版。
+- **CSS 抑制**：`web/src/styles.css` 两处 `code` 覆盖规则加了带理由的 `noDescendingSpecificity` 抑制。
+
 
 ## 已确认的决策
 

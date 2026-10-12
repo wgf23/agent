@@ -1106,6 +1106,7 @@ pre {
 	overflow-wrap: anywhere;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: the shared `code` base rule lives at the top; this scoped override is intentionally later */
 .modal-value code {
 	font-family: var(--font-mono);
 	background: var(--bg-elevated);
@@ -1174,6 +1175,7 @@ pre {
 	white-space: nowrap;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: the shared `code` base rule lives at the top; this scoped override is intentionally later */
 .statusbar-item code {
 	font-family: var(--font-mono);
 	font-size: 11px;
