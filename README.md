@@ -32,6 +32,7 @@ my-agent            # interactive TUI
 - `--yes` auto-approves every tool call. Without it, headless mode denies any tool that needs approval and keeps going.
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
+- `--max-cost <usd>` stops a run once the accumulated dollar cost exceeds the cap, in both headless mode and the TUI. No cap by default.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
@@ -52,7 +53,7 @@ Keys:
 - `Ctrl+T` toggles the reasoning fold.
 - `Up`/`Down` walk the input history (single-line input only).
 
-`/allow-all` toggles a run-wide switch that answers every permission request with allow once, so the model never stops for the dialog; `/allow-all on` and `/allow-all off` set it explicitly, and `Ctrl+A` toggles it. The status row shows an `allow-all` marker while it is on, and a dangerous call it approves prints one line, `allow-all: auto-approved dangerous <tool> <subject>`, to the transcript. Deny rules still win, nothing is written to `my-agent.json`, and the switch is per-run. It dies with the process and never persists. In team mode one switch covers every rob. `--yes` behavior is unchanged.
+`/allow-all` toggles a run-wide switch that answers every permission request with allow once, so the model never stops for the dialog; `/allow-all on` and `/allow-all off` set it explicitly, and `Ctrl+A` toggles it. The status row shows an `allow-all` marker while it is on, a dangerous call it approves prints one line, `allow-all: auto-approved dangerous <tool> <subject>`, to the transcript, and the running dollar cost next to the token counts. Deny rules still win, nothing is written to `my-agent.json`, and the switch is per-run. It dies with the process and never persists. In team mode one switch covers every rob. `--yes` behavior is unchanged.
 
 Typing `@` completes workspace file names, and accepting one inserts it into the sentence. Sending the message expands each `@path` into a `Referenced files` block so the model sees the contents without reading the file again.
 

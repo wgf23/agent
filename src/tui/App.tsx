@@ -55,6 +55,7 @@ export interface AppProps {
 	model: string;
 	workspaceRoot: string;
 	maxSteps?: number;
+	maxCost?: number;
 	thinking?: ThinkingSetting;
 	reasoningEffort?: ReasoningEffort;
 	baseURL?: string;
@@ -86,6 +87,7 @@ export function App({
 	model,
 	workspaceRoot,
 	maxSteps,
+	maxCost,
 	thinking,
 	reasoningEffort,
 	baseURL,
@@ -220,6 +222,7 @@ export function App({
 					prompt: expanded.text,
 					history: historyRef.current,
 					maxSteps,
+					maxCost,
 					thinking,
 					reasoningEffort,
 					signal: controller.signal,
@@ -260,6 +263,7 @@ export function App({
 			model,
 			workspaceRoot,
 			maxSteps,
+			maxCost,
 			thinking,
 			reasoningEffort,
 			baseURL,
