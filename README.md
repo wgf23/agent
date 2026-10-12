@@ -111,6 +111,8 @@ If `<project root>/AGENTS.md` exists, its contents are added to the system promp
 - `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
 - The context is not summarized. When it grows past the budget, older tool output is replaced with a placeholder.
 - The TUI keeps one conversation per run. There is no session persistence or resume.
+- Robs that use the `pi` CLI backend cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing those tools in a `pi` rob's `permissions` is a config error. Their `ask` tools go through the approval bridge, but if the bridge extension loads and does not register its hook, those tools run without approval. A failed load stops the run.
+- Only `pi` is supported as a CLI backend. `claude`, `codex`, and `kimi` are not implemented.
 
 ## Development
 

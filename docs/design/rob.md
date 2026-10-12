@@ -34,7 +34,9 @@ claude、codex、kimi 的 CLI 后端仍未实现。R4 只支持 pi。
 - G3（已关闭）：`message_end` 的 `stopReason` 为 `"error"` 或 `"aborted"` 时返回错误结果并带上该消息的 `errorMessage`，不再退化成空回答。
 - G4（已关闭）：子 agent 的 `usage` 事件现在累加到发起 rob 的用量统计。
 - G5（已关闭）：cli rob 现在能在回合中途插话，且不在空闲 pi 上丢消息。cli 后端使用 `--mode rpc`，用 `turnActive` 跟踪回合：进行中才把收件箱的新消息作为 `steer` 发出，空闲时留给 rob 的下一轮。真实 pi 验证：工具执行期间发送 steer，回答变成 `STEERED`；`agent_end` 之后空闲时投递的消息由 rob 的下一轮回答。真实验证并修复了空闲 steer 的丢失：`agent_end` 后发送的 steer 返回 `success:true` 但只进 `queue_update.steering`、不会再开回合；后端现在把 `agent_end` 时仍在 steering 的消息（以及 `success:false` 的 steer）作为新 prompt 在同一进程补投递，未投递且未入队的消息让回合以 `ok:false` 结束并报出条数。
-- G6（未关闭）：cli rob 仍不能使用 `send_message` 和 `delegate`。扩展工具可以通过 Unix socket 回调我们的进程（机制已用真实 pi 验证），但这需要常驻监听通道和自定协议，本次未实现。
+- G6（已接受为限制，不实现）：cli rob 不能使用 `send_message` 和 `delegate`。配置校验会拒绝在 cli rob 上设置这两个工具。扩展工具可以通过 Unix socket 回调我们的进程（机制已用真实 pi 验证），但需要常驻监听通道和自定协议。决定：原生 rob 已完整支持私聊、子 agent 和审批，pi 的 rob 定位为独立执行任务的角色。只有在 pi 的 rob 确实需要互相协作时，才重新考虑这个桥接。
+- 残留风险（未关闭）：G7 的审批扩展如果加载成功、但没有注册 `tool_call` 钩子，`ask` 工具会在没有审批的情况下执行。加载失败时 pi 会以退出码 1 结束，这种情况是安全的（已用真实 pi 验证）。目前没有握手机制确认钩子已注册。
+- 证据强度：G4 只用假 pi 和单元测试验证，没有用真实 pi 验证。空闲 steer 的重发路径只用假 pi 验证，因为真实时序难以稳定复现。
 - G7（已关闭）：cli rob 现在有审批通道。pi 扩展在 `tool_call` 钩子里发 `ctx.ui.confirm` 并阻塞，我们的进程用该 rob 的 authorizer 判断后回复；允许和拒绝两条路径都已用真实 pi 验证。因此 `ask` 工具可以进入白名单（仅在桥存在时）。
 
 ## 问题
