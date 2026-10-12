@@ -161,6 +161,7 @@ describe("createAuthorizer", () => {
 
 		const decision = await authorize(bashCall("rm -rf dist"), bashTool);
 
+		// No remember signal, so the opencode bridge can never reply "always".
 		expect(decision).toEqual({ allowed: true });
 		await expect(access(join(workspace, "my-agent.json"))).rejects.toThrow();
 	});

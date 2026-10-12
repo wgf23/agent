@@ -88,6 +88,7 @@ export class Rob {
 							provider: options.backend.provider,
 							model: options.backend.model,
 							rules: options.rules,
+							authorize: this.authorize,
 							drain: () => this.inbox.drain(),
 							extraEnv: options.providerEnv,
 						})

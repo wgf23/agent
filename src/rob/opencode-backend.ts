@@ -3,9 +3,11 @@ import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import type { UsageTotals } from "../agent/agent.js";
+import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
 import type { Message } from "../providers/types.js";
+import { getTool } from "../tools/registry.js";
 import { errorMessage } from "../util/errors.js";
 import {
 	emptyUsage,
@@ -45,6 +47,15 @@ const OPENCODE_TOOL_NAMES = new Map<string, string>([
 	["edit", "edit_file"],
 	["shell", "bash"],
 ]);
+
+// The inverse of TOOL_PERMISSION_ACTIONS, for mapping a permission request's
+// opencode action back to the tools that share it.
+const ACTION_TOOLS = new Map<string, string[]>();
+for (const [tool, action] of TOOL_PERMISSION_ACTIONS) {
+	const tools = ACTION_TOOLS.get(action) ?? [];
+	tools.push(tool);
+	ACTION_TOOLS.set(action, tools);
+}
 
 export interface OpencodePermissionRule {
 	action: string;
@@ -153,6 +164,9 @@ export interface OpencodeBackendOptions {
 	model?: string;
 	rules: PermissionRules;
 	drain: () => Inbound[];
+	// Answers each opencode permission request through the rob's own authorizer,
+	// so an "ask" tool's dialog is the team's approval queue.
+	authorize?: Authorize;
 	// Isolates the child's opencode data and state from the user's own opencode.
 	dataDir?: string;
 	// Env the child needs beyond process.env, such as the provider API key
@@ -218,6 +232,9 @@ export function createOpencodeBackend(
 	let sseAbort: AbortController | null = null;
 	let active: TurnState | null = null;
 	let stderr = "";
+	// opencode permission requests awaiting our answer, so an abort or dispose
+	// can reject them instead of leaving opencode blocked.
+	const pendingPermissions = new Map<string, { replied: boolean }>();
 
 	const request = (
 		method: string,
@@ -235,6 +252,94 @@ export function createOpencodeBackend(
 		}
 		if (signal !== undefined) init.signal = signal;
 		return fetchFn(`${baseUrl}${apiPath}`, init);
+	};
+
+	const replyPermission = async (
+		requestID: string,
+		decision: "once" | "always" | "reject",
+		message?: string,
+	): Promise<void> => {
+		const entry = pendingPermissions.get(requestID);
+		if (entry !== undefined) {
+			if (entry.replied) return;
+			entry.replied = true;
+		}
+		if (sessionID === null) return;
+		const body: Record<string, unknown> = { decision };
+		if (message !== undefined) body.message = message;
+		try {
+			await request(
+				"POST",
+				`/api/session/${sessionID}/permission/${requestID}/reply`,
+				body,
+			);
+		} catch {
+			// The turn's own completion reports failures; a dropped reply here
+			// must not reject an otherwise finished run.
+		}
+	};
+
+	const rejectPending = (reason: string): void => {
+		for (const requestID of [...pendingPermissions.keys()]) {
+			void replyPermission(requestID, "reject", reason);
+		}
+	};
+
+	const handlePermission = async (
+		data: Record<string, unknown>,
+	): Promise<void> => {
+		const requestID = stringField(data.id);
+		if (requestID === "" || pendingPermissions.has(requestID)) return;
+		pendingPermissions.set(requestID, { replied: false });
+		try {
+			const turn = active;
+			if (turn === null || turn.settled) {
+				await replyPermission(
+					requestID,
+					"reject",
+					"No active turn is awaiting this approval.",
+				);
+				return;
+			}
+			const action = stringField(data.action);
+			const resource = firstResource(data.resources);
+			const toolName = permissionToolFor(options.rules, action, resource);
+			const tool = toolName === null ? undefined : getTool(toolName);
+			if (toolName === null || tool === undefined) {
+				await replyPermission(
+					requestID,
+					"reject",
+					`my-agent cannot map the opencode "${action}" permission to a tool.`,
+				);
+				return;
+			}
+			if (options.authorize === undefined) {
+				await replyPermission(
+					requestID,
+					"reject",
+					`my-agent has no authorizer for ${toolName}.`,
+				);
+				return;
+			}
+			const decision = await options.authorize(
+				{
+					id: requestID,
+					name: toolName,
+					args: permissionArgs(toolName, resource),
+				},
+				tool,
+			);
+			if (!decision.allowed) {
+				await replyPermission(requestID, "reject", decision.reason);
+				return;
+			}
+			await replyPermission(
+				requestID,
+				decision.remember === true ? "always" : "once",
+			);
+		} finally {
+			pendingPermissions.delete(requestID);
+		}
 	};
 
 	const diagnostics = (): string => {
@@ -413,6 +518,10 @@ export function createOpencodeBackend(
 		const data = isRecord(raw.data) ? raw.data : {};
 		const session = stringField(data.sessionID) || stringField(raw.sessionID);
 		if (session === "" || session !== sessionID) return;
+		if (type === "permission.asked") {
+			void handlePermission(data);
+			return;
+		}
 		const turn = active;
 		if (turn === null || turn.settled) return;
 		switch (type) {
@@ -626,6 +735,7 @@ export function createOpencodeBackend(
 	const abort = (turn: TurnState): void => {
 		if (turn.settled || turn.aborted) return;
 		turn.aborted = true;
+		rejectPending("Turn aborted before the approval was answered.");
 		if (sessionID !== null) {
 			void request("POST", `/api/session/${sessionID}/interrupt`).catch(
 				() => undefined,
@@ -707,6 +817,9 @@ export function createOpencodeBackend(
 			disposed = true;
 			sseAbort?.abort();
 			sseAbort = null;
+			// Answer any open permission request so opencode is not left blocked
+			// on a server we are about to stop.
+			rejectPending("my-agent stopped before the approval was answered.");
 			// Resolve any in-flight turn so a caller awaiting run() (Team.stop)
 			// is not left hanging when the timer that would end it is cleared.
 			if (active !== null && !active.settled) {
@@ -749,6 +862,38 @@ function randomPassword(): string {
 
 function mapToolName(opencodeName: string): string {
 	return OPENCODE_TOOL_NAMES.get(opencodeName) ?? opencodeName;
+}
+
+// Maps an opencode permission request's action back to one of our tools. For a
+// shared action (write_file/edit_file on "edit") prefer the tool the request's
+// rules actually want to prompt for; an unknown action maps to nothing.
+function permissionToolFor(
+	rules: PermissionRules,
+	action: string,
+	resource: string,
+): string | null {
+	const candidates = ACTION_TOOLS.get(action);
+	if (candidates === undefined) return null;
+	for (const tool of candidates) {
+		if (resolveAction(rules, tool, resource) === "ask") return tool;
+	}
+	return candidates[0] ?? null;
+}
+
+// The synthetic call's args must carry the resource where toolSubject reads it,
+// so the authorizer resolves the same subject opencode asked about.
+function permissionArgs(tool: string, resource: string): unknown {
+	if (tool === "bash") return { command: resource };
+	if (tool === "glob" || tool === "grep") return { pattern: resource };
+	return { path: resource };
+}
+
+function firstResource(resources: unknown): string {
+	if (!Array.isArray(resources)) return "";
+	for (const resource of resources) {
+		if (typeof resource === "string") return resource;
+	}
+	return "";
 }
 
 function contentText(content: unknown): string {

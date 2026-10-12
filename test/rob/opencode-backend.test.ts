@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AuthorizeResult } from "../../src/agent/authorize.js";
 import type { AgentEvent } from "../../src/agent/events.js";
-import type { PermissionRules } from "../../src/permissions/rules.js";
+import {
+	type PermissionRules,
+	toolSubject,
+} from "../../src/permissions/rules.js";
 import type { Message } from "../../src/providers/types.js";
 import {
 	createOpencodeBackend,
@@ -160,6 +164,17 @@ interface Probes {
 	prompts: Array<{ sessionID: string; body: Record<string, unknown> }>;
 	interrupts: string[];
 	killed: string[];
+	replies: Array<{
+		sessionID: string;
+		requestID: string;
+		body: Record<string, unknown>;
+	}>;
+	permissionCalls: Array<{
+		id: string;
+		name: string;
+		args: unknown;
+		tool: string;
+	}>;
 	sendEvent(event: Record<string, unknown>): void;
 	eventsReady: Promise<void>;
 	failNextPrompt404(): void;
@@ -174,6 +189,8 @@ function makeProbes(): Probes {
 	const prompts: Probes["prompts"] = [];
 	const interrupts: Probes["interrupts"] = [];
 	const killed: Probes["killed"] = [];
+	const replies: Probes["replies"] = [];
+	const permissionCalls: Probes["permissionCalls"] = [];
 	let sessionSeq = 0;
 	let promptFails404 = false;
 
@@ -257,6 +274,21 @@ function makeProbes(): Probes {
 				text: async () => "",
 			};
 		}
+		const replyMatch =
+			/^\/api\/session\/([^/]+)\/permission\/([^/]+)\/reply$/.exec(path);
+		if (replyMatch !== null && method === "POST") {
+			replies.push({
+				sessionID: replyMatch[1],
+				requestID: replyMatch[2],
+				body,
+			});
+			return {
+				ok: true,
+				status: 204,
+				json: async () => ({}),
+				text: async () => "",
+			};
+		}
 		return json({ message: `unhandled ${method} ${path}` }, 500);
 	};
 
@@ -266,6 +298,8 @@ function makeProbes(): Probes {
 		prompts,
 		interrupts,
 		killed,
+		replies,
+		permissionCalls,
 		sendEvent: (event) => send(`data: ${JSON.stringify(event)}\n\n`),
 		eventsReady,
 		failNextPrompt404: () => {
@@ -283,12 +317,25 @@ function createHarness(
 	options: Partial<Omit<OpencodeBackendOptions, "rob" | "role">> = {},
 ): { backend: ReturnType<typeof createOpencodeBackend>; probes: Probes } {
 	const probes = makeProbes();
+	const provided = options.authorize;
 	const backend = createOpencodeBackend({
 		rob: "reviewer",
 		role: "review code",
 		rules: {},
 		drain: () => [],
 		...options,
+		authorize:
+			provided === undefined
+				? undefined
+				: async (call, tool) => {
+						probes.permissionCalls.push({
+							id: call.id,
+							name: call.name,
+							args: call.args,
+							tool: tool.name,
+						});
+						return provided(call, tool);
+					},
 		spawn: probes.spawn,
 		fetch: probes.fetch,
 	});
@@ -354,6 +401,24 @@ function sessionEvent(
 	data: Record<string, unknown> = {},
 ): Record<string, unknown> {
 	return { type, data: { sessionID: SESSION, ...data } };
+}
+
+// The fields observed from a real opencode 2.0.24 permission.asked event.
+function permissionEvent(
+	data: Record<string, unknown> = {},
+): Record<string, unknown> {
+	return {
+		type: "permission.asked",
+		data: {
+			sessionID: SESSION,
+			id: "per_1",
+			action: "shell",
+			resources: ["echo hi"],
+			save: ["echo *"],
+			source: { type: "tool", messageID: "msg_1", id: "call_1" },
+			...data,
+		},
+	};
 }
 
 async function waitFor(
@@ -793,3 +858,257 @@ describe("opencode backend", () => {
 		expect(probes.killed).toEqual(["SIGTERM"]);
 	});
 });
+
+describe("opencode approval bridge", () => {
+	it("maps a shell permission to bash and replies once", async () => {
+		const { backend, probes } = createHarness({
+			rules: { bash: "ask" },
+			authorize: async () => ({ allowed: true }),
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_9",
+				action: "shell",
+				resources: ["rm -rf x"],
+			}),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.permissionCalls).toEqual([
+			{
+				id: "per_9",
+				name: "bash",
+				args: { command: "rm -rf x" },
+				tool: "bash",
+			},
+		]);
+		const called = probes.permissionCalls[0];
+		expect(toolSubject(called.name, called.args)).toBe("rm -rf x");
+		expect(probes.replies).toEqual([
+			{
+				sessionID: SESSION,
+				requestID: "per_9",
+				body: { decision: "once" },
+			},
+		]);
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("replies always only when the authorizer remembered the approval", async () => {
+		const { backend, probes } = createHarness({
+			rules: { bash: "ask" },
+			authorize: async () => ({ allowed: true, remember: true }),
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({ id: "per_a", action: "shell", resources: ["echo A"] }),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.replies[0].body).toEqual({ decision: "always" });
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("replies reject with the authorizer's reason when denied", async () => {
+		const { backend, probes } = createHarness({
+			rules: { bash: "ask" },
+			authorize: async () => ({
+				allowed: false,
+				reason: "The user denied bash rm -rf x.",
+			}),
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_d",
+				action: "shell",
+				resources: ["rm -rf x"],
+			}),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.replies[0].body).toEqual({
+			decision: "reject",
+			message: "The user denied bash rm -rf x.",
+		});
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("never replies always for a dangerous command without the remember signal", async () => {
+		// The real authorizer refuses to persist a dangerous command, so it comes
+		// back allowed with no remember and the bridge stays on "once".
+		const { backend, probes } = createHarness({
+			rules: { bash: "ask" },
+			authorize: async () => ({ allowed: true }),
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_danger",
+				action: "shell",
+				resources: ["rm -rf x"],
+			}),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.replies[0].body).toEqual({ decision: "once" });
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("rejects a permission whose action maps to no tool", async () => {
+		const { backend, probes } = createHarness({
+			authorize: async () => ({ allowed: true }),
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({ id: "per_x", action: "weird", resources: ["z"] }),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.permissionCalls).toEqual([]);
+		expect(probes.replies[0].body).toEqual({
+			decision: "reject",
+			message: 'my-agent cannot map the opencode "weird" permission to a tool.',
+		});
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("does not resolve the turn while a permission request is pending", async () => {
+		const gate = deferred<AuthorizeResult>();
+		const { backend, probes } = createHarness({
+			authorize: () => gate.promise,
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({ id: "per_p", action: "shell", resources: ["echo hi"] }),
+		);
+		await waitFor(() => probes.permissionCalls.length === 1, "authorize call");
+
+		let settled = false;
+		void running.then(() => {
+			settled = true;
+		});
+		await sleep(50);
+		expect(settled).toBe(false);
+
+		gate.resolve({ allowed: true });
+		await waitFor(() => probes.replies.length === 1, "reply");
+		await sleep(50);
+		expect(settled).toBe(false);
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		const result = await running;
+		expect(result.ok).toBe(true);
+		backend.dispose?.();
+	});
+
+	it("rejects the pending request and interrupts when the turn aborts", async () => {
+		const gate = deferred<AuthorizeResult>();
+		const { backend, probes } = createHarness({
+			authorize: () => gate.promise,
+		});
+		const controller = new AbortController();
+		const running = backend.run(
+			turnOptions({ signal: controller.signal }).options,
+		);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_abort",
+				action: "shell",
+				resources: ["echo hi"],
+			}),
+		);
+		await waitFor(() => probes.permissionCalls.length === 1, "authorize call");
+
+		controller.abort();
+		await waitFor(() => probes.replies.length === 1, "reject reply");
+		await waitFor(() => probes.interrupts.length === 1, "interrupt");
+		expect(probes.replies[0].body).toEqual({
+			decision: "reject",
+			message: "Turn aborted before the approval was answered.",
+		});
+		expect(probes.interrupts).toEqual([SESSION]);
+
+		probes.sendEvent(
+			sessionEvent("session.execution.interrupted", { reason: "user" }),
+		);
+		const result = await running;
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe("Turn aborted.");
+		backend.dispose?.();
+	});
+
+	it("rejects the pending request on dispose so a stop does not leave opencode hanging", async () => {
+		const gate = deferred<AuthorizeResult>();
+		const { backend, probes } = createHarness({
+			authorize: () => gate.promise,
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_dispose",
+				action: "shell",
+				resources: ["echo hi"],
+			}),
+		);
+		await waitFor(() => probes.permissionCalls.length === 1, "authorize call");
+
+		backend.dispose?.();
+		await waitFor(() => probes.replies.length === 1, "reject reply");
+		expect(probes.replies[0].body).toEqual({
+			decision: "reject",
+			message: "my-agent stopped before the approval was answered.",
+		});
+		const result = await running;
+		expect(result.ok).toBe(false);
+	});
+});
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+	let resolve: (value: T) => void = () => undefined;
+	const promise = new Promise<T>((settle) => {
+		resolve = settle;
+	});
+	return { promise, resolve };
+}
