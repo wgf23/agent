@@ -29,6 +29,7 @@ import {
 } from "../session/store.js";
 import { summarizeArgs } from "../tui/summarize.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
+import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
 
 export const DEFAULT_BOT = "assistant";
 const DEFAULT_BOT_ROLE = "Your coding agent. Reads, edits, and runs things.";
@@ -70,6 +71,9 @@ export class SoloHub extends EventBus implements Hub {
 			type: "hello",
 			workspaceRoot: this.options.workspaceRoot,
 			model: this.options.settings.model,
+			provider:
+				this.options.runtime?.view() ??
+				fallbackProviderView(this.options.settings),
 			bots: [this.botInfo()],
 			states: [this.state()],
 			sessions: this.sessions,
@@ -90,6 +94,10 @@ export class SoloHub extends EventBus implements Hub {
 			return;
 		}
 		if (text.trim() === "") return;
+		if (this.options.runtime?.isConfigured() === false) {
+			this.emit({ type: "error", bot, message: UNCONFIGURED_MESSAGE });
+			return;
+		}
 		if (this.status === "working" || this.status === "waiting_approval") {
 			this.queue.push(text);
 			return;

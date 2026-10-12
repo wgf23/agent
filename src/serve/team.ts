@@ -9,6 +9,12 @@ import type { TeamEvent } from "../rob/events.js";
 import { Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
+import {
+	type ApplyRuntimeResult,
+	fallbackProviderView,
+	type RuntimeSnapshot,
+	UNCONFIGURED_MESSAGE,
+} from "./runtime.js";
 
 export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
@@ -17,28 +23,37 @@ export interface TeamHubOptions extends HubOptions {
 
 export class TeamHub extends EventBus implements Hub {
 	private readonly options: TeamHubOptions;
-	private readonly team: Team;
+	private team: Team;
 	private readonly roster: RobConfig[];
 
 	constructor(options: TeamHubOptions) {
 		super();
 		this.options = options;
 		this.roster = [...options.robs];
-		this.team = new Team({
-			robs: options.robs,
-			defaultModel: options.settings.model,
-			providerFactory: () => options.provider,
-			workspaceRoot: options.workspaceRoot,
-			permissions: options.permissions,
-			providerEnv: options.providerEnv,
-			extraTools: options.extraTools,
+		this.team = this.createTeam();
+		this.team.subscribe((event) => this.handle(event));
+		this.team.start();
+	}
+
+	// The one place a Team is built, so the constructor and reconfigure cannot
+	// drift. The provider factory and default model are read through
+	// this.options, which reconfigure mutates in place.
+	private createTeam(): Team {
+		return new Team({
+			robs: this.roster,
+			defaultModel: this.options.settings.model,
+			providerFactory: () => this.options.provider,
+			workspaceRoot: this.options.workspaceRoot,
+			permissions: this.options.permissions,
+			providerEnv: this.options.providerEnv,
+			extraTools: this.options.extraTools,
 			authorizerFactory: ({ name, rules, approval }) =>
 				createAuthorizer({
-					workspaceRoot: options.workspaceRoot,
+					workspaceRoot: this.options.workspaceRoot,
 					rules,
 					approval,
 					yesAll: false,
-					allowAll: options.allowAll,
+					allowAll: this.options.allowAll,
 					onAutoApproved: (request) =>
 						this.emit({
 							type: "notice",
@@ -47,8 +62,33 @@ export class TeamHub extends EventBus implements Hub {
 						}),
 				}),
 		});
+	}
+
+	// Refuses while any rob is mid-turn: a live Team cannot swap a provider under
+	// a running turn. Otherwise it stops the old Team and rebuilds it from the
+	// same roster with the new provider and default model.
+	async reconfigure(next: RuntimeSnapshot): Promise<ApplyRuntimeResult> {
+		const busy = this.team
+			.statuses()
+			.some(
+				(entry) =>
+					entry.status === "working" || entry.status === "waiting_approval",
+			);
+		if (busy) {
+			return {
+				ok: false,
+				error: "A rob is mid-turn; wait for it to finish before saving.",
+			};
+		}
+		await this.team.stop();
+		this.options.provider = next.provider;
+		this.options.settings = next.settings;
+		this.options.providerEnv = next.providerEnv;
+		this.team = this.createTeam();
 		this.team.subscribe((event) => this.handle(event));
 		this.team.start();
+		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
+		return { ok: true };
 	}
 
 	hello(): HelloEvent {
@@ -56,6 +96,9 @@ export class TeamHub extends EventBus implements Hub {
 			type: "hello",
 			workspaceRoot: this.options.workspaceRoot,
 			model: this.options.settings.model,
+			provider:
+				this.options.runtime?.view() ??
+				fallbackProviderView(this.options.settings),
 			bots: this.bots(),
 			states: this.states(),
 			sessions: [],
@@ -75,6 +118,10 @@ export class TeamHub extends EventBus implements Hub {
 
 	dispatch(bot: string, text: string): void {
 		if (text.trim() === "") return;
+		if (this.options.runtime?.isConfigured() === false) {
+			this.emit({ type: "error", bot, message: UNCONFIGURED_MESSAGE });
+			return;
+		}
 		try {
 			this.team.dispatch(bot, text);
 		} catch (error) {

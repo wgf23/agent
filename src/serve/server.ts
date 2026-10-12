@@ -8,27 +8,28 @@ import type {
 	ApprovalBody,
 	BotDraft,
 	InterruptBody,
+	SaveProviderBody,
 	SendBody,
 	ServerEvent,
 	SessionNewBody,
 	SessionOpenBody,
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
-import {
-	createSetupIo,
-	missingKeyDecision,
-	runSetupWizard,
-	verifyApiKey,
-} from "../cli/setup.js";
-import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { verifyApiKey } from "../cli/setup.js";
+import { resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
-import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Provider } from "../providers/types.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
 import { CompositeHub } from "./composite.js";
 import type { Hub, HubOptions } from "./hub.js";
 import { openBrowser } from "./open-browser.js";
+import {
+	buildProvider,
+	ProviderRuntime,
+	unconfiguredProvider,
+} from "./runtime.js";
+import { SettingsService } from "./settings.js";
 import { SoloHub } from "./solo.js";
 import { TeamHub } from "./team.js";
 
@@ -54,7 +55,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const port = options.port ?? DEFAULT_PORT;
 	const host = options.host ?? "127.0.0.1";
 
-	let resolved = resolveConfig({
+	const resolved = resolveConfig({
 		cliModel: options.model,
 		cliMaxSteps: options.maxSteps,
 		workspaceRoot,
@@ -62,67 +63,35 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		homeDir,
 	});
 	if (!resolved.ok) {
+		// Only a malformed config file is fatal. A missing key is not: the server
+		// starts and the browser Settings dialog fills it in.
 		process.stderr.write(`${resolved.error}\n`);
 		process.exitCode = 1;
 		return;
 	}
 
-	const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-	if (
-		options.provider === undefined &&
-		missingKeyDecision(resolved.config.apiKey, isTty) === "setup"
-	) {
-		const { io, close } = createSetupIo();
-		let code: number;
-		try {
-			code = await runSetupWizard({
-				io,
-				homeDir,
-				env,
-				verify: verifyApiKey,
-				currentProvider: {
-					preset: resolved.config.provider.preset,
-					model: resolved.config.provider.model,
-					baseURL: resolved.config.provider.baseURL,
-					apiKeyEnv: resolved.config.provider.apiKeyEnv,
-				},
-			});
-		} finally {
-			close();
-		}
-		if (code !== 0) {
-			process.exitCode = 1;
-			return;
-		}
-		resolved = resolveConfig({
-			cliModel: options.model,
-			cliMaxSteps: options.maxSteps,
-			workspaceRoot,
-			env,
-			homeDir,
-		});
-		if (!resolved.ok) {
-			process.stderr.write(`${resolved.error}\n`);
-			process.exitCode = 1;
-			return;
-		}
-	}
-
 	const { provider: settings, apiKey, permissions, robs } = resolved.config;
-	if (apiKey === undefined && options.provider === undefined) {
-		process.stderr.write(`${missingApiKeyMessage(settings.apiKeyEnv)}\n`);
-		process.exitCode = 1;
-		return;
-	}
+	const apiKeySource = resolved.config.apiKeySource ?? null;
+	const initialProvider =
+		apiKey === undefined
+			? unconfiguredProvider()
+			: buildProvider(settings, apiKey);
+	const runtime = new ProviderRuntime(
+		{
+			provider: initialProvider,
+			settings,
+			apiKey: apiKey ?? null,
+			apiKeySource,
+			providerEnv: apiKey === undefined ? {} : { [settings.apiKeyEnv]: apiKey },
+		},
+		options.provider,
+	);
 
-	const provider =
-		options.provider ??
-		createOpenAICompatibleProvider({
-			id: settings.preset,
-			baseURL: settings.baseURL,
-			apiKey: apiKey ?? "",
-			apiKeyEnv: settings.apiKeyEnv,
-		});
+	if (!runtime.isConfigured()) {
+		process.stdout.write(
+			"no provider configured — open the web UI → Settings to add one\n",
+		);
+	}
 
 	const mcp = await connectMcpServers({
 		servers: resolved.config.mcpServers,
@@ -131,15 +100,22 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
 	const allowAll = createAllowAll();
-	const hubOptions: HubOptions = {
+	// Getters, not values: SoloHub reads provider/settings at each turn, so a
+	// settings save is visible without rebuilding or restarting the server.
+	const hubOptions = {
 		workspaceRoot,
-		provider,
-		settings,
+		get provider() {
+			return runtime.current().provider;
+		},
+		get settings() {
+			return runtime.current().settings;
+		},
 		permissions,
 		extraTools: mcp.tools,
 		compaction: resolved.config.compaction,
 		allowAll,
-	};
+		runtime,
+	} satisfies HubOptions;
 
 	// The workspace chat and the rob roster coexist: creating a bot never
 	// replaces the default assistant, and no mode switch is involved.
@@ -150,11 +126,31 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const robHub = new TeamHub({
 		...hubOptions,
 		robs,
-		providerEnv: apiKey === undefined ? {} : { [settings.apiKeyEnv]: apiKey },
+		providerEnv: runtime.current().providerEnv,
 	});
-	const hub: Hub = new CompositeHub(workspace, robHub, workspaceRoot);
+	const hub: Hub = new CompositeHub(workspace, robHub, workspaceRoot, runtime);
 
-	const app = await buildServer(hub, options.webDist);
+	const settingsService = new SettingsService({
+		homeDir,
+		workspaceRoot,
+		env,
+		runtime,
+		applyRuntime: (next) => {
+			if (hub.applyRuntime === undefined) {
+				return Promise.resolve({
+					ok: false as const,
+					error: "this server cannot apply provider settings",
+				});
+			}
+			return hub.applyRuntime(next);
+		},
+		verify: verifyApiKey,
+	});
+
+	const app = await buildServer(hub, options.webDist, {
+		service: settingsService,
+		host,
+	});
 
 	try {
 		await app.listen({ port, host });
@@ -188,9 +184,16 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	process.on("SIGTERM", shutdown);
 }
 
+export interface SettingsBinding {
+	service: SettingsService;
+	// The resolved bind host. A non-loopback bind refuses secret writes.
+	host: string;
+}
+
 export async function buildServer(
 	hub: Hub,
 	webDist: string | undefined,
+	settings?: SettingsBinding,
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
 
@@ -303,6 +306,53 @@ export async function buildServer(
 		}
 	});
 
+	app.get("/api/settings", (_request, reply) => {
+		if (settings === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot manage provider settings" });
+		}
+		reply.header("cache-control", "no-store");
+		return {
+			provider: settings.service.readView(),
+			presets: settings.service.presets(),
+		};
+	});
+
+	app.post("/api/settings", async (request, reply) => {
+		if (settings === undefined) {
+			return reply.code(501).send({
+				ok: false,
+				error: "this server cannot manage provider settings",
+			});
+		}
+		// Writing a credential is a local-only action: a server bound to a
+		// non-loopback host would let the network seed a key.
+		if (!isLoopbackHost(settings.host)) {
+			return reply.code(403).send({
+				ok: false,
+				error: "saving provider settings is only allowed on a loopback bind",
+			});
+		}
+		const body = request.body as Partial<SaveProviderBody> | undefined;
+		if (typeof body?.preset !== "string" || typeof body.model !== "string") {
+			return reply
+				.code(400)
+				.send({ ok: false, error: "expected {preset, model}" });
+		}
+		const result = await settings.service.save(body as SaveProviderBody);
+		if (!result.ok) {
+			const status =
+				result.kind === "busy" ? 409 : result.kind === "error" ? 500 : 400;
+			return reply.code(status).send({ ok: false, error: result.error });
+		}
+		return reply.send({
+			ok: true,
+			provider: result.provider,
+			...(result.warning !== undefined ? { warning: result.warning } : {}),
+		});
+	});
+
 	if (webDist !== undefined && existsSync(path.join(webDist, "index.html"))) {
 		await app.register(fastifyStatic, { root: webDist, prefix: "/" });
 		app.setNotFoundHandler((request, reply) => {
@@ -333,6 +383,10 @@ function actualPort(app: FastifyInstance, fallback: number): number {
 function displayHost(host: string): string {
 	if (host === "0.0.0.0" || host === "::" || host === "") return "localhost";
 	return host;
+}
+
+function isLoopbackHost(host: string): boolean {
+	return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
 function errorText(error: unknown): string {

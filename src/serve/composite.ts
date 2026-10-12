@@ -8,6 +8,12 @@ import {
 import { addRob } from "../config/project-file.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
+import {
+	type ApplyRuntimeResult,
+	fallbackProviderView,
+	type ProviderRuntime,
+	type RuntimeSnapshot,
+} from "./runtime.js";
 import type { SoloHub } from "./solo.js";
 import type { TeamHub } from "./team.js";
 
@@ -26,12 +32,19 @@ export class CompositeHub extends EventBus implements Hub {
 	private readonly workspace: SoloHub;
 	private readonly robs: TeamHub;
 	private readonly workspaceRoot: string;
+	private readonly runtime: ProviderRuntime | undefined;
 
-	constructor(workspace: SoloHub, robs: TeamHub, workspaceRoot: string) {
+	constructor(
+		workspace: SoloHub,
+		robs: TeamHub,
+		workspaceRoot: string,
+		runtime?: ProviderRuntime,
+	) {
 		super();
 		this.workspace = workspace;
 		this.robs = robs;
 		this.workspaceRoot = workspaceRoot;
+		this.runtime = runtime;
 		this.workspace.subscribe((event) => this.emit(event));
 		this.robs.subscribe((event) => this.emit(event));
 	}
@@ -42,6 +55,7 @@ export class CompositeHub extends EventBus implements Hub {
 			type: "hello",
 			workspaceRoot: workspace.workspaceRoot,
 			model: workspace.model,
+			provider: workspace.provider,
 			bots: [...workspace.bots, ...this.robs.bots()],
 			states: [...workspace.states, ...this.robs.states()],
 			sessions: workspace.sessions,
@@ -50,6 +64,20 @@ export class CompositeHub extends EventBus implements Hub {
 			approvals: workspace.approvals,
 			allowAll: workspace.allowAll,
 		};
+	}
+
+	// Swaps the live provider: the rob Team is rebuilt first and may refuse
+	// while a rob is mid-turn; only then is the runtime updated and the client
+	// told. The workspace chat reads the runtime through getter-bound options,
+	// so it picks up the same change without a rebuild.
+	async applyRuntime(next: RuntimeSnapshot): Promise<ApplyRuntimeResult> {
+		const result = await this.robs.reconfigure(next);
+		if (!result.ok) return result;
+		this.runtime?.update(next);
+		const provider =
+			this.runtime?.view() ?? fallbackProviderView(next.settings);
+		this.emit({ type: "settings", provider });
+		return { ok: true };
 	}
 
 	dispatch(bot: string, text: string): void {
