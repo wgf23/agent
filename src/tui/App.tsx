@@ -139,6 +139,7 @@ export function App({
 					clear,
 					system: (line) => dispatch({ type: "append_system", text: line }),
 				});
+				dispatch({ type: "set_input", text: "" });
 				return;
 			}
 			if (controllerRef.current !== null) return;
@@ -157,15 +158,6 @@ export function App({
 
 	return (
 		<Box flexDirection="column">
-			<StatusBar
-				model={model}
-				cwd={workspaceRoot}
-				usage={state.usage}
-				status={state.status}
-				runStartedAt={state.runStartedAt}
-				thinking={thinking}
-				reasoningEffort={reasoningEffort}
-			/>
 			<MessageList
 				messages={state.messages}
 				expandTools={state.expandTools}
@@ -202,6 +194,15 @@ export function App({
 				onExit={exit}
 				onToggleTools={() => dispatch({ type: "toggle_tools" })}
 				onToggleReasoning={() => dispatch({ type: "toggle_reasoning" })}
+			/>
+			<StatusBar
+				model={model}
+				cwd={workspaceRoot}
+				usage={state.usage}
+				status={state.status}
+				runStartedAt={state.runStartedAt}
+				thinking={thinking}
+				reasoningEffort={reasoningEffort}
 			/>
 		</Box>
 	);

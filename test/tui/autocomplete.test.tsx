@@ -173,6 +173,19 @@ describe("deterministic accept", () => {
 		expect(lastFrame()).not.toContain("❯");
 		expect(lastFrame()).not.toContain("Ask anything");
 	});
+
+	it("clears the input after a slash command runs", async () => {
+		const { stdin, lastFrame } = render(app(createMockProvider([])));
+
+		stdin.write("/help");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
+		stdin.write("\r");
+
+		await waitFor(() => expect(lastFrame()).toContain("Commands:"));
+		expect(lastFrame()).toContain("Ask anything. /help for commands");
+		expect(lastFrame()).not.toContain("> /help ");
+	});
 });
 
 describe("status row", () => {
