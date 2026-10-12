@@ -1,5 +1,6 @@
 import os from "node:os";
 import { render } from "ink";
+import { runAgent } from "../agent/agent.js";
 import type { CompactionSettings } from "../agent/compact.js";
 import {
 	createSetupIo,
@@ -16,7 +17,7 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
-import type { Message } from "../providers/types.js";
+import type { Message, TextBlock } from "../providers/types.js";
 import { Team } from "../rob/team.js";
 import { chooseSession } from "../session/chooser.js";
 import {
@@ -28,6 +29,7 @@ import {
 	saveSession,
 	withoutSystem,
 } from "../session/store.js";
+import { createTaskTool } from "../tools/task.js";
 import { App } from "./App.js";
 import { createApprovalBridge } from "./approval.js";
 import type { TuiUsage } from "./state.js";
@@ -209,6 +211,27 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
 	// endpoints, so only forward them when the deepseek preset is active.
 	const deepseek = settings.preset === "deepseek";
+	const thinking = deepseek ? settings.thinking : undefined;
+	const reasoningEffort = deepseek ? settings.reasoningEffort : undefined;
+
+	// The sub-agent inherits the parent's provider, model, workspace, authorize,
+	// and thinking, and receives the standard tools only, so it cannot recurse.
+	const taskTool = createTaskTool({
+		depth: 0,
+		run: (task, signal) =>
+			runAgent({
+				provider,
+				model: settings.model,
+				workspaceRoot: options.workspaceRoot,
+				prompt: task,
+				history: [],
+				signal,
+				authorize,
+				thinking,
+				reasoningEffort,
+				onEvent: () => {},
+			}).then((result) => lastAssistantText(result.messages)),
+	});
 
 	const instance = render(
 		<App
@@ -226,7 +249,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
-			extraTools={mcp.tools}
+			extraTools={[...mcp.tools, taskTool]}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			onTurnEnd={writeSession}
@@ -282,4 +305,16 @@ async function resolveSession(
 			return newSession(options.workspaceRoot, model);
 		}
 	}
+}
+
+function lastAssistantText(messages: Message[]): string {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (message.role !== "assistant") continue;
+		return message.content
+			.filter((block): block is TextBlock => block.type === "text")
+			.map((block) => block.text)
+			.join("");
+	}
+	return "";
 }

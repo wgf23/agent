@@ -23,6 +23,7 @@ const DEFAULTS: PermissionRules = {
 	edit_file: "ask",
 	bash: "ask",
 	web_fetch: "ask",
+	task: "ask",
 };
 
 export function defaultRules(): PermissionRules {

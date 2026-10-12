@@ -12,7 +12,7 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
-import type { Provider } from "../providers/types.js";
+import type { Message, Provider, TextBlock } from "../providers/types.js";
 import { chooseSession } from "../session/chooser.js";
 import {
 	latestSession,
@@ -23,6 +23,7 @@ import {
 	saveSession,
 	withoutSystem,
 } from "../session/store.js";
+import { createTaskTool } from "../tools/task.js";
 
 export type OutputFormat = "text" | "json";
 
@@ -134,6 +135,27 @@ export async function runHeadless(
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
 	// endpoints, so only forward them when the deepseek preset is active.
 	const deepseek = settings.preset === "deepseek";
+	const thinking = deepseek ? settings.thinking : undefined;
+	const reasoningEffort = deepseek ? settings.reasoningEffort : undefined;
+
+	// The sub-agent inherits the parent's provider, model, workspace, authorize,
+	// and thinking, and receives the standard tools only, so it cannot recurse.
+	const taskTool = createTaskTool({
+		depth: 0,
+		run: (task, signal) =>
+			runAgent({
+				provider,
+				model: settings.model,
+				workspaceRoot,
+				prompt: task,
+				history: [],
+				signal,
+				authorize,
+				thinking,
+				reasoningEffort,
+				onEvent: () => {},
+			}).then((result) => lastAssistantText(result.messages)),
+	});
 
 	let reasoningChars = 0;
 	try {
@@ -150,7 +172,7 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: mcp.tools,
+			extraTools: [...mcp.tools, taskTool],
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
@@ -255,4 +277,16 @@ async function resolveSession(
 			return newSession(workspaceRoot, model);
 		}
 	}
+}
+
+function lastAssistantText(messages: Message[]): string {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (message.role !== "assistant") continue;
+		return message.content
+			.filter((block): block is TextBlock => block.type === "text")
+			.map((block) => block.text)
+			.join("");
+	}
+	return "";
 }

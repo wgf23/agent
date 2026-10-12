@@ -152,7 +152,7 @@ The directory is created `0700` and the file `0600`. The key is looked up by the
 
 Each tool maps to an action: `allow`, `ask`, or `deny`. A tool can also take an ordered list of `{ "pattern", "action" }` rules; the first matching pattern wins. `*` is a wildcard, so `git status*` matches `git status` and `git status --short`.
 
-Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, and `web_fetch` ask.
+Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, and `task` ask.
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 
@@ -273,6 +273,10 @@ Say hello to $ARGUMENTS.
 ```
 
 Typing `/greet Ada` sends `Say hello to Ada.`. `$ARGUMENTS` is replaced by the text after the command name; a body without it appends the arguments. The suggestion menu lists custom commands after the built-ins, and the names cannot reuse the built-in commands (`help`, `clear`, `compact`, `model`, `allow-all`, `quit`). A missing directory or a malformed file is skipped.
+
+## Task
+
+The `task` tool lets the solo agent delegate one self-contained sub-task to a fresh sub-agent and receive only its final text. The sub-agent inherits the parent's provider, model, workspace, permissions, and thinking, and it gets the standard tools but no `task` tool, so it cannot recurse. Its events never stream to your transcript; only the final text returns, capped at 4000 characters. `task` is available in headless runs, the TUI, and the web UI, and it asks for approval by default like `bash`.
 
 ## Robs
 
