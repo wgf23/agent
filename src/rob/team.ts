@@ -37,6 +37,16 @@ export class UnknownRobError extends Error {
 	}
 }
 
+export class DuplicateRobError extends Error {
+	readonly robName: string;
+
+	constructor(name: string) {
+		super(`Duplicate rob name: ${name}`);
+		this.name = "DuplicateRobError";
+		this.robName = name;
+	}
+}
+
 export interface TeamOptions {
 	robs: RobConfig[];
 	defaultModel: string;
@@ -50,6 +60,7 @@ export interface TeamOptions {
 }
 
 export class Team implements TeamPort {
+	private readonly options: TeamOptions;
 	private readonly robs = new Map<RobName, Rob>();
 	private readonly loops = new Map<RobName, Promise<void>>();
 	private readonly dms: DmEntry[] = [];
@@ -60,24 +71,39 @@ export class Team implements TeamPort {
 	private stopping = false;
 
 	constructor(options: TeamOptions) {
+		this.options = options;
 		for (const config of options.robs) {
-			this.robs.set(
-				config.name,
-				new Rob({
-					name: config.name,
-					role: config.role,
-					rules: resolveRobRules(options.permissions ?? {}, config),
-					model: config.model ?? options.defaultModel,
-					provider: options.providerFactory(config),
-					workspaceRoot: options.workspaceRoot,
-					authorizerFactory: options.authorizerFactory,
-					team: this,
-					backend: config.backend,
-					providerEnv: options.providerEnv,
-					extraTools: options.extraTools,
-				}),
-			);
+			this.robs.set(config.name, this.createRob(config));
 		}
+	}
+
+	// Adds a rob at runtime and starts its loop when the team is already
+	// running. A duplicate name is an error; the caller validates first.
+	addRob(config: RobConfig): void {
+		if (this.robs.has(config.name)) {
+			throw new DuplicateRobError(config.name);
+		}
+		const rob = this.createRob(config);
+		this.robs.set(config.name, rob);
+		if (this.started && !this.stopping) {
+			this.loops.set(config.name, rob.run());
+		}
+	}
+
+	private createRob(config: RobConfig): Rob {
+		return new Rob({
+			name: config.name,
+			role: config.role,
+			rules: resolveRobRules(this.options.permissions ?? {}, config),
+			model: config.model ?? this.options.defaultModel,
+			provider: this.options.providerFactory(config),
+			workspaceRoot: this.options.workspaceRoot,
+			authorizerFactory: this.options.authorizerFactory,
+			team: this,
+			backend: config.backend,
+			providerEnv: this.options.providerEnv,
+			extraTools: this.options.extraTools,
+		});
 	}
 
 	subscribe(listener: TeamListener): () => void {

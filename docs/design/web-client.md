@@ -254,10 +254,26 @@ authorizer 的 `approval(request)` 挂起 → Hub 注册 `id` 并广播 `approva
 - 协议：`hello` 快照内容（bots/sessions/allowAll）。
 - 前端：先覆盖 `state.ts` reducer 的纯函数；组件测试需另引 jsdom，可后续补。
 
+## 新增能力：在 UI 上创建 Bot
+
+Bot 模型修正为两个并存的概念：
+
+- **工作区**：`assistant`，`kind: "workspace"`。普通对话 + 会话，持久化。永远在，不是 rob。
+- **Rob 区**：`kind: "rob"`。单独区域，点 `＋ 创建 Bot` 填表即可新建。
+
+因此没有模式切换。`serve` 启动时总是同时构造 `SoloHub`（工作区）和 `TeamHub`（rob 区，允许 0 个 rob），由 `CompositeHub` 合并成一个 `Hub`；两个 hub 共用一个 `AllowAll`，`CompositeHub` 按 target 路由 `dispatch` / `interrupt` / `resolveApproval`。
+
+- 协议：`BotInfo` 加 `kind`；`hello` 去掉 `mode`；新增 `bots` 事件（roster 变化时广播）；`assistant` 为保留名，rob 不能用（`robConfigSchema` 拒绝）。
+- 端点：`POST /api/bots`，body `{ name, role, model?, backend? }`，成功 `200 {ok:true, bot}`，失败 `400 {ok:false, error}`。
+- 落盘：`addRob()` 复用 `writeChain` 的串行读-改-写，保留 `permissions` 与未知字段。手工写进 `my-agent.json` 的 rob 一样生效。
+- 运行时：`Team.addRob()`（构造 `Rob`、入 Map、已在运行时起循环），构造路径抽成 `Team.createRob()` 供构造器与 `addRob` 共用。
+- 审批 id：工作区用 `ws-approval-` 前缀，`CompositeHub` 按前缀路由，避免与 rob 队列的 `approval-` 冲突。
+- 测试：`test/serve/composite.test.ts` 覆盖创建、重名、保留字段、保留名、非法 name 与不完整 cli 后端。
+
 ## 风险与边界
 
-- **系统提示差异**：Rob 的 prompt 带「团队一员」框架。用「无 robs 走 SoloHub」规避，默认 Bot 用标准编码 agent prompt。
-- **Team 模式不持久化**：首版 Team 会话只在内存，刷新即丢；Solo 走 session store 持久化。
+- **系统提示差异**：工作区走 `SoloHub`，用标准编码 agent prompt；rob 走 `Team`，带团队提示词。两者并存，互不影响。
+- **Rob 会话不持久化**：rob 的对话只在内存，刷新即丢；工作区走 session store 持久化。
 - **前端构建与发布**：必须保证 `web/dist` 进 `files`，并处理 dev（`tsx src/index.ts`）与打包（`dist/index.js`）两处路径差异。
 - **依赖体积**：Fastify + Vite + react-dom 明显重于现有极简风格（已确认接受）。
 - **认证**：默认只绑 `127.0.0.1`，不加鉴权；若改 `--host 0.0.0.0` 需另加 token 方案（不在首版）。

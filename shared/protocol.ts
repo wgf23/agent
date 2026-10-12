@@ -33,16 +33,35 @@ export type AgentEvent =
 			steps: number;
 	  };
 
-export type HubMode = "solo" | "team";
+export type BotKind = "workspace" | "rob";
 export type BotStatus = "idle" | "working" | "waiting_approval" | "stopped";
 export type BackendKind = "native" | "cli";
 export type ApprovalChoice = "allow_once" | "allow_always" | "deny";
 
+export const WORKSPACE_BOT = "assistant";
+
 export interface BotInfo {
 	name: string;
+	kind: BotKind;
 	role: string;
 	model: string;
 	backend: BackendKind;
+}
+
+export type BotBackendDraft =
+	| { kind: "native" }
+	| {
+			kind: "cli";
+			command: "pi" | "opencode";
+			provider?: string;
+			model?: string;
+	  };
+
+export interface BotDraft {
+	name: string;
+	role: string;
+	model?: string;
+	backend?: BotBackendDraft;
 }
 
 export interface UsageTotals {
@@ -104,7 +123,6 @@ export interface TranscriptMessage {
 export type ServerEvent =
 	| {
 			type: "hello";
-			mode: HubMode;
 			workspaceRoot: string;
 			model: string;
 			bots: BotInfo[];
@@ -115,6 +133,7 @@ export type ServerEvent =
 			approvals: ApprovalRequestInfo[];
 			allowAll: boolean;
 	  }
+	| { type: "bots"; bots: BotInfo[]; states: BotState[] }
 	| {
 			type: "session_opened";
 			bot: string;
@@ -157,3 +176,5 @@ export interface SessionOpenBody {
 	bot: string;
 	id: string;
 }
+
+export type CreateBotBody = BotDraft;

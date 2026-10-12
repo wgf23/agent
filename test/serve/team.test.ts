@@ -4,6 +4,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { TeamHub } from "../../src/serve/team.js";
 
@@ -55,6 +56,7 @@ function createHub(provider: Provider): TeamHub {
 		},
 		robs: [{ name: "alpha", role: "a test rob" }],
 		providerEnv: {},
+		allowAll: createAllowAll(),
 	});
 }
 
@@ -86,10 +88,10 @@ describe("TeamHub", () => {
 	it("lists configured robs in the hello snapshot", async () => {
 		const hub = createHub(slowProvider());
 		const hello = hub.hello();
-		expect(hello.mode).toBe("team");
 		expect(hello.bots).toEqual([
 			{
 				name: "alpha",
+				kind: "rob",
 				role: "a test rob",
 				model: "deepseek-flash",
 				backend: "native",

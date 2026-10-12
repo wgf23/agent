@@ -4,6 +4,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { SoloHub } from "../../src/serve/solo.js";
 import { latestSession, newSession } from "../../src/session/store.js";
@@ -40,6 +41,7 @@ function hubOptions(provider: Provider) {
 			thresholdTokens: 100_000,
 			keepRecentTokens: 20_000,
 		},
+		allowAll: createAllowAll(),
 	};
 }
 

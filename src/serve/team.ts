@@ -4,7 +4,6 @@ import type {
 	BotState,
 	ServerEvent,
 } from "../../shared/protocol.js";
-import { type AllowAll, createAllowAll } from "../permissions/allow-all.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import type { TeamEvent } from "../rob/events.js";
 import { Team, UnknownRobError } from "../rob/team.js";
@@ -17,16 +16,14 @@ export interface TeamHubOptions extends HubOptions {
 }
 
 export class TeamHub extends EventBus implements Hub {
-	readonly mode = "team" as const;
-
 	private readonly options: TeamHubOptions;
 	private readonly team: Team;
-	private readonly allowAll: AllowAll;
+	private readonly roster: RobConfig[];
 
 	constructor(options: TeamHubOptions) {
 		super();
 		this.options = options;
-		this.allowAll = createAllowAll();
+		this.roster = [...options.robs];
 		this.team = new Team({
 			robs: options.robs,
 			defaultModel: options.settings.model,
@@ -41,7 +38,7 @@ export class TeamHub extends EventBus implements Hub {
 					rules,
 					approval,
 					yesAll: false,
-					allowAll: this.allowAll,
+					allowAll: options.allowAll,
 					onAutoApproved: (request) =>
 						this.emit({
 							type: "notice",
@@ -57,7 +54,6 @@ export class TeamHub extends EventBus implements Hub {
 	hello(): HelloEvent {
 		return {
 			type: "hello",
-			mode: "team",
 			workspaceRoot: this.options.workspaceRoot,
 			model: this.options.settings.model,
 			bots: this.bots(),
@@ -66,8 +62,15 @@ export class TeamHub extends EventBus implements Hub {
 			activeSessionId: null,
 			transcript: [],
 			approvals: [],
-			allowAll: this.allowAll.get(),
+			allowAll: this.options.allowAll.get(),
 		};
+	}
+
+	// Adds a rob to the roster and starts its run loop. The caller persists the
+	// config first; a duplicate name throws before the roster changes.
+	addBot(config: RobConfig): void {
+		this.team.addRob(config);
+		this.roster.push(config);
 	}
 
 	dispatch(bot: string, text: string): void {
@@ -96,7 +99,7 @@ export class TeamHub extends EventBus implements Hub {
 	}
 
 	setAllowAll(on: boolean): void {
-		this.allowAll.set(on);
+		this.options.allowAll.set(on);
 		this.emit({ type: "allow_all", on });
 	}
 
@@ -164,9 +167,10 @@ export class TeamHub extends EventBus implements Hub {
 		if (state !== undefined) this.emit({ type: "bot_status", state });
 	}
 
-	private bots(): BotInfo[] {
-		return this.options.robs.map((rob) => ({
+	bots(): BotInfo[] {
+		return this.roster.map((rob) => ({
 			name: rob.name,
+			kind: "rob",
 			role: rob.role,
 			model: rob.model ?? this.options.settings.model,
 			backend:
@@ -174,7 +178,7 @@ export class TeamHub extends EventBus implements Hub {
 		}));
 	}
 
-	private states(): BotState[] {
+	states(): BotState[] {
 		return this.team.statuses().map(toBotState);
 	}
 

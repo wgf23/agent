@@ -177,6 +177,84 @@ async function writePermissionRule(
 	return { ok: true };
 }
 
+export function addRob(
+	workspaceRoot: string,
+	rob: RobConfig,
+): Promise<WriteResult> {
+	const run = writeChain.then(() => writeRob(workspaceRoot, rob));
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+// Appends one rob and leaves every other key (permissions, unknown fields)
+// untouched. Sharing writeChain with addPermissionRule keeps both writers from
+// clobbering each other's read-merge-write.
+async function writeRob(
+	workspaceRoot: string,
+	rob: RobConfig,
+): Promise<WriteResult> {
+	const parsedRob = robConfigSchema.safeParse(rob);
+	if (!parsedRob.success) {
+		return { ok: false, error: z.prettifyError(parsedRob.error) };
+	}
+
+	const filePath = projectFilePath(workspaceRoot);
+	let raw: Record<string, unknown> = {};
+	try {
+		const text = await readFile(filePath, "utf8");
+		let parsedJson: unknown;
+		try {
+			parsedJson = JSON.parse(text);
+		} catch (error) {
+			return {
+				ok: false,
+				error: `Invalid JSON in ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+			};
+		}
+		const parsed = projectFileSchema.safeParse(parsedJson);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		raw = parsedJson as Record<string, unknown>;
+	} catch (error) {
+		if (!isEnoent(error)) {
+			return {
+				ok: false,
+				error: `Failed to read ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+			};
+		}
+	}
+
+	const existing =
+		raw.robs === undefined
+			? { ok: true as const, robs: [] }
+			: parseRobs(raw.robs);
+	if (!existing.ok) return { ok: false, error: existing.error };
+	if (duplicateRobName([...existing.robs, parsedRob.data]) !== undefined) {
+		return { ok: false, error: `A rob named "${rob.name}" already exists.` };
+	}
+
+	try {
+		await writeFile(
+			filePath,
+			`${JSON.stringify({ ...raw, robs: [...existing.robs, parsedRob.data] }, null, 2)}\n`,
+			"utf8",
+		);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to write ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true };
+}
+
 function isEnoent(error: unknown): boolean {
 	return (
 		typeof error === "object" &&

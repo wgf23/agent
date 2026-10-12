@@ -4,6 +4,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import { buildServer } from "../../src/serve/server.js";
 import { SoloHub } from "../../src/serve/solo.js";
 import { newSession } from "../../src/session/store.js";
@@ -46,6 +47,7 @@ describe("web server over SSE", () => {
 					thresholdTokens: 100_000,
 					keepRecentTokens: 20_000,
 				},
+				allowAll: createAllowAll(),
 			},
 			{ session, sessions: [] },
 		);
@@ -63,7 +65,7 @@ describe("web server over SSE", () => {
 		const events = readEvents(response, ac.signal);
 
 		const hello = await events.next((event) => event.type === "hello");
-		expect(hello).toMatchObject({ mode: "solo", activeSessionId: session.id });
+		expect(hello).toMatchObject({ activeSessionId: session.id });
 
 		const sent = await fetch(`http://127.0.0.1:${port}/api/send`, {
 			method: "POST",

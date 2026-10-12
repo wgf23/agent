@@ -1,5 +1,6 @@
 import type {
 	ApprovalRequestInfo,
+	BotInfo,
 	BotState,
 	ServerEvent,
 	SessionSummaryInfo,
@@ -8,7 +9,7 @@ import type {
 import { runAgent } from "../agent/agent.js";
 import { COMPACTED_SUMMARY_PREFIX } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/events.js";
-import { type AllowAll, createAllowAll } from "../permissions/allow-all.js";
+import type { AllowAll } from "../permissions/allow-all.js";
 import {
 	type ApprovalChoice,
 	type ApprovalDecision,
@@ -36,8 +37,6 @@ const DEFAULT_BOT_ROLE = "Your coding agent. Reads, edits, and runs things.";
 // through the hello snapshot, and the live tail through subscribe. Both read
 // the same in-memory session, so no disk read lands between them.
 export class SoloHub extends EventBus implements Hub {
-	readonly mode = "solo" as const;
-
 	private readonly options: HubOptions;
 	private readonly allowAll: AllowAll;
 	private session: StoredSession;
@@ -61,7 +60,7 @@ export class SoloHub extends EventBus implements Hub {
 	) {
 		super();
 		this.options = options;
-		this.allowAll = createAllowAll();
+		this.allowAll = options.allowAll;
 		this.session = initial.session;
 		this.sessions = initial.sessions.map(toSessionSummaryInfo);
 	}
@@ -69,7 +68,6 @@ export class SoloHub extends EventBus implements Hub {
 	hello(): HelloEvent {
 		return {
 			type: "hello",
-			mode: "solo",
 			workspaceRoot: this.options.workspaceRoot,
 			model: this.options.settings.model,
 			bots: [this.botInfo()],
@@ -243,7 +241,7 @@ export class SoloHub extends EventBus implements Hub {
 	}
 
 	private requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
-		const id = `approval-${this.approvalSeq}`;
+		const id = `ws-approval-${this.approvalSeq}`;
 		this.approvalSeq += 1;
 		const info: ApprovalRequestInfo = { id, bot: DEFAULT_BOT, ...request };
 		return new Promise<ApprovalDecision>((resolve) => {
@@ -273,9 +271,10 @@ export class SoloHub extends EventBus implements Hub {
 		this.emit({ type: "bot_status", state: this.state() });
 	}
 
-	private botInfo() {
+	private botInfo(): BotInfo {
 		return {
 			name: DEFAULT_BOT,
+			kind: "workspace",
 			role: DEFAULT_BOT_ROLE,
 			model: this.options.settings.model,
 			backend: "native" as const,

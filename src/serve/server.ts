@@ -6,6 +6,7 @@ import { type FastifyInstance, fastify } from "fastify";
 import type {
 	AllowAllBody,
 	ApprovalBody,
+	BotDraft,
 	InterruptBody,
 	SendBody,
 	ServerEvent,
@@ -21,9 +22,11 @@ import {
 } from "../cli/setup.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
+import { createAllowAll } from "../permissions/allow-all.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Provider } from "../providers/types.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
+import { CompositeHub } from "./composite.js";
 import type { Hub, HubOptions } from "./hub.js";
 import { openBrowser } from "./open-browser.js";
 import { SoloHub } from "./solo.js";
@@ -127,6 +130,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const allowAll = createAllowAll();
 	const hubOptions: HubOptions = {
 		workspaceRoot,
 		provider,
@@ -134,21 +138,21 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		permissions,
 		extraTools: mcp.tools,
 		compaction: resolved.config.compaction,
+		allowAll,
 	};
 
-	let hub: Hub;
-	if (robs.length > 0) {
-		hub = new TeamHub({
-			...hubOptions,
-			robs,
-			providerEnv: apiKey === undefined ? {} : { [settings.apiKeyEnv]: apiKey },
-		});
-	} else {
-		const summaries = await listSessions(workspaceRoot);
-		const latest = await latestSession(workspaceRoot);
-		const session = latest ?? newSession(workspaceRoot, settings.model);
-		hub = new SoloHub(hubOptions, { session, sessions: summaries });
-	}
+	// The workspace chat and the rob roster coexist: creating a bot never
+	// replaces the default assistant, and no mode switch is involved.
+	const summaries = await listSessions(workspaceRoot);
+	const latest = await latestSession(workspaceRoot);
+	const session = latest ?? newSession(workspaceRoot, settings.model);
+	const workspace = new SoloHub(hubOptions, { session, sessions: summaries });
+	const robHub = new TeamHub({
+		...hubOptions,
+		robs,
+		providerEnv: apiKey === undefined ? {} : { [settings.apiKeyEnv]: apiKey },
+	});
+	const hub: Hub = new CompositeHub(workspace, robHub, workspaceRoot);
 
 	const app = await buildServer(hub, options.webDist);
 
@@ -275,6 +279,28 @@ export async function buildServer(
 		}
 		await hub.openSession(body.bot, body.id);
 		return reply.send({ ok: true });
+	});
+
+	app.post("/api/bots", async (request, reply) => {
+		const createBot = hub.createBot?.bind(hub);
+		if (createBot === undefined) {
+			return reply.code(501).send({ error: "this server cannot create bots" });
+		}
+		const body = request.body as Partial<BotDraft> | undefined;
+		if (typeof body?.name !== "string" || typeof body.role !== "string") {
+			return reply.code(400).send({ error: "expected {name, role}" });
+		}
+		try {
+			const bot = await createBot({
+				name: body.name,
+				role: body.role,
+				model: typeof body.model === "string" ? body.model : undefined,
+				backend: body.backend as BotDraft["backend"],
+			});
+			return reply.send({ ok: true, bot });
+		} catch (error) {
+			return reply.code(400).send({ ok: false, error: errorText(error) });
+		}
 	});
 
 	if (webDist !== undefined && existsSync(path.join(webDist, "index.html"))) {

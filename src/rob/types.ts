@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WORKSPACE_BOT } from "../../shared/protocol.js";
 import type { AgentEvent } from "../agent/events.js";
 import type {
 	ApprovalDecision,
@@ -52,6 +53,13 @@ export const robConfigSchema = z
 		backend: robBackendSchema.optional(),
 	})
 	.superRefine((rob, ctx) => {
+		if (rob.name === WORKSPACE_BOT) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["name"],
+				message: `"${WORKSPACE_BOT}" is reserved for the workspace chat.`,
+			});
+		}
 		const backend = rob.backend;
 		if (backend === undefined || backend.kind !== "cli") return;
 		if (

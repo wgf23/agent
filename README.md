@@ -73,7 +73,9 @@ my-agent serve [--port <port>] [--host <host>] [--open] [-m <model>] [--max-step
 
 The server binds `127.0.0.1` by default and has no authentication, so keep it on the loopback interface. The client streams answers token by token, renders Markdown and tool cards, folds reasoning, and shows the same permission dialog (`Allow once` / `Always allow` / `Deny`) and allow-all switch as the TUI. `Stop` cancels the running turn without ending the session, and a message sent mid-turn is queued and injected at the next step.
 
-Without any `robs`, the client shows one bot and your saved sessions, which you can list, open, and create from the sidebar. When `my-agent.json` defines `robs`, the client switches to a Bot 广场: every rob appears with its status, `dispatch` sends to one, and the panel shows rob-to-rob DMs and notices. Team transcripts are in memory only for now.
+The sidebar has two areas. The **工作区** area is the default assistant, a plain chat whose sessions are saved and listed like the TUI. The **Rob** area holds the rob roster: click `＋ 创建 Bot`, fill in a name, role, optional model, and backend, and it is written to `my-agent.json` and starts running immediately. A rob is separate from the workspace chat and never replaces it, and an existing `robs` list in `my-agent.json` shows up here too. `assistant` is reserved for the workspace and cannot be used as a rob name.
+
+The **Bot 广场** view lists the robs with their status, and shows rob-to-rob DMs and allow-all notices. Rob transcripts are in memory only for now, and rob tools are sandboxed like the rest of the agent.
 
 Build both the CLI and the web client with `pnpm build`. For hot-reload development, run `pnpm dev serve` in one terminal and `pnpm web:dev` in another, then open the Vite URL (`http://localhost:5173`), which proxies `/api` to the server on 4317.
 

@@ -1,10 +1,12 @@
 import type {
 	ApprovalChoice,
-	HubMode,
+	BotDraft,
+	BotInfo,
 	ServerEvent,
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
 import type { ProviderSettings } from "../config/resolve.js";
+import type { AllowAll } from "../permissions/allow-all.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
@@ -19,6 +21,7 @@ export interface HubOptions {
 	permissions: PermissionRules;
 	extraTools: Tool[];
 	compaction: CompactionSettings;
+	allowAll: AllowAll;
 }
 
 // A Hub owns one or more running bots and turns their activity into a
@@ -26,7 +29,6 @@ export interface HubOptions {
 // client that subscribes then renders the snapshot sees every later event and
 // never a gap: no event can interleave between the two.
 export interface Hub {
-	readonly mode: HubMode;
 	hello(): HelloEvent;
 	subscribe(listener: EventListener): () => void;
 	dispatch(bot: string, text: string): void;
@@ -35,6 +37,8 @@ export interface Hub {
 	setAllowAll(on: boolean): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
+	// Only a hub that manages a rob roster can create one.
+	createBot?(draft: BotDraft): Promise<BotInfo>;
 	dispose(): Promise<void>;
 }
 
