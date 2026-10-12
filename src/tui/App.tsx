@@ -1,6 +1,6 @@
 import { Box, Text, useApp, useInput } from "ink";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
@@ -21,7 +21,12 @@ import {
 	expandFileMentions,
 	loadWorkspaceFiles,
 } from "./file-mentions.js";
-import { initialTuiState, tuiReducer } from "./state.js";
+import {
+	initialTuiState,
+	messagesToTuiMessages,
+	type TuiUsage,
+	tuiReducer,
+} from "./state.js";
 import { COMMANDS } from "./suggestions.js";
 import { useAllowAllState } from "./use-allow-all.js";
 
@@ -37,6 +42,10 @@ export interface AppProps {
 	reasoningEffort?: ReasoningEffort;
 	baseURL?: string;
 	apiKeyEnv?: string;
+	initialHistory?: Message[];
+	initialSessionId?: string;
+	onTurnEnd?: (messages: Message[], usage: TuiUsage) => void;
+	onClearSession?: () => string;
 	onExit?: () => void;
 }
 
@@ -60,22 +69,36 @@ export function App({
 	reasoningEffort,
 	baseURL,
 	apiKeyEnv,
+	initialHistory,
+	initialSessionId,
+	onTurnEnd,
+	onClearSession,
 	onExit,
 }: AppProps): ReactElement {
 	const app = useApp();
 	const exit = onExit ?? app.exit;
+	const initialMessages = useMemo(
+		() => messagesToTuiMessages(withoutSystem(initialHistory ?? [])),
+		[initialHistory],
+	);
 	const [state, dispatch] = useReducer(
 		tuiReducer,
-		{ workspaceRoot, model },
+		{ workspaceRoot, model, initialMessages },
 		initialTuiState,
 	);
-	const historyRef = useRef<Message[]>([]);
+	const historyRef = useRef<Message[]>(withoutSystem(initialHistory ?? []));
 	const controllerRef = useRef<AbortController | null>(null);
 	const allowAllOn = useAllowAllState(allowAll);
 
 	useEffect(() => {
 		return () => controllerRef.current?.abort();
 	}, []);
+
+	useEffect(() => {
+		if (initialSessionId !== undefined) {
+			dispatch({ type: "append_system", text: `session ${initialSessionId}` });
+		}
+	}, [initialSessionId]);
 
 	useEffect(() => {
 		return approval.subscribe((request) => {
@@ -151,6 +174,12 @@ export function App({
 					onEvent: (event) => dispatch({ type: "agent", event }),
 				});
 				historyRef.current = withoutSystem(result.messages);
+				onTurnEnd?.(historyRef.current, {
+					input: result.usage.inputTokens,
+					output: result.usage.outputTokens,
+					cacheHit: result.usage.cacheHitTokens,
+					cacheMiss: result.usage.cacheMissTokens,
+				});
 			} catch (error) {
 				dispatch({
 					type: "agent",
@@ -179,13 +208,18 @@ export function App({
 			baseURL,
 			apiKeyEnv,
 			authorize,
+			onTurnEnd,
 		],
 	);
 
 	const clear = useCallback(() => {
 		historyRef.current = [];
 		dispatch({ type: "clear" });
-	}, []);
+		const id = onClearSession?.();
+		if (id !== undefined) {
+			dispatch({ type: "append_system", text: `session ${id}` });
+		}
+	}, [onClearSession]);
 
 	const submit = useCallback(
 		(raw: string) => {

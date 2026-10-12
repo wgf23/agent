@@ -106,6 +106,102 @@ describe("App", () => {
 		expect(lastFrame()).toContain("deepseek-flash");
 	});
 
+	it("renders the earlier turns from an initial history", () => {
+		const provider = createMockProvider([]);
+		const { lastFrame } = render(
+			app(provider, {
+				initialHistory: [
+					{ role: "user", content: "earlier question" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "earlier answer" }],
+					},
+				],
+			}),
+		);
+
+		expect(lastFrame()).toContain("you> earlier question");
+		expect(lastFrame()).toContain("earlier answer");
+	});
+
+	it("calls onTurnEnd with the stored history after a turn", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const onTurnEnd = vi.fn();
+		const { stdin } = render(app(provider, { onTurnEnd }));
+
+		stdin.write("hello");
+		stdin.write("\r");
+
+		await waitFor(() => expect(onTurnEnd).toHaveBeenCalledTimes(1));
+		expect(onTurnEnd.mock.calls[0][0]).toEqual([
+			{ role: "user", content: "hello" },
+			{ role: "assistant", content: [{ type: "text", text: "answer" }] },
+		]);
+		expect(onTurnEnd.mock.calls[0][1]).toEqual({
+			input: 0,
+			output: 0,
+			cacheHit: 0,
+			cacheMiss: 0,
+		});
+	});
+
+	it("starts a new session on /clear with empty history", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "first answer" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "second answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const onTurnEnd = vi.fn();
+		const onClearSession = vi.fn(() => "ses_clear_new");
+		const { stdin, lastFrame } = render(
+			app(provider, {
+				onTurnEnd,
+				onClearSession,
+				initialSessionId: "ses_initial",
+			}),
+		);
+
+		await waitFor(() => expect(lastFrame()).toContain("· session ses_initial"));
+		stdin.write("first");
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("first answer"));
+
+		stdin.write("/clear");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
+		stdin.write("\r");
+
+		await waitFor(() => expect(onClearSession).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(lastFrame()).toContain("· session ses_clear_new"),
+		);
+		expect(lastFrame()).not.toContain("first answer");
+
+		stdin.write("second");
+		stdin.write("\r");
+		await waitFor(() => expect(provider.requests).toHaveLength(2));
+		expect(provider.requests[1].messages).not.toContainEqual({
+			role: "user",
+			content: "first",
+		});
+		const lastCall = onTurnEnd.mock.calls.at(-1);
+		expect(lastCall?.[0]).toContainEqual({ role: "user", content: "second" });
+		expect(lastCall?.[0]).not.toContainEqual({
+			role: "user",
+			content: "first",
+		});
+	});
+
 	it("exits on /quit", async () => {
 		const onExit = vi.fn();
 		const provider = createMockProvider([]);

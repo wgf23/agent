@@ -10,13 +10,32 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
+import type { Provider } from "../providers/types.js";
+import { chooseSession } from "../session/chooser.js";
+import {
+	latestSession,
+	listSessions,
+	loadSession,
+	newSession,
+	type StoredSession,
+	saveSession,
+	withoutSystem,
+} from "../session/store.js";
 
 export interface RunHeadlessOptions {
 	prompt: string;
 	model?: string;
 	maxSteps?: number;
 	yesAll?: boolean;
+	continueSession?: boolean;
+	sessionId?: string;
 	onEvent?: (event: AgentEvent) => void;
+	// Test seams: a double replaces the network provider and the workspace/env
+	// are injected so a run never reads the real home directory.
+	provider?: Provider;
+	workspaceRoot?: string;
+	env?: Record<string, string | undefined>;
+	homeDir?: string;
 }
 
 export function exitCodeForReason(reason: AgentDoneReason): number {
@@ -26,13 +45,15 @@ export function exitCodeForReason(reason: AgentDoneReason): number {
 export async function runHeadless(
 	options: RunHeadlessOptions,
 ): Promise<number> {
-	const workspaceRoot = process.cwd();
+	const workspaceRoot = options.workspaceRoot ?? process.cwd();
+	const env = options.env ?? process.env;
+	const homeDir = options.homeDir ?? os.homedir();
 	const resolved = resolveConfig({
 		cliModel: options.model,
 		cliMaxSteps: options.maxSteps,
 		workspaceRoot,
-		env: process.env,
-		homeDir: os.homedir(),
+		env,
+		homeDir,
 	});
 	if (!resolved.ok) {
 		console.error(resolved.error);
@@ -45,12 +66,18 @@ export async function runHeadless(
 		return 1;
 	}
 
-	const provider = createOpenAICompatibleProvider({
-		id: settings.preset,
-		baseURL: settings.baseURL,
-		apiKey,
-		apiKeyEnv: settings.apiKeyEnv,
-	});
+	const provider =
+		options.provider ??
+		createOpenAICompatibleProvider({
+			id: settings.preset,
+			baseURL: settings.baseURL,
+			apiKey,
+			apiKeyEnv: settings.apiKeyEnv,
+		});
+
+	const session = await resolveSession(options, workspaceRoot, settings.model);
+	if (session === null) return 1;
+	process.stderr.write(`[session] ${session.id}\n`);
 
 	const yesAll = options.yesAll ?? false;
 	const rules = {
@@ -85,6 +112,7 @@ export async function runHeadless(
 			model: settings.model,
 			workspaceRoot,
 			prompt: options.prompt,
+			history: session.messages,
 			maxSteps: settings.maxSteps,
 			thinking: deepseek ? settings.thinking : undefined,
 			reasoningEffort: deepseek ? settings.reasoningEffort : undefined,
@@ -124,8 +152,58 @@ export async function runHeadless(
 		process.stderr.write(
 			`[usage] input=${result.usage.inputTokens} output=${result.usage.outputTokens} cache_hit=${result.usage.cacheHitTokens} cache_miss=${result.usage.cacheMissTokens} reasoning=${result.usage.reasoningTokens}\n`,
 		);
+		session.messages = withoutSystem(result.messages);
+		session.usage = {
+			input: session.usage.input + result.usage.inputTokens,
+			output: session.usage.output + result.usage.outputTokens,
+		};
+		session.model = settings.model;
+		session.updatedAt = Date.now();
+		const saved = await saveSession(session);
+		if (!saved.ok) process.stderr.write(`[session] ${saved.error}\n`);
 		return exitCodeForReason(result.reason);
 	} finally {
 		process.off("SIGINT", onSigint);
+	}
+}
+
+async function resolveSession(
+	options: RunHeadlessOptions,
+	workspaceRoot: string,
+	model: string,
+): Promise<StoredSession | null> {
+	const summaries = await listSessions(workspaceRoot);
+	const choice = chooseSession(
+		{
+			continueFlag: options.continueSession ?? false,
+			sessionId: options.sessionId,
+		},
+		summaries,
+	);
+
+	switch (choice.mode) {
+		case "error":
+			console.error(choice.error);
+			return null;
+		case "latest":
+			return (
+				(await latestSession(workspaceRoot)) ?? newSession(workspaceRoot, model)
+			);
+		case "id": {
+			const loaded = await loadSession(workspaceRoot, choice.id);
+			if (!loaded.ok) {
+				console.error(loaded.error);
+				return null;
+			}
+			return loaded.session;
+		}
+		case "new": {
+			if (options.continueSession) {
+				process.stderr.write(
+					"[session] no saved session for this workspace; starting a new one\n",
+				);
+			}
+			return newSession(workspaceRoot, model);
+		}
 	}
 }

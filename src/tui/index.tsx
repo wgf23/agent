@@ -14,15 +14,29 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
+import type { Message } from "../providers/types.js";
 import { Team } from "../rob/team.js";
+import { chooseSession } from "../session/chooser.js";
+import {
+	latestSession,
+	listSessions,
+	loadSession,
+	newSession,
+	type StoredSession,
+	saveSession,
+	withoutSystem,
+} from "../session/store.js";
 import { App } from "./App.js";
 import { createApprovalBridge } from "./approval.js";
+import type { TuiUsage } from "./state.js";
 import { TeamApp } from "./team/App.js";
 
 export interface RunTuiOptions {
 	workspaceRoot: string;
 	model?: string;
 	maxSteps?: number;
+	continueSession?: boolean;
+	sessionId?: string;
 }
 
 export async function runTui(options: RunTuiOptions): Promise<void> {
@@ -127,6 +141,27 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		return;
 	}
 
+	// Sessions cover the single-agent TUI. Team mode keeps its own transcripts.
+	let session = await resolveSession(options, settings.model);
+
+	const writeSession = (messages: Message[], usage: TuiUsage): void => {
+		session.messages = withoutSystem(messages);
+		session.usage = {
+			input: session.usage.input + usage.input,
+			output: session.usage.output + usage.output,
+		};
+		session.model = settings.model;
+		session.updatedAt = Date.now();
+		void saveSession(session).then((saved) => {
+			if (!saved.ok) console.error(`[session] ${saved.error}`);
+		});
+	};
+
+	const startNewSession = (): string => {
+		session = newSession(options.workspaceRoot, settings.model);
+		return session.id;
+	};
+
 	const rules = {
 		...defaultRules(),
 		...permissions,
@@ -159,7 +194,55 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			reasoningEffort={deepseek ? settings.reasoningEffort : undefined}
 			baseURL={settings.baseURL}
 			apiKeyEnv={settings.apiKeyEnv}
+			initialHistory={session.messages}
+			initialSessionId={session.id}
+			onTurnEnd={writeSession}
+			onClearSession={startNewSession}
 		/>,
 	);
 	await instance.waitUntilExit();
+}
+
+// A resumed run loads the chosen session; any load problem falls back to a
+// fresh session with a note, so the TUI always starts.
+async function resolveSession(
+	options: RunTuiOptions,
+	model: string,
+): Promise<StoredSession> {
+	const summaries = await listSessions(options.workspaceRoot);
+	const choice = chooseSession(
+		{
+			continueFlag: options.continueSession ?? false,
+			sessionId: options.sessionId,
+		},
+		summaries,
+	);
+
+	switch (choice.mode) {
+		case "error":
+			console.error(`[session] ${choice.error} Starting a new session.`);
+			return newSession(options.workspaceRoot, model);
+		case "latest": {
+			const latest = await latestSession(options.workspaceRoot);
+			if (latest !== null) return latest;
+			console.error(
+				"[session] no saved session for this workspace; starting a new one",
+			);
+			return newSession(options.workspaceRoot, model);
+		}
+		case "id": {
+			const loaded = await loadSession(options.workspaceRoot, choice.id);
+			if (loaded.ok) return loaded.session;
+			console.error(`[session] ${loaded.error} Starting a new session.`);
+			return newSession(options.workspaceRoot, model);
+		}
+		case "new": {
+			if (options.continueSession) {
+				console.error(
+					"[session] no saved session for this workspace; starting a new one",
+				);
+			}
+			return newSession(options.workspaceRoot, model);
+		}
+	}
 }

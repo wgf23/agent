@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
+import { runSessionsListCommand } from "./cli/sessions.js";
 import { runSetupCommand } from "./cli/setup.js";
 import { runSkillAdd, runSkillList, runSkillRemove } from "./cli/skill.js";
 import { runTeamCommand } from "./cli/team.js";
@@ -18,6 +19,8 @@ interface RunOptions {
 	model?: string;
 	maxSteps?: string;
 	yes?: boolean;
+	continue?: boolean;
+	session?: string;
 }
 
 interface TeamOptions {
@@ -44,6 +47,8 @@ async function run(prompt: string, options: RunOptions): Promise<void> {
 		model: options.model,
 		maxSteps: parseMaxSteps(options.maxSteps),
 		yesAll: options.yes,
+		continueSession: options.continue,
+		sessionId: options.session,
 	});
 }
 
@@ -59,6 +64,8 @@ program
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps")
 	.option("--yes", "auto-approve every tool call")
+	.option("--continue", "resume the latest session for this workspace")
+	.option("--session <id>", "resume a specific session by id")
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
@@ -66,6 +73,8 @@ program
 				workspaceRoot: process.cwd(),
 				model: options.model,
 				maxSteps: parseMaxSteps(options.maxSteps),
+				continueSession: options.continue,
+				sessionId: options.session,
 			});
 			return;
 		}
@@ -79,8 +88,19 @@ program
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps")
 	.option("--yes", "auto-approve every tool call")
+	.option("--continue", "resume the latest session for this workspace")
+	.option("--session <id>", "resume a specific session by id")
 	.action(async (prompt: string, options: RunOptions) => {
 		await run(prompt, options);
+	});
+
+program
+	.command("sessions")
+	.description("Inspect saved sessions")
+	.command("list")
+	.description("List saved sessions for the current workspace")
+	.action(async () => {
+		process.exitCode = await runSessionsListCommand();
 	});
 
 program

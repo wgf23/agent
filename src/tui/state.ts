@@ -1,4 +1,11 @@
 import type { AgentEvent } from "../agent/events.js";
+import type {
+	Message,
+	ReasoningBlock,
+	TextBlock,
+	ToolCallBlock,
+	ToolMessage,
+} from "../providers/types.js";
 import type { PendingPermission } from "./approval.js";
 import { agentSuggestions } from "./file-mentions.js";
 import {
@@ -80,6 +87,7 @@ export interface TuiState {
 export interface TuiInit {
 	workspaceRoot: string;
 	model: string;
+	initialMessages?: TuiMessage[];
 }
 
 // The fields an AgentEvent stream writes. Extraction lets the team reducer
@@ -109,8 +117,9 @@ export type TuiAction =
 export const CANCEL_MESSAGE = "[cancelled]";
 
 export function initialTuiState(init: TuiInit): TuiState {
+	const messages = init.initialMessages ?? [];
 	return {
-		messages: [],
+		messages,
 		status: "idle",
 		usage: { input: 0, output: 0, cacheHit: 0, cacheMiss: 0 },
 		runStartedAt: null,
@@ -118,7 +127,7 @@ export function initialTuiState(init: TuiInit): TuiState {
 		input: "",
 		history: [],
 		historyIndex: null,
-		nextId: 1,
+		nextId: messages.length + 1,
 		workspaceRoot: init.workspaceRoot,
 		model: init.model,
 		expandTools: false,
@@ -127,6 +136,53 @@ export function initialTuiState(init: TuiInit): TuiState {
 		menu: MENU_NEUTRAL,
 		files: [],
 	};
+}
+
+// Rebuilds the visible transcript from a stored provider transcript so a
+// resumed session opens on its earlier turns. Tool results live in following
+// tool messages, so they are folded back onto their assistant call.
+export function messagesToTuiMessages(messages: Message[]): TuiMessage[] {
+	const toolResults = new Map<string, ToolMessage>();
+	for (const message of messages) {
+		if (message.role === "tool") toolResults.set(message.toolCallId, message);
+	}
+
+	const out: TuiMessage[] = [];
+	let id = 1;
+	for (const message of messages) {
+		if (message.role === "user") {
+			out.push({ id: id++, role: "user", text: message.content });
+			continue;
+		}
+		if (message.role !== "assistant") continue;
+		const tools: TuiToolCall[] = message.content
+			.filter((block): block is ToolCallBlock => block.type === "tool_call")
+			.map((block) => {
+				const result = toolResults.get(block.id);
+				return {
+					id: block.id,
+					name: block.name,
+					args: block.args,
+					summary: summarizeArgs(block.name, block.args),
+					status: result?.isError === true ? "error" : "ok",
+					output: result?.content ?? "",
+				};
+			});
+		out.push({
+			id: id++,
+			role: "assistant",
+			text: message.content
+				.filter((block): block is TextBlock => block.type === "text")
+				.map((block) => block.text)
+				.join(""),
+			reasoning: message.content
+				.filter((block): block is ReasoningBlock => block.type === "reasoning")
+				.map((block) => block.text)
+				.join(""),
+			tools,
+		});
+	}
+	return out;
 }
 
 export function cacheHitRatio(usage: TuiUsage): number | null {
