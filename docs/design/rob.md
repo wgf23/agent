@@ -114,6 +114,57 @@ Inbound = { kind: user | dm | subagent_result, from, text }
 - **风险：TUI 复杂度**。多个 rob 的状态、私聊日志、子 agent 日志、审批队列都要在一个界面里展示。计划分成 R2 阶段单独做。
 - **问题：rob 之间能否共享文件之外的状态？** 当前设计不允许，只能通过私聊。如果你需要共享黑板之类的东西，要单独设计。
 
+## 后端类型（待确认）
+
+用户提出：每个 rob 可以选择不同的 agent 类型，例如 claude、kimi、pi、codex。这里有两种完全不同的含义，需要先确认。
+
+**含义 A：模型。** 只换模型，仍由我们的循环驱动。例如 kimi 模型通过 OpenAI 兼容端点调用。这种情况下 `native` 后端已经能支持，只需要在 `preset` 或 `baseURL` 上配置，不需要新代码。
+
+**含义 B：外部 CLI 工具。** 每个 rob 实际运行 `claude`、`codex`、`kimi`、`pi` 这类 agent 程序。它们自带工具和权限系统，我们无法直接截获它们的工具调用。
+
+两种含义对设计影响很大。下面按含义 B 写。
+
+### 后端接口
+
+```text
+RobBackend
+  kind: "native" | "cli"
+  run(turn): Promise<TurnResult>
+    turn = { history, inbound, signal, onEvent }
+    native：调用 runAgent，拥有全部工具、审批、私聊、子 agent
+    cli：启动外部进程，把 inbound 作为 prompt 传入，收集最终文本
+```
+
+配置形式（草案）：
+
+```json
+{
+  "robs": [
+    { "name": "planner", "role": "拆解任务", "backend": { "kind": "native", "preset": "deepseek", "model": "deepseek-flash" } },
+    { "name": "reviewer", "role": "审查改动", "backend": { "kind": "cli", "command": "codex", "args": ["exec"] } }
+  ]
+}
+```
+
+### 外部 CLI 的限制（必须接受或解决）
+
+| 能力 | native | cli |
+|---|---|---|
+| 审批（y/a/n） | 是，经过我们的 authorizer | 否。外部程序自己决定，只能依赖它自己的权限配置 |
+| `send_message` 私聊工具 | 是 | 否，除非外部程序支持 MCP 并连接到我们提供的服务 |
+| `delegate` 子 agent | 是 | 否，外部程序有自己的子任务机制，我们只能看到最终文本 |
+| 用户插话 | 是，在下一步生效 | 只能在下一次启动时生效，无法中途注入 |
+| 事件流（工具过程） | 完整 | 取决于外部程序的输出格式，可能只有文本 |
+| 历史 | 我们持有 | 外部程序各自持有，我们只能每次把历史拼进 prompt |
+
+结论：cli 后端会破坏「权限独立、可以审批、子 agent 只读可见」这几条要求。如果要保留，就必须做 MCP 桥接，或者接受这些 rob 没有审批。
+
+### 建议
+
+1. 先确认是含义 A 还是 B。如果是 A，不需要改设计，只需要配置 `native` 的 `preset`。
+2. 如果是 B，把它放在 R3 之后作为 **R4**，并且先做一个验证阶段：在有这些 CLI 的机器上确认它们的非交互模式（参数、输出格式、能否提供工具调用信息）。这台机器上没有安装，所以 R4 的第一步必须是安装并验证，不能凭文档假设。
+3. R4 的第一版只做「派发任务、返回最终文本」，不提供私聊和审批，并明确标注这些 rob 的权限边界。
+
 ## 下一步实现
 
 1. R1：核心（`Rob` actor、收件箱、`drainInput` 钩子、`send_message` 和 `delegate` 工具、`Team` 的无界面运行）。用 MockProvider 测试。
