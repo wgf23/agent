@@ -6,6 +6,7 @@ import type {
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
 import type { ProviderSettings } from "../config/resolve.js";
+import type { HooksConfig } from "../hooks/hooks.js";
 import type { AllowAll } from "../permissions/allow-all.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Provider } from "../providers/types.js";
@@ -26,6 +27,7 @@ export interface HubOptions {
 	permissions: PermissionRules;
 	extraTools: Tool[];
 	compaction: CompactionSettings;
+	hooks?: HooksConfig;
 	allowAll: AllowAll;
 	// Optional so existing test literals keep compiling. When present the hubs
 	// use it to gate dispatch and to report the live provider in hello/view.

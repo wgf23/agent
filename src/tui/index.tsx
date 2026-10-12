@@ -229,6 +229,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 				authorize,
 				thinking,
 				reasoningEffort,
+				hooks: resolved.config.hooks,
 				onEvent: () => {},
 			}).then((result) => lastAssistantText(result.messages)),
 	});
@@ -252,6 +253,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			extraTools={[...mcp.tools, taskTool]}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
+			hooks={resolved.config.hooks}
 			onTurnEnd={writeSession}
 			onClearSession={startNewSession}
 		/>,

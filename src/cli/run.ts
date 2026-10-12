@@ -153,6 +153,7 @@ export async function runHeadless(
 				authorize,
 				thinking,
 				reasoningEffort,
+				hooks: resolved.config.hooks,
 				onEvent: () => {},
 			}).then((result) => lastAssistantText(result.messages)),
 	});
@@ -173,6 +174,7 @@ export async function runHeadless(
 			authorize,
 			compaction: resolved.config.compaction,
 			extraTools: [...mcp.tools, taskTool],
+			hooks: resolved.config.hooks,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {

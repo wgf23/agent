@@ -222,6 +222,7 @@ export class SoloHub extends EventBus implements Hub {
 					authorize,
 					thinking,
 					reasoningEffort,
+					hooks: this.options.hooks,
 					onEvent: () => {},
 				}).then((result) => lastAssistantText(result.messages) ?? ""),
 		});
@@ -240,6 +241,7 @@ export class SoloHub extends EventBus implements Hub {
 				authorize,
 				compaction: this.options.compaction,
 				extraTools: [...this.options.extraTools, taskTool],
+				hooks: this.options.hooks,
 				drainInput: () => {
 					const queued = this.queue.splice(0);
 					return queued.map((text) => ({ role: "user", content: text }));
