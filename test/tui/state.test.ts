@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	cacheHitRatio,
 	initialTuiState,
+	messagesToTuiMessages,
 	tuiReducer,
 } from "../../src/tui/state.js";
 import { commandSuggestions, isMenuOpen } from "../../src/tui/suggestions.js";
@@ -9,6 +10,20 @@ import { commandSuggestions, isMenuOpen } from "../../src/tui/suggestions.js";
 function base() {
 	return initialTuiState({ workspaceRoot: "/ws", model: "deepseek-flash" });
 }
+
+describe("messagesToTuiMessages", () => {
+	it("renders a compacted summary user message as a system line", () => {
+		const messages = messagesToTuiMessages([
+			{ role: "user", content: "[compacted summary]\nSUMMARY" },
+			{ role: "user", content: "recent question" },
+		]);
+
+		expect(messages).toEqual([
+			{ id: 1, role: "system", text: "compacted summary (7 chars)" },
+			{ id: 2, role: "user", text: "recent question" },
+		]);
+	});
+});
 
 describe("tuiReducer", () => {
 	it("accumulates text_delta into one assistant turn", () => {

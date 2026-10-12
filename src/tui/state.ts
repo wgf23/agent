@@ -1,3 +1,4 @@
+import { COMPACTED_SUMMARY_PREFIX } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/events.js";
 import type {
 	Message,
@@ -152,6 +153,19 @@ export function messagesToTuiMessages(messages: Message[]): TuiMessage[] {
 	let id = 1;
 	for (const message of messages) {
 		if (message.role === "user") {
+			if (message.content.startsWith(COMPACTED_SUMMARY_PREFIX)) {
+				// The summary is context for the model, not a user turn. The full
+				// text still reaches the provider; the transcript only shows a stub.
+				const summary = message.content
+					.slice(COMPACTED_SUMMARY_PREFIX.length)
+					.replace(/^\n/, "");
+				out.push({
+					id: id++,
+					role: "system",
+					text: `compacted summary (${summary.length} chars)`,
+				});
+				continue;
+			}
 			out.push({ id: id++, role: "user", text: message.content });
 			continue;
 		}

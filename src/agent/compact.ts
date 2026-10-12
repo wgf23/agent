@@ -34,6 +34,9 @@ export interface ShouldCompactInput {
 	force: boolean;
 	auto: boolean;
 	estimatedTokens: number;
+	// A per-turn provider input count. Cumulative session usage would grow
+	// without bound and trip compaction early, so callers that only have the
+	// persisted session total leave this undefined and trust the estimate.
 	lastInputTokens?: number;
 	thresholdTokens: number;
 }
@@ -82,8 +85,11 @@ export function splitForCompaction(
 	};
 }
 
+// Tag for the message that replaces older turns with a model-written summary.
+export const COMPACTED_SUMMARY_PREFIX = "[compacted summary]";
+
 export function compactSummaryMessage(summary: string): Message {
-	return { role: "system", content: `[compacted summary]\n${summary}` };
+	return { role: "system", content: `${COMPACTED_SUMMARY_PREFIX}\n${summary}` };
 }
 
 const SUMMARY_INSTRUCTION =
