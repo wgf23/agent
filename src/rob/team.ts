@@ -24,6 +24,9 @@ import type {
 export const TEAM_STOPPED_REASON =
 	"The team stopped before this approval was answered.";
 
+export const TURN_INTERRUPTED_REASON =
+	"The turn was interrupted before the approval was answered.";
+
 export class UnknownRobError extends Error {
 	readonly robName: string;
 
@@ -125,6 +128,13 @@ export class Team implements TeamPort {
 			rob.stop();
 		}
 		await Promise.all([...this.loops.values()]);
+	}
+
+	// Ends the rob's current turn and keeps the rob alive for the next dispatch.
+	interrupt(name: string): void {
+		const rob = this.requireRob(name);
+		rob.abortTurn();
+		this.approvals.denyRob(name, TURN_INTERRUPTED_REASON);
 	}
 
 	hasRob(name: string): boolean {

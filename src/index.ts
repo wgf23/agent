@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { DEFAULT_PORT } from "../shared/protocol.js";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
 import { runSessionsListCommand } from "./cli/sessions.js";
 import { runSetupCommand } from "./cli/setup.js";
 import { runSkillAdd, runSkillList, runSkillRemove } from "./cli/skill.js";
 import { runTeamCommand } from "./cli/team.js";
+import { runServe } from "./serve/server.js";
 import { runTui } from "./tui/index.js";
 
 // src/ and dist/ both sit one level below package.json, so this resolves from
@@ -29,8 +32,24 @@ interface TeamOptions {
 	yes?: boolean;
 }
 
+interface ServeOptions {
+	port?: string;
+	host?: string;
+	open?: boolean;
+	model?: string;
+	maxSteps?: string;
+}
+
 function parseMaxSteps(value: string | undefined): number | undefined {
 	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function parsePort(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const port = Number.parseInt(value, 10);
+	return Number.isInteger(port) && port >= 0 && port <= 65535
+		? port
+		: undefined;
 }
 
 function parseWaitMs(value: string | undefined): number | undefined {
@@ -110,6 +129,26 @@ program
 	)
 	.action(() => {
 		process.exitCode = runConfigCommand();
+	});
+
+program
+	.command("serve")
+	.description("Start the local web UI in a browser")
+	.option("-p, --port <port>", "port to listen on", String(DEFAULT_PORT))
+	.option("--host <host>", "host to bind to", "127.0.0.1")
+	.option("--open", "open the browser after the server starts")
+	.option("-m, --model <model>", "model to use")
+	.option("--max-steps <steps>", "maximum agent steps")
+	.action(async (options: ServeOptions) => {
+		await runServe({
+			workspaceRoot: process.cwd(),
+			model: options.model,
+			maxSteps: parseMaxSteps(options.maxSteps),
+			port: parsePort(options.port),
+			host: options.host,
+			open: options.open,
+			webDist: fileURLToPath(new URL("../web/dist", import.meta.url)),
+		});
 	});
 
 program

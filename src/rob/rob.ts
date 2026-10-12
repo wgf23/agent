@@ -130,6 +130,13 @@ export class Rob {
 		this.setStatus("stopped");
 	}
 
+	// Only a turn in flight has anything to abort. Aborting while idle would
+	// cancel the batch wait and end the run loop.
+	abortTurn(): void {
+		if (this.status !== "working" && this.status !== "waiting_approval") return;
+		this.currentRun?.abort();
+	}
+
 	markWaitingApproval(): void {
 		if (this.stopRequested) return;
 		this.setStatus("waiting_approval");

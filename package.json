@@ -11,6 +11,7 @@
 	},
 	"files": [
 		"dist",
+		"web/dist",
 		"README.md"
 	],
 	"engines": {
@@ -18,7 +19,10 @@
 	},
 	"scripts": {
 		"dev": "tsx src/index.ts",
-		"build": "tsup && node scripts/postbuild.mjs",
+		"build": "tsup && node scripts/postbuild.mjs && pnpm --filter my-agent-web build",
+		"web:dev": "pnpm --filter my-agent-web dev",
+		"web:build": "pnpm --filter my-agent-web build",
+		"serve": "tsx src/index.ts serve --open",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
@@ -27,9 +31,11 @@
 		"e2e:team": "tsx scripts/e2e-team.ts"
 	},
 	"dependencies": {
+		"@fastify/static": "^10.1.6",
 		"commander": "^15.0.0",
 		"diff": "^9.0.0",
 		"fast-glob": "^3.3.3",
+		"fastify": "^5.12.5",
 		"ignore": "^7.0.12",
 		"ink": "^8.0.0",
 		"openai": "^7.32.0",

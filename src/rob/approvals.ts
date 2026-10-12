@@ -77,6 +77,13 @@ export class ApprovalQueue {
 		}
 	}
 
+	denyRob(rob: RobName, reason: string): void {
+		for (const id of [...this.order]) {
+			if (this.entries.get(id)?.request.rob !== rob) continue;
+			this.take(id).resolve({ deny: reason });
+		}
+	}
+
 	private allowDuplicates(source: ApprovalRequest): void {
 		if (source.dangerous || source.rule === null) return;
 		for (const id of [...this.order]) {
