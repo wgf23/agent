@@ -1,8 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import fastifyStatic from "@fastify/static";
-import { type FastifyInstance, fastify } from "fastify";
+import { type FastifyInstance, type FastifyRequest, fastify } from "fastify";
 import type {
 	AllowAllBody,
 	ApprovalBody,
@@ -54,6 +55,9 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const homeDir = options.homeDir ?? os.homedir();
 	const port = options.port ?? DEFAULT_PORT;
 	const host = options.host ?? "127.0.0.1";
+	// A non-loopback bind is reachable from the network, so the UI needs a
+	// token the owner can paste into the URL. Loopback keeps no-auth behavior.
+	const token = isLoopbackHost(host) ? undefined : generateToken();
 
 	const resolved = resolveConfig({
 		cliModel: options.model,
@@ -150,6 +154,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const app = await buildServer(hub, options.webDist, {
 		service: settingsService,
 		host,
+		token,
 	});
 
 	try {
@@ -165,8 +170,9 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	}
 
 	const url = `http://${displayHost(host)}:${actualPort(app, port)}`;
-	process.stdout.write(`my-agent web ui: ${url}\n`);
-	if (options.open === true) openBrowser(url);
+	const tokenUrl = token === undefined ? url : `${url}/?token=${token}`;
+	process.stdout.write(`my-agent web ui: ${tokenUrl}\n`);
+	if (options.open === true) openBrowser(tokenUrl);
 
 	let shuttingDown = false;
 	const shutdown = (): void => {
@@ -188,6 +194,9 @@ export interface SettingsBinding {
 	service: SettingsService;
 	// The resolved bind host. A non-loopback bind refuses secret writes.
 	host: string;
+	// Present on a non-loopback bind; buildServer then gates every /api/*
+	// request behind it. Loopback leaves it undefined, keeping no-auth behavior.
+	token?: string;
 }
 
 export async function buildServer(
@@ -196,6 +205,16 @@ export async function buildServer(
 	settings?: SettingsBinding,
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
+
+	const token = settings?.token;
+	if (token !== undefined) {
+		app.addHook("onRequest", async (request, reply) => {
+			if (!request.url.startsWith("/api/")) return;
+			if (requestToken(request) === token) return;
+			reply.code(401).send({ error: "unauthorized" });
+			return reply;
+		});
+	}
 
 	app.get("/api/events", (request, reply) => {
 		reply.hijack();
@@ -387,6 +406,22 @@ function displayHost(host: string): string {
 
 function isLoopbackHost(host: string): boolean {
 	return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+function generateToken(): string {
+	return randomBytes(24).toString("base64url");
+}
+
+function requestToken(request: FastifyRequest): string | undefined {
+	const authorization = request.headers.authorization;
+	if (
+		typeof authorization === "string" &&
+		authorization.startsWith("Bearer ")
+	) {
+		return authorization.slice("Bearer ".length);
+	}
+	const query = request.query as { token?: unknown };
+	return typeof query.token === "string" ? query.token : undefined;
 }
 
 function errorText(error: unknown): string {
