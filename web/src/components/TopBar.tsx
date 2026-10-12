@@ -1,3 +1,4 @@
+import type { ProviderView } from "../protocol";
 import type { ConnectionStatus } from "../state";
 
 interface Props {
@@ -5,6 +6,8 @@ interface Props {
 	onViewChange: (view: "chat" | "plaza") => void;
 	model: string;
 	connection: ConnectionStatus;
+	provider: ProviderView | null;
+	onOpenSettings: () => void;
 }
 
 export default function TopBar({
@@ -12,7 +15,11 @@ export default function TopBar({
 	onViewChange,
 	model,
 	connection,
+	provider,
+	onOpenSettings,
 }: Props) {
+	const unconfigured = provider?.configured === false;
+	const chip = unconfigured ? "未配置" : (provider?.model ?? model);
 	return (
 		<header className="topbar">
 			<div className="topbar-left">
@@ -38,8 +45,20 @@ export default function TopBar({
 				</button>
 			</nav>
 			<div className="topbar-right">
-				<span className="model-chip" title="当前模型">
-					{model || "—"}
+				<button
+					type="button"
+					className="icon-btn"
+					title="模型设置"
+					aria-label="模型设置"
+					onClick={onOpenSettings}
+				>
+					⚙
+				</button>
+				<span
+					className={`model-chip ${unconfigured ? "model-chip-unconfigured" : ""}`}
+					title="当前模型"
+				>
+					{chip || "—"}
 				</span>
 				<span
 					className={`connection-dot ${connection}`}

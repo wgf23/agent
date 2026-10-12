@@ -5,6 +5,8 @@ import type {
 	BotState,
 	BotStatus,
 	DmInfo,
+	PresetInfo,
+	ProviderView,
 	ServerEvent,
 	SessionSummaryInfo,
 	ToolCallView,
@@ -22,6 +24,9 @@ export interface NoticeView {
 export interface ClientState {
 	workspaceRoot: string;
 	model: string;
+	// Server view of the LLM provider. null until the first hello arrives.
+	provider: ProviderView | null;
+	presets: PresetInfo[];
 	bots: BotInfo[];
 	botStates: Record<string, BotState>;
 	sessions: SessionSummaryInfo[];
@@ -34,18 +39,27 @@ export interface ClientState {
 	connection: ConnectionStatus;
 	usage: UsageTotals;
 	lastError: string | null;
+	settingsOpen: boolean;
+	settingsError: string | null;
 }
 
 export type ClientAction =
 	| { type: "server"; event: ServerEvent }
 	| { type: "connection"; status: ConnectionStatus }
 	| { type: "submit"; bot: string; text: string }
-	| { type: "approval_removed"; id: string };
+	| { type: "approval_removed"; id: string }
+	| { type: "settings_presets"; presets: PresetInfo[] }
+	| { type: "settings_provider"; provider: ProviderView }
+	| { type: "settings_open" }
+	| { type: "settings_close" }
+	| { type: "settings_error"; error: string | null };
 
 export function initialState(): ClientState {
 	return {
 		workspaceRoot: "",
 		model: "",
+		provider: null,
+		presets: [],
 		bots: [],
 		botStates: {},
 		sessions: [],
@@ -58,6 +72,8 @@ export function initialState(): ClientState {
 		connection: "connecting",
 		usage: { input: 0, output: 0 },
 		lastError: null,
+		settingsOpen: false,
+		settingsError: null,
 	};
 }
 
@@ -112,6 +128,21 @@ export function clientReducer(
 				approvals: state.approvals.filter((a) => a.id !== action.id),
 			};
 
+		case "settings_presets":
+			return { ...state, presets: action.presets };
+
+		case "settings_provider":
+			return { ...state, provider: action.provider };
+
+		case "settings_open":
+			return { ...state, settingsOpen: true, settingsError: null };
+
+		case "settings_close":
+			return { ...state, settingsOpen: false, settingsError: null };
+
+		case "settings_error":
+			return { ...state, settingsError: action.error };
+
 		case "server":
 			return applyServerEvent(state, action.event);
 	}
@@ -131,6 +162,7 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 				...state,
 				workspaceRoot: event.workspaceRoot,
 				model: event.model,
+				provider: event.provider,
 				bots: event.bots,
 				botStates: Object.fromEntries(
 					event.states.map((s) => [s.bot, s] as const),
@@ -145,6 +177,10 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 				connection: "open",
 			};
 		}
+
+		case "settings":
+			// Broadcast on every successful save so all tabs converge.
+			return { ...state, provider: event.provider, settingsError: null };
 
 		case "bots":
 			// The roster changed (e.g. a rob was created); keep any live state the

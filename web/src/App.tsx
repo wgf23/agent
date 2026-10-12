@@ -6,6 +6,7 @@ import MessageList from "./components/MessageList";
 import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
 import SessionTabs from "./components/SessionTabs";
+import SettingsDialog from "./components/SettingsDialog";
 import Sidebar from "./components/Sidebar";
 import StatusBar from "./components/StatusBar";
 import TopBar from "./components/TopBar";
@@ -38,6 +39,14 @@ export default function App() {
 	const messages = botName !== null ? (state.transcripts[botName] ?? []) : [];
 	const botState = botName !== null ? state.botStates[botName] : undefined;
 	const approval = state.approvals[0] ?? null;
+	// Treat "unknown" (before hello) as usable so we never lock the UI early.
+	const configured = state.provider?.configured !== false;
+
+	// Fetch presets (and a fresh provider view) once on load.
+	const { loadSettings } = hub;
+	useEffect(() => {
+		loadSettings().catch(() => {});
+	}, [loadSettings]);
 
 	return (
 		<div className="app">
@@ -46,6 +55,8 @@ export default function App() {
 				onViewChange={setView}
 				model={state.model}
 				connection={state.connection}
+				provider={state.provider}
+				onOpenSettings={hub.openSettings}
 			/>
 			<div className="app-body">
 				<Sidebar
@@ -75,11 +86,37 @@ export default function App() {
 						<div className="empty-state">
 							{state.connection === "connecting"
 								? "正在连接…"
-								: "没有可用的 Bot"}
+								: configured
+									? "没有可用的 Bot"
+									: "尚未配置模型"}
+							{!configured && (
+								<button
+									type="button"
+									className="btn allow-once empty-state-action"
+									onClick={hub.openSettings}
+								>
+									配置模型
+								</button>
+							)}
 						</div>
 					</main>
 				) : (
 					<main className="chat">
+						{!configured && (
+							<div className="config-callout">
+								<div className="config-callout-text">
+									<strong>尚未配置模型</strong>
+									<span>Agent 需要提供方与 API Key 才能运行。</span>
+								</div>
+								<button
+									type="button"
+									className="btn allow-once"
+									onClick={hub.openSettings}
+								>
+									配置模型
+								</button>
+							</div>
+						)}
 						<BotHeader bot={currentBot} state={botState} />
 						{currentBot.kind === "workspace" && (
 							<SessionTabs
@@ -93,6 +130,7 @@ export default function App() {
 						<Composer
 							model={state.model}
 							status={botState?.status ?? "idle"}
+							configured={configured}
 							onSend={(text) => hub.send(currentBot.name, text)}
 							onInterrupt={() => hub.interrupt(currentBot.name)}
 						/>
@@ -114,6 +152,14 @@ export default function App() {
 					model={state.model}
 					onCreateBot={hub.createBot}
 					onClose={() => setDialogOpen(false)}
+				/>
+			)}
+			{state.settingsOpen && (
+				<SettingsDialog
+					provider={state.provider}
+					presets={state.presets}
+					onSave={hub.saveProvider}
+					onClose={hub.closeSettings}
 				/>
 			)}
 		</div>

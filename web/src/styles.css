@@ -149,6 +149,35 @@ pre {
 	margin-left: auto;
 }
 
+.icon-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border: 1px solid var(--border);
+	background: var(--bg-elevated);
+	color: var(--text-dim);
+	border-radius: 999px;
+	font-size: 15px;
+	line-height: 1;
+	transition:
+		color 0.12s,
+		background 0.12s,
+		border-color 0.12s;
+}
+
+.icon-btn:hover {
+	color: var(--text);
+	background: var(--bg-hover);
+	border-color: var(--border-strong);
+}
+
+.model-chip-unconfigured {
+	color: var(--yellow);
+	border-color: rgba(230, 184, 76, 0.4);
+}
+
 .model-chip {
 	font-family: var(--font-mono);
 	font-size: 12px;
@@ -1271,6 +1300,89 @@ pre {
 	color: var(--red);
 	font-size: 13px;
 	overflow-wrap: anywhere;
+}
+
+/* ---------- Settings dialog ---------- */
+
+.settings-form {
+	display: flex;
+	flex-direction: column;
+}
+
+.settings-form .modal-body {
+	gap: 14px;
+}
+
+select.field-input {
+	cursor: pointer;
+}
+
+select.field-input option {
+	background: var(--bg-elevated);
+	color: var(--text);
+}
+
+.field-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: var(--text-dim);
+	cursor: pointer;
+}
+
+.field-checkbox input {
+	accent-color: var(--accent);
+	width: 15px;
+	height: 15px;
+}
+
+.dialog-warning {
+	padding: 9px 11px;
+	border: 1px solid rgba(230, 184, 76, 0.4);
+	border-radius: var(--radius-sm);
+	background: rgba(230, 184, 76, 0.1);
+	color: var(--yellow);
+	font-size: 13px;
+	overflow-wrap: anywhere;
+}
+
+/* Unconfigured call-to-action */
+
+.config-callout {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin: 16px 20px 0;
+	padding: 12px 16px;
+	background: var(--bg-elevated);
+	border: 1px solid rgba(230, 184, 76, 0.35);
+	border-radius: var(--radius);
+}
+
+.config-callout-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.config-callout-text strong {
+	font-size: 13px;
+	color: var(--text);
+}
+
+.config-callout-text span {
+	font-size: 12px;
+	color: var(--text-dim);
+}
+
+.config-callout .btn {
+	margin-left: auto;
+	flex: none;
+}
+
+.empty-state-action {
+	margin-top: 14px;
 }
 
 /* ---------- Status bar ---------- */

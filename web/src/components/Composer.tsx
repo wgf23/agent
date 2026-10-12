@@ -4,6 +4,7 @@ import type { BotStatus } from "../protocol";
 interface Props {
 	model: string;
 	status: BotStatus;
+	configured: boolean;
 	onSend: (text: string) => void;
 	onInterrupt: () => void;
 }
@@ -11,6 +12,7 @@ interface Props {
 export default function Composer({
 	model,
 	status,
+	configured,
 	onSend,
 	onInterrupt,
 }: Props) {
@@ -20,6 +22,7 @@ export default function Composer({
 	const interject = working || waiting;
 
 	const submit = () => {
+		if (!configured) return;
 		const text = value.trim();
 		if (text === "") return;
 		onSend(text);
@@ -42,9 +45,11 @@ export default function Composer({
 				onKeyDown={handleKeyDown}
 				rows={3}
 				placeholder={
-					interject
-						? "机器人工作中，输入将作为插话在下一步注入…"
-						: "输入消息，Enter 发送，Shift+Enter 换行"
+					!configured
+						? "请先在设置中配置模型…"
+						: interject
+							? "机器人工作中，输入将作为插话在下一步注入…"
+							: "输入消息，Enter 发送，Shift+Enter 换行"
 				}
 			/>
 			<div className="composer-footer">
@@ -59,7 +64,7 @@ export default function Composer({
 						type="button"
 						className="btn send"
 						onClick={submit}
-						disabled={value.trim() === ""}
+						disabled={value.trim() === "" || !configured}
 					>
 						{interject ? "插话" : "发送"}
 					</button>

@@ -19,6 +19,14 @@ const hello: ServerEvent = {
 	type: "hello",
 	workspaceRoot: "/tmp/ws",
 	model: "deepseek-flash",
+	provider: {
+		configured: true,
+		preset: "deepseek",
+		model: "deepseek-flash",
+		baseURL: "https://api.deepseek.com",
+		apiKeyEnv: "DEEPSEEK_API_KEY",
+		apiKeySource: "credentials",
+	},
 	bots: [
 		{
 			name: "assistant",
@@ -59,6 +67,7 @@ describe("clientReducer", () => {
 		expect(state.connection).toBe("open");
 		expect(state.botStates.assistant.status).toBe("idle");
 		expect(state.transcripts.assistant).toHaveLength(2);
+		expect(state.provider?.configured).toBe(true);
 	});
 
 	it("applies a bots event and keeps the workspace and robs split", () => {

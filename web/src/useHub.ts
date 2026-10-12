@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useReducer } from "react";
-import type { ApprovalChoice, BotDraft, ServerEvent } from "./protocol";
+import type {
+	ApprovalChoice,
+	BotDraft,
+	SaveProviderBody,
+	SaveProviderResponse,
+	ServerEvent,
+	SettingsResponse,
+} from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
 async function post(path: string, body: unknown): Promise<void> {
@@ -22,6 +29,12 @@ export interface Hub {
 	newSession: (bot: string) => void;
 	openSession: (bot: string, id: string) => void;
 	createBot: (draft: BotDraft) => Promise<void>;
+	loadSettings: () => Promise<void>;
+	openSettings: () => void;
+	closeSettings: () => void;
+	// Resolves with the server's optional non-blocking warning so the dialog can
+	// surface it; throws the server's error message on failure.
+	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
 }
 
 export function useHub(): Hub {
@@ -101,6 +114,60 @@ export function useHub(): Hub {
 		}
 	}, []);
 
+	const loadSettings = useCallback(async () => {
+		const response = await fetch("/api/settings");
+		if (!response.ok) {
+			throw new Error(`GET /api/settings failed: ${response.status}`);
+		}
+		const body = (await response.json()) as SettingsResponse;
+		dispatch({ type: "settings_presets", presets: body.presets });
+		dispatch({ type: "settings_provider", provider: body.provider });
+	}, []);
+
+	const openSettings = useCallback(() => {
+		dispatch({ type: "settings_open" });
+		// Refresh the server's provider view and preset list so the dialog opens
+		// with current data; the dialog still works if this request fails.
+		loadSettings().catch(() => {});
+	}, [loadSettings]);
+
+	const closeSettings = useCallback(() => {
+		dispatch({ type: "settings_close" });
+	}, []);
+
+	const saveProvider = useCallback(async (body: SaveProviderBody) => {
+		const response = await fetch("/api/settings", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		let payload: SaveProviderResponse | null = null;
+		try {
+			payload = (await response.json()) as SaveProviderResponse;
+		} catch {
+			payload = null;
+		}
+		if (!response.ok || payload === null || payload.ok !== true) {
+			// Surface the server's human-readable error so the dialog can show it
+			// inline (and offer "save anyway" for a verify failure); fall back to a
+			// generic message if the body is missing or malformed.
+			const message =
+				payload !== null &&
+				payload.ok === false &&
+				typeof payload.error === "string" &&
+				payload.error !== ""
+					? payload.error
+					: `保存设置失败 (${response.status})`;
+			dispatch({ type: "settings_error", error: message });
+			throw new Error(message);
+		}
+		dispatch({ type: "settings_error", error: null });
+		// Apply immediately; the server also broadcasts a `settings` event, which
+		// is a no-op replacement once this lands.
+		dispatch({ type: "settings_provider", provider: payload.provider });
+		return payload.warning;
+	}, []);
+
 	return {
 		state,
 		send,
@@ -110,5 +177,9 @@ export function useHub(): Hub {
 		newSession,
 		openSession,
 		createBot,
+		loadSettings,
+		openSettings,
+		closeSettings,
+		saveProvider,
 	};
 }
