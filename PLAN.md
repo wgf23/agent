@@ -311,7 +311,7 @@ my-agent/
 }
 ```
 
-API Key 只能来自环境变量（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`，或 `apiKeyEnv` 指向的变量），配置文件中不允许出现 `apiKey` 字段；`MY_AGENT_MODEL` 可覆盖模型名。
+API Key 优先来自环境变量（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`，或 `apiKeyEnv` 指向的变量），其次来自 `~/.config/my-agent/credentials.json` 中按该变量名存储的 key（`my-agent setup` 写入，目录 0700、文件 0600）。配置文件中不允许出现 `apiKey` 字段；`MY_AGENT_MODEL` 可覆盖模型名。
 
 配置优先级：CLI 参数 > 环境变量 > 项目 `my-agent.json` > 全局 `~/.config/my-agent/config.json` > 内置默认值。
 

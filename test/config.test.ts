@@ -20,7 +20,7 @@ describe("loadConfig", () => {
 		expect(loadConfig()).toEqual({
 			ok: false,
 			error:
-				"Missing DEEPSEEK_API_KEY. Set it in your environment and try again.",
+				'Missing DEEPSEEK_API_KEY. Run "my-agent setup" to store a key, or set the DEEPSEEK_API_KEY environment variable.',
 		});
 	});
 

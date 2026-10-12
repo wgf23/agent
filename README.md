@@ -17,9 +17,11 @@ This puts `my-agent` on your PATH. Undo it with `npm unlink -g my-agent`.
 ## Quick start
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
+my-agent setup      # store an API key in ~/.config/my-agent/credentials.json
 my-agent            # interactive TUI
 ```
+
+`my-agent setup` runs on its own, and the TUI starts it automatically the first time you open it without a key. If you would rather not store a key, set `DEEPSEEK_API_KEY` and skip setup.
 
 ## Modes
 
@@ -30,7 +32,8 @@ my-agent            # interactive TUI
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
 - `my-agent --version` prints the version.
-- `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set` or `missing`.
+- `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
+- `my-agent setup` stores an API key and writes the provider, model, and endpoint to the global config file.
 
 ## TUI
 
@@ -50,9 +53,9 @@ Keys:
 
 Precedence, highest first: command-line flags, environment variables, the project file `<workspace>/my-agent.json`, the global file `~/.config/my-agent/config.json`, built-in defaults.
 
-Environment variables supply keys and one model override. They are never read from a file:
+Environment variables supply a key and one model override. A key can also come from the credentials file (see below):
 
-- `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` (or the variable named by `apiKeyEnv`).
+- `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` (or the variable named by `apiKeyEnv`). An environment variable wins over a stored key.
 - `MY_AGENT_MODEL` overrides the model.
 - `MY_AGENT_DEBUG` adds a raw SDK error line to provider failures.
 
@@ -91,7 +94,21 @@ Global file `~/.config/my-agent/config.json` accepts the `provider` block only. 
 }
 ```
 
-Keys are not allowed in either file. A file with an `apiKey` field is rejected; put the key in an environment variable instead and point `apiKeyEnv` at it. `thinking` and `reasoningEffort` are DeepSeek options; they are only sent when the `deepseek` preset is active.
+Keys are not allowed in either file. A file with an `apiKey` field is rejected; use `my-agent setup` to store the key instead. `thinking` and `reasoningEffort` are DeepSeek options; they are only sent when the `deepseek` preset is active.
+
+### Credentials
+
+`my-agent setup` (and the TUI's first run without a key) stores keys in `~/.config/my-agent/credentials.json`:
+
+```json
+{
+  "keys": {
+    "DEEPSEEK_API_KEY": "sk-..."
+  }
+}
+```
+
+The directory is created `0700` and the file `0600`. The key is looked up by the resolved `apiKeyEnv` name. Resolution order for the key: the environment variable first, then the credentials file. A corrupt file is an error and names the file rather than silently ignoring it. The key value is never printed.
 
 ## Permissions
 

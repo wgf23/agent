@@ -2,7 +2,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { globalConfigPath, resolveConfig } from "../../src/config/resolve.js";
+import {
+	credentialsPath,
+	writeCredential,
+} from "../../src/config/credentials.js";
+import {
+	globalConfigPath,
+	missingApiKeyMessage,
+	resolveConfig,
+} from "../../src/config/resolve.js";
 
 let homeDir: string;
 let workspaceRoot: string;
@@ -227,5 +235,62 @@ describe("resolveConfig errors", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.error).toContain("Invalid JSON");
+	});
+});
+
+describe("resolveConfig api key resolution", () => {
+	it("prefers the environment key over a stored credential", async () => {
+		await writeCredential(homeDir, "DEEPSEEK_API_KEY", "from-file");
+
+		const result = resolveConfig({
+			workspaceRoot,
+			env: { DEEPSEEK_API_KEY: "from-env" },
+			homeDir,
+		});
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.apiKey).toBe("from-env");
+		expect(result.config.apiKeySource).toBe("env");
+	});
+
+	it("falls back to the stored credential when the environment is absent", async () => {
+		await writeCredential(homeDir, "DEEPSEEK_API_KEY", "from-file");
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.apiKey).toBe("from-file");
+		expect(result.config.apiKeySource).toBe("credentials");
+	});
+
+	it("leaves the key undefined when neither source has one", () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.apiKey).toBeUndefined();
+		expect(result.config.apiKeySource).toBeUndefined();
+	});
+
+	it("fails and names the credentials file when it is corrupt", async () => {
+		const filePath = credentialsPath(homeDir);
+		await mkdir(path.dirname(filePath), { recursive: true });
+		await writeFile(filePath, "{ not json", "utf8");
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain(filePath);
+	});
+});
+
+describe("missingApiKeyMessage", () => {
+	it("points at my-agent setup and the environment variable", () => {
+		expect(missingApiKeyMessage("DEEPSEEK_API_KEY")).toBe(
+			'Missing DEEPSEEK_API_KEY. Run "my-agent setup" to store a key, or set the DEEPSEEK_API_KEY environment variable.',
+		);
 	});
 });

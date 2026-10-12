@@ -1,3 +1,4 @@
+import { missingApiKeyMessage } from "../src/config/resolve.js";
 import { createOpenAICompatibleProvider } from "../src/providers/openai-compatible.js";
 import { PRESETS } from "../src/providers/presets.js";
 import type { StreamEvent, ToolDefinition } from "../src/providers/types.js";
@@ -5,9 +6,7 @@ import type { StreamEvent, ToolDefinition } from "../src/providers/types.js";
 const preset = PRESETS.deepseek;
 const apiKey = process.env[preset.apiKeyEnv];
 if (!apiKey) {
-	console.error(
-		`Missing ${preset.apiKeyEnv}. Set it in your environment and try again.`,
-	);
+	console.error(missingApiKeyMessage(preset.apiKeyEnv));
 	process.exit(1);
 }
 

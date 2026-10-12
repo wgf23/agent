@@ -14,9 +14,16 @@ import {
 import type { ReasoningEffort, ThinkingSetting } from "../providers/types.js";
 import type { RobConfig } from "../rob/types.js";
 import { errorMessage } from "../util/errors.js";
+import { readCredentials } from "./credentials.js";
 import { parseRobs, projectFilePath } from "./project-file.js";
 
-export type ConfigSource = "cli" | "env" | "project" | "global" | "default";
+export type ConfigSource =
+	| "cli"
+	| "env"
+	| "project"
+	| "global"
+	| "default"
+	| "credentials";
 
 export const GLOBAL_CONFIG_DIR = ".config/my-agent";
 export const GLOBAL_CONFIG_NAME = "config.json";
@@ -55,6 +62,7 @@ export interface ProviderSources {
 export interface ResolvedConfig {
 	provider: ProviderSettings;
 	apiKey: string | undefined;
+	apiKeySource?: "env" | "credentials";
 	sources: ProviderSources;
 	permissions: PermissionRules;
 	robs: RobConfig[];
@@ -79,7 +87,7 @@ export function globalConfigPath(homeDir: string): string {
 }
 
 export function missingApiKeyMessage(apiKeyEnv: string): string {
-	return `Missing ${apiKeyEnv}. Set it in your environment and try again.`;
+	return `Missing ${apiKeyEnv}. Run "my-agent setup" to store a key, or set the ${apiKeyEnv} environment variable.`;
 }
 
 export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
@@ -145,6 +153,22 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		],
 		{ value: PRESETS[preset].apiKeyEnv, source: "default" },
 	);
+
+	let apiKey: string | undefined;
+	let apiKeySource: "env" | "credentials" | undefined;
+	const envApiKey = input.env[apiKeyEnv.value];
+	if (envApiKey !== undefined) {
+		apiKey = envApiKey;
+		apiKeySource = "env";
+	} else {
+		const credentials = readCredentials(input.homeDir);
+		if (!credentials.ok) return credentials;
+		const storedApiKey = credentials.keys[apiKeyEnv.value];
+		if (storedApiKey !== undefined) {
+			apiKey = storedApiKey;
+			apiKeySource = "credentials";
+		}
+	}
 	const thinking = pick<ThinkingSetting>(
 		[
 			{ value: project.layer.provider.thinking, source: "project" },
@@ -180,7 +204,8 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				apiKeyEnv: apiKeyEnv.value,
 				maxSteps: maxSteps.value,
 			},
-			apiKey: input.env[apiKeyEnv.value],
+			apiKey,
+			apiKeySource,
 			sources: {
 				preset: presetField.source,
 				model: modelField.source,
@@ -378,6 +403,8 @@ function describe(
 			return globalPath;
 		case "default":
 			return `the built-in ${field} default`;
+		case "credentials":
+			return "credentials.json";
 	}
 }
 

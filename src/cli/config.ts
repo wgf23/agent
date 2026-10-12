@@ -1,18 +1,26 @@
 import os from "node:os";
 import { resolveConfig } from "../config/resolve.js";
 
-export function runConfigCommand(): number {
+export interface ConfigCommandOptions {
+	workspaceRoot?: string;
+	env?: Record<string, string | undefined>;
+	homeDir?: string;
+}
+
+export function runConfigCommand(options: ConfigCommandOptions = {}): number {
 	const resolved = resolveConfig({
-		workspaceRoot: process.cwd(),
-		env: process.env,
-		homeDir: os.homedir(),
+		workspaceRoot: options.workspaceRoot ?? process.cwd(),
+		env: options.env ?? process.env,
+		homeDir: options.homeDir ?? os.homedir(),
 	});
 	if (!resolved.ok) {
 		console.error(resolved.error);
 		return 1;
 	}
 
-	const { provider, apiKey, sources } = resolved.config;
+	const { provider, apiKey, apiKeySource, sources } = resolved.config;
+	const apiKeyLabel =
+		apiKey === undefined ? "missing" : `set (${apiKeySource ?? "unknown"})`;
 	const rows: Array<[string, string]> = [
 		["provider", `${provider.preset} (${sources.preset})`],
 		["model", `${provider.model} (${sources.model})`],
@@ -21,7 +29,7 @@ export function runConfigCommand(): number {
 		["baseURL", `${provider.baseURL} (${sources.baseURL})`],
 		["maxSteps", `${provider.maxSteps} (${sources.maxSteps})`],
 		["apiKeyEnv", `${provider.apiKeyEnv} (${sources.apiKeyEnv})`],
-		["apiKey", apiKey === undefined ? "missing" : "set"],
+		["apiKey", apiKeyLabel],
 	];
 	const width = Math.max(...rows.map(([label]) => label.length));
 	for (const [label, value] of rows) {

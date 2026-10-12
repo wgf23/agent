@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Interactive `my-agent setup` wizard and first-run TUI setup that stores an API key in `~/.config/my-agent/credentials.json`, with environment variables taking precedence.
+
 ## 0.1.0 - 2026-10-11
 
 ### Added

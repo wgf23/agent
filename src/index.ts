@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
+import { runSetupCommand } from "./cli/setup.js";
 import { runTeamCommand } from "./cli/team.js";
 import { runTui } from "./tui/index.js";
 
@@ -88,6 +89,13 @@ program
 	)
 	.action(() => {
 		process.exitCode = runConfigCommand();
+	});
+
+program
+	.command("setup")
+	.description("Store an API key and choose the provider, model, and endpoint")
+	.action(async () => {
+		process.exitCode = await runSetupCommand();
 	});
 
 program

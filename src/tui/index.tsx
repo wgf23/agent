@@ -1,5 +1,11 @@
 import os from "node:os";
 import { render } from "ink";
+import {
+	createSetupIo,
+	missingKeyDecision,
+	runSetupWizard,
+	verifyApiKey,
+} from "../cli/setup.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
@@ -16,7 +22,7 @@ export interface RunTuiOptions {
 }
 
 export async function runTui(options: RunTuiOptions): Promise<void> {
-	const resolved = resolveConfig({
+	let resolved = resolveConfig({
 		cliModel: options.model,
 		cliMaxSteps: options.maxSteps,
 		workspaceRoot: options.workspaceRoot,
@@ -27,6 +33,44 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		console.error(resolved.error);
 		process.exitCode = 1;
 		return;
+	}
+
+	const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+	if (missingKeyDecision(resolved.config.apiKey, isTty) === "setup") {
+		const { io, close } = createSetupIo();
+		let code: number;
+		try {
+			code = await runSetupWizard({
+				io,
+				homeDir: os.homedir(),
+				env: process.env,
+				verify: verifyApiKey,
+				currentProvider: {
+					preset: resolved.config.provider.preset,
+					model: resolved.config.provider.model,
+					baseURL: resolved.config.provider.baseURL,
+					apiKeyEnv: resolved.config.provider.apiKeyEnv,
+				},
+			});
+		} finally {
+			close();
+		}
+		if (code !== 0) {
+			process.exitCode = 1;
+			return;
+		}
+		resolved = resolveConfig({
+			cliModel: options.model,
+			cliMaxSteps: options.maxSteps,
+			workspaceRoot: options.workspaceRoot,
+			env: process.env,
+			homeDir: os.homedir(),
+		});
+		if (!resolved.ok) {
+			console.error(resolved.error);
+			process.exitCode = 1;
+			return;
+		}
 	}
 
 	const { provider: settings, apiKey, permissions, robs } = resolved.config;
