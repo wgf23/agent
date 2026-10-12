@@ -22,6 +22,7 @@ const DEFAULTS: PermissionRules = {
 	write_file: "ask",
 	edit_file: "ask",
 	bash: "ask",
+	web_fetch: "ask",
 };
 
 export function defaultRules(): PermissionRules {
@@ -94,6 +95,8 @@ export function toolSubject(toolName: string, args: unknown): string {
 		case "glob":
 		case "grep":
 			return stringValue(record.pattern);
+		case "web_fetch":
+			return stringValue(record.url);
 		default:
 			return "";
 	}
