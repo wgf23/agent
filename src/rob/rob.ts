@@ -80,6 +80,7 @@ export class Rob {
 			options.backend?.kind === "cli"
 				? createCliBackend({
 						rob: options.name,
+						role: options.role,
 						command: options.backend.command,
 						provider: options.backend.provider,
 						model: options.backend.model,
@@ -180,12 +181,17 @@ export class Rob {
 	}
 
 	private handleEvent(event: AgentEvent): void {
-		if (event.type === "usage") {
-			this.usage.input += event.inputTokens;
-			this.usage.output += event.outputTokens;
-		}
+		this.countUsage(event);
 		this.events.push(event);
 		this.team.emitRobEvent(this.name, event);
+	}
+
+	// A sub-agent runs its own runAgent, so its usage events only reach the
+	// sub-agent log; the parent rob's totals still have to include them.
+	private countUsage(event: AgentEvent): void {
+		if (event.type !== "usage") return;
+		this.usage.input += event.inputTokens;
+		this.usage.output += event.outputTokens;
 	}
 
 	private async runSubagent(
@@ -208,6 +214,7 @@ export class Rob {
 				authorize: this.authorize,
 				onEvent: (event) => {
 					if (event.type === "text_delta") parts.push(event.text);
+					this.countUsage(event);
 					this.team.recordSubagent({
 						parent: this.name,
 						id,

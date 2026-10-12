@@ -140,6 +140,8 @@ describe("cli backend", () => {
 			"deepseek",
 			"--model",
 			"deepseek-v4-flash",
+			"--append-system-prompt",
+			"review code",
 			"--session-dir",
 			sessionDir,
 			"--continue",
@@ -183,6 +185,48 @@ describe("cli backend", () => {
 		expect(result.error).toBe("boom: fake pi failed");
 	});
 
+	it("streams one text_delta per message_update delta in order", async () => {
+		process.env.FAKE_PI_SCENARIO = "stream";
+
+		const { result, events } = await runTurn({ rules: { read_file: "allow" } });
+
+		const deltas = events.filter((event) => event.type === "text_delta");
+		expect(deltas).toEqual([
+			{ type: "text_delta", text: "The " },
+			{ type: "text_delta", text: "final " },
+			{ type: "text_delta", text: "answer." },
+		]);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.text).toBe("The final answer.");
+		expect(result.messages.at(-1)).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "The final answer." }],
+		});
+	});
+
+	it("returns an error result when an assistant message stops with error", async () => {
+		process.env.FAKE_PI_SCENARIO = "model-error";
+
+		const { result, events } = await runTurn({ rules: {} });
+
+		expect(events).toEqual([
+			{
+				type: "usage",
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheHitTokens: 0,
+				cacheMissTokens: 0,
+				reasoningTokens: 0,
+			},
+			{ type: "error", message: "model exploded" },
+			{ type: "done", reason: "error", steps: 1 },
+		]);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe("model exploded");
+	});
+
 	it("kills the child on abort and ends the turn as aborted", async () => {
 		const pidFile = path.join(workspace, "pid.txt");
 		process.env.FAKE_PI_SCENARIO = "sleep";
@@ -192,6 +236,7 @@ describe("cli backend", () => {
 		const controller = new AbortController();
 		const backend = createCliBackend({
 			rob: "reviewer",
+			role: "review code",
 			command: FIXTURE,
 			provider: "deepseek",
 			model: "deepseek-v4-flash",
@@ -233,6 +278,7 @@ async function runTurn(options: {
 	const events: AgentEvent[] = [];
 	const backend = createCliBackend({
 		rob: "reviewer",
+		role: "review code",
 		command: FIXTURE,
 		provider: "deepseek",
 		model: "deepseek-v4-flash",

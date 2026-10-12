@@ -23,6 +23,10 @@ if (scenario === "sleep") {
 			process.stderr.write("boom: fake pi failed\n");
 			process.exit(3);
 		}
+		if (scenario === "model-error") {
+			printModelError();
+			return;
+		}
 		printEvents();
 	});
 }
@@ -88,6 +92,12 @@ function printEvents() {
 			type: "message_start",
 			message: { role: "assistant", content: [], usage: emptyUsage() },
 		},
+		...(scenario === "stream"
+			? ["The ", "final ", "answer."].map((delta) => ({
+					type: "message_update",
+					assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+				}))
+			: []),
 		{
 			type: "message_end",
 			message: {
@@ -105,6 +115,32 @@ function printEvents() {
 		process.stdout.write(
 			`${typeof line === "string" ? line : JSON.stringify(line)}\n`,
 		);
+	}
+}
+
+function printModelError() {
+	const lines = [
+		{ type: "agent_start" },
+		{ type: "turn_start" },
+		{
+			type: "message_start",
+			message: { role: "assistant", content: [], usage: emptyUsage() },
+		},
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: emptyUsage(),
+				stopReason: "error",
+				errorMessage: "model exploded",
+			},
+		},
+		{ type: "agent_end" },
+	];
+
+	for (const line of lines) {
+		process.stdout.write(`${JSON.stringify(line)}\n`);
 	}
 }
 

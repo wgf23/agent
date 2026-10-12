@@ -48,6 +48,7 @@ export function defaultSessionDir(workspaceRoot: string, rob: RobName): string {
 
 export interface CliBackendOptions {
 	rob: RobName;
+	role: string;
 	command: string;
 	provider: string;
 	model: string;
@@ -71,6 +72,8 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				options.provider,
 				"--model",
 				options.model,
+				"--append-system-prompt",
+				options.role,
 				"--session-dir",
 				sessionDir,
 				// --continue reuses the rob's most recent session in its own
@@ -113,6 +116,8 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 	];
 	const emit = options.onEvent;
 	let lastText = "";
+	let currentText = "";
+	let failure: string | null = null;
 	let steps = 0;
 	let stderr = "";
 
@@ -164,6 +169,17 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 					});
 					return;
 				}
+				case "message_start": {
+					if (messageRole(record) === "assistant") currentText = "";
+					return;
+				}
+				case "message_update": {
+					const delta = textDelta(record);
+					if (delta === "") return;
+					currentText += delta;
+					emit({ type: "text_delta", text: delta });
+					return;
+				}
 				case "message_end": {
 					if (record.message === null || typeof record.message !== "object") {
 						return;
@@ -172,8 +188,27 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 					if (message.role !== "assistant") return;
 					steps += 1;
 					emitUsage(usage, message.usage, emit);
+					const stopReason = stringField(message.stopReason);
+					if (stopReason === "error" || stopReason === "aborted") {
+						const detail = stringField(message.errorMessage);
+						failure =
+							detail !== ""
+								? detail
+								: `pi stopped with reason "${stopReason}".`;
+						currentText = "";
+						return;
+					}
 					const text = contentText(message.content);
-					if (text !== "") lastText = text;
+					if (text !== "") {
+						// message_update already streamed the leading text; emit only
+						// the remainder so a non-streaming pi is not lost.
+						const rest = text.startsWith(currentText)
+							? text.slice(currentText.length)
+							: text;
+						if (rest !== "") emit({ type: "text_delta", text: rest });
+						lastText = text;
+					}
+					currentText = "";
 					return;
 				}
 				default:
@@ -238,8 +273,13 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 				finish({ ok: false, error: detail, usage, messages });
 				return;
 			}
+			if (failure !== null) {
+				emit({ type: "error", message: failure });
+				emit({ type: "done", reason: "error", steps });
+				finish({ ok: false, error: failure, usage, messages });
+				return;
+			}
 			if (lastText !== "") {
-				emit({ type: "text_delta", text: lastText });
 				messages.push({
 					role: "assistant",
 					content: [{ type: "text", text: lastText }],
@@ -277,6 +317,20 @@ function emitUsage(
 
 function mapToolName(piName: string): string {
 	return PI_TO_OURS.get(piName) ?? piName;
+}
+
+function messageRole(record: Record<string, unknown>): string {
+	const message = record.message;
+	if (message === null || typeof message !== "object") return "";
+	return stringField((message as Record<string, unknown>).role);
+}
+
+function textDelta(record: Record<string, unknown>): string {
+	const inner = record.assistantMessageEvent;
+	if (inner === null || typeof inner !== "object") return "";
+	const event = inner as Record<string, unknown>;
+	if (event.type !== "text_delta") return "";
+	return stringField(event.delta);
 }
 
 function contentText(content: unknown): string {

@@ -5,7 +5,7 @@ import { Rob } from "../../src/rob/rob.js";
 import { Team } from "../../src/rob/team.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
-import { FakeTeam, waitFor } from "./helpers.js";
+import { allowAllAuthorizerFactory, FakeTeam, waitFor } from "./helpers.js";
 
 let workspace: string;
 
@@ -77,6 +77,56 @@ describe("Rob", () => {
 			role: "user",
 			content: "[from user] again",
 		});
+	});
+
+	it("adds a delegate sub-agent's usage to the rob's totals", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "delegate",
+					args: { task: "count the files" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "usage", inputTokens: 5, outputTokens: 3 },
+				{ type: "text_delta", text: "sub answer" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "usage", inputTokens: 10, outputTokens: 4 },
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const rob = new Rob({
+			name: "planner",
+			role: "work",
+			rules: {},
+			model: "deepseek-flash",
+			provider,
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+			team: new FakeTeam(),
+		});
+
+		const running = rob.run();
+		rob.deliver({ kind: "user", from: "user", text: "go", at: 0 });
+		await waitFor(
+			() =>
+				rob
+					.readEvents()
+					.some(
+						(event) => event.type === "done" && event.reason === "finished",
+					),
+			"the rob to finish",
+		);
+		rob.stop();
+		await running;
+
+		expect(rob.statusSnapshot().usage).toEqual({ input: 15, output: 7 });
 	});
 
 	it("aborts an in-flight run when stop is called", async () => {

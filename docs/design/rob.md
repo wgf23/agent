@@ -17,8 +17,20 @@ claude、codex、kimi 的 CLI 后端仍未实现。R4 第一版只支持 pi。
 - **R1 的审批缺口（R2 修复）**：R1 给每个 rob 直接传各自的 `headlessApproval`，绕过了 `Team`；R2 新增共享的 FIFO `ApprovalQueue`，审批经 `rob.approval` -> `Team.requestApproval` 入队，队列项带发起 rob 的名字并驱动 `waiting_approval` 状态。
 - **R4 的子进程 stdin**：pi 在非交互模式下要等到 stdin EOF 才继续，所以 `spawn` 的 stdin 设为 `ignore`；留成打开的管道会让每一轮都挂住。
 - **R4 的会话续接**：只传 `--session-dir` 时 pi 每次都会新建会话；必须再传 `--continue` 才能在同一目录里续接上一轮，所以 cli rob 每轮都带 `--continue`。
-- **R4 的事件映射**：现有 `tool_started` 没有 summary 字段，工具摘要只放在 `tool_finished`；cli 的整段回答在回合末尾一次性发一个 `text_delta`，流式增量留到以后。
+- **R4 的事件映射**：现有 `tool_started` 没有 summary 字段，工具摘要只放在 `tool_finished`；cli 的回答用 `message_update.assistantMessageEvent.delta` 逐段发 `text_delta`，`message_end` 里若还有未发出的剩余文本才补发一次。
 - **R4 的权限**：pi 没有审批通道，解析为 `ask` 的工具不会进入 `--tools` 白名单，只有 `allow` 才暴露；cli rob 因此没有 `waiting_approval` 状态。
+
+### R4 的已知缺口
+
+编号 G1 到 G7 是本文件及提交记录使用的固定编号。恢复详情见 `docs/design/pi-capabilities.md`。
+
+- G1（已关闭）：pi 的系统提示缺少 rob 的角色。角色现在作为单个 argv 传给 `--append-system-prompt`，不经过 shell。真实 pi 验证：以「以 REVIEW: 开头」为角色提问，回答以 `REVIEW:` 开头。
+- G2（已关闭）：pi 现在按 `message_update` 的 `text_delta` 流式产出，组装后的文本等于 `message_end` 的文本。
+- G3（已关闭）：`message_end` 的 `stopReason` 为 `"error"` 或 `"aborted"` 时返回错误结果并带上该消息的 `errorMessage`，不再退化成空回答。
+- G4（已关闭）：子 agent 的 `usage` 事件现在累加到发起 rob 的用量统计。
+- G5（未关闭）：cli rob 不能在回合中途插话，插话要等下一回合。
+- G6（未关闭）：cli rob 不能使用 `send_message` 和 `delegate`。
+- G7（未关闭）：cli rob 没有审批通道，解析为 `ask` 的工具不会暴露。
 
 ## 问题
 
