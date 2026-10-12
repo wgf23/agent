@@ -99,11 +99,17 @@ export function App({
 				type: "append_system",
 				text: `allow-all ${next ? "on" : "off"}`,
 			});
-			// An open dialog was asked before the switch flipped; answer it once.
-			if (next) approval.respond("allow_once");
 		},
-		[allowAll, approval],
+		[allowAll],
 	);
+
+	// Turning the switch on answers the one dialog already on screen. Later
+	// calls never reach the bridge because the authorizer short-circuits.
+	useEffect(() => {
+		if (allowAllOn && state.permission !== null) {
+			approval.respond("allow_once");
+		}
+	}, [allowAllOn, approval, state.permission]);
 
 	useInput((input, key) => {
 		if (key.ctrl && input === "a") setAllowAll("");

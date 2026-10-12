@@ -1,6 +1,6 @@
 import { Box, useApp, useInput } from "ink";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
 	type AllowAll,
 	parseAllowAllArg,
@@ -70,6 +70,19 @@ export function TeamApp({
 		};
 	}, [team]);
 
+	// Turning the switch on answers every dialog already queued, once each. The
+	// queue throws on a second resolve, so remember ids answered before the
+	// approval_resolved event lands.
+	const answered = useRef(new Set<string>());
+	useEffect(() => {
+		if (!allowAllOn) return;
+		for (const approval of state.approvals) {
+			if (answered.current.has(approval.id)) continue;
+			answered.current.add(approval.id);
+			team.resolveApproval(approval.id, "allow_once");
+		}
+	}, [allowAllOn, team, state.approvals]);
+
 	const setAllowAll = useCallback(
 		(arg: string) => {
 			const next = parseAllowAllArg(allowAll, arg);
@@ -92,14 +105,8 @@ export function TeamApp({
 					text: `allow-all ${next ? "on" : "off"}`,
 				});
 			}
-			// One switch covers every rob, so answer everything already queued.
-			if (next) {
-				for (const approval of state.approvals) {
-					team.resolveApproval(approval.id, "allow_once");
-				}
-			}
 		},
-		[allowAll, state, team],
+		[allowAll, state],
 	);
 
 	useInput((input, key) => {

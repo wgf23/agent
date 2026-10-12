@@ -9,11 +9,12 @@ import {
 } from "../../src/permissions/authorizer.js";
 import { defaultRules } from "../../src/permissions/rules.js";
 import type { StreamEvent } from "../../src/providers/types.js";
+import type { TeamEvent } from "../../src/rob/events.js";
 import { Team } from "../../src/rob/team.js";
 import { App } from "../../src/tui/App.js";
 import { createApprovalBridge } from "../../src/tui/approval.js";
 import { StatusBar } from "../../src/tui/components/StatusBar.js";
-import { TeamApp } from "../../src/tui/team/App.js";
+import { TeamApp, type TeamController } from "../../src/tui/team/App.js";
 import { TeamStatusBar } from "../../src/tui/team/components/TeamStatusBar.js";
 import { initialTeamState } from "../../src/tui/team/state.js";
 import {
@@ -386,5 +387,64 @@ describe("TeamApp allow-all", () => {
 				"allow-all: auto-approved dangerous bash rm -rf dist",
 			),
 		);
+	});
+
+	it("resolves a queued approval once when flipped on again", async () => {
+		const allowAll = createAllowAll();
+		let listener: ((event: TeamEvent) => void) | undefined;
+		const resolved: string[] = [];
+		const team: TeamController = {
+			subscribe(next) {
+				listener = next;
+				return () => {
+					listener = undefined;
+				};
+			},
+			start() {},
+			stop: async () => {},
+			dispatch() {},
+			interject() {},
+			resolveApproval(id) {
+				if (resolved.includes(id)) {
+					throw new Error(`Unknown or already resolved approval: ${id}`);
+				}
+				resolved.push(id);
+			},
+		};
+		const { stdin, lastFrame } = render(
+			<TeamApp
+				team={team}
+				robs={[{ name: "planner" }, { name: "worker" }]}
+				model="deepseek-flash"
+				allowAll={allowAll}
+			/>,
+		);
+		await waitFor(() => expect(lastFrame()).toContain("> planner"));
+
+		listener?.({
+			kind: "approval_requested",
+			request: {
+				id: "approval-0",
+				rob: "planner",
+				toolName: "write_file",
+				subject: "a.txt",
+				dangerous: false,
+				rule: "a.txt",
+			},
+		});
+		await waitFor(() => expect(lastFrame()).toContain("planner wants to"));
+
+		// The queue stays pending across the flips: no approval_resolved event is
+		// emitted, so a second resolve of the same id would throw.
+		stdin.write("\u0001");
+		await waitFor(() => expect(allowAll.get()).toBe(true));
+		await tick();
+		stdin.write("\u0001");
+		await waitFor(() => expect(allowAll.get()).toBe(false));
+		await tick();
+		stdin.write("\u0001");
+		await waitFor(() => expect(allowAll.get()).toBe(true));
+
+		expect(resolved).toEqual(["approval-0"]);
 	});
 });
