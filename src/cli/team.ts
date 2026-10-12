@@ -1,5 +1,6 @@
 import os from "node:os";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
 	autoApprovedLine,
@@ -93,6 +94,12 @@ export async function runTeamCommand(
 		yesAll,
 		log: (line) => process.stderr.write(line),
 	});
+	// One connection serves every rob; it is disposed after the team stops.
+	const mcp = await connectMcpServers({
+		servers: resolved.config.mcpServers,
+		workspaceRoot,
+	});
+	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 	const team = new Team({
 		robs,
 		defaultModel: settings.model,
@@ -100,6 +107,7 @@ export async function runTeamCommand(
 		workspaceRoot,
 		permissions,
 		providerEnv: { [settings.apiKeyEnv]: apiKey },
+		extraTools: mcp.tools,
 		authorizerFactory: (rob) =>
 			createAuthorizer({
 				workspaceRoot,
@@ -125,29 +133,33 @@ export async function runTeamCommand(
 		team.resolveApproval(event.request.id, decision);
 	});
 
-	team.start();
-	for (const dispatch of parsed.dispatches) {
-		try {
-			team.dispatch(dispatch.name, dispatch.text);
-		} catch (error) {
-			if (error instanceof UnknownRobError) {
-				console.error(error.message);
-				await team.stop();
-				return 1;
+	try {
+		team.start();
+		for (const dispatch of parsed.dispatches) {
+			try {
+				team.dispatch(dispatch.name, dispatch.text);
+			} catch (error) {
+				if (error instanceof UnknownRobError) {
+					console.error(error.message);
+					await team.stop();
+					return 1;
+				}
+				throw error;
 			}
-			throw error;
 		}
+
+		const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
+		const idle = await waitForIdle(team, waitMs);
+		// Stop moves every rob to "stopped", so read the statuses first to report
+		// what each rob actually did.
+		const statuses = team.statuses();
+		await team.stop();
+
+		printReport(statuses, team.readDms());
+		return idle ? 0 : 1;
+	} finally {
+		await mcp.dispose();
 	}
-
-	const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
-	const idle = await waitForIdle(team, waitMs);
-	// Stop moves every rob to "stopped", so read the statuses first to report
-	// what each rob actually did.
-	const statuses = team.statuses();
-	await team.stop();
-
-	printReport(statuses, team.readDms());
-	return idle ? 0 : 1;
 }
 
 async function waitForIdle(team: Team, waitMs: number): Promise<boolean> {

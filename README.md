@@ -181,7 +181,7 @@ Every server tool is namespaced `mcp__<server>__<tool>`, with any character outs
 
 MCP tools default to `ask`, so the dialog approves them like `bash`, and "allow always" persists the exact `mcp__...` name to `my-agent.json`. A server that fails to start prints `mcp <server>: <error>` and does not stop the others. Headless runs print `[mcp] <server>: N tools` for each connected server; the TUI shows the same counts as transcript lines.
 
-Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode (`robs`) does not connect MCP servers yet.
+Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode connects them once per run: every native rob receives the configured tools, and the connection set is disposed when the team stops. A `cli` rob (`pi` or `opencode`) runs its own tool registry and uses its own MCP configuration instead. A sub-agent a rob starts through `delegate` does not receive MCP tools.
 
 ## AGENTS.md
 

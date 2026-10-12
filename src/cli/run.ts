@@ -2,7 +2,7 @@ import os from "node:os";
 import { runAgent } from "../agent/agent.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
-import { connectMcpServers } from "../mcp/manager.js";
+import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
 	autoApprovedLine,
@@ -98,17 +98,11 @@ export async function runHeadless(
 			process.stderr.write(`${autoApprovedLine(request)}\n`),
 	});
 
-	const mcpServers = resolved.config.mcpServers;
-	const mcp =
-		Object.keys(mcpServers).length > 0
-			? await connectMcpServers({ servers: mcpServers, workspaceRoot })
-			: undefined;
-	if (mcp !== undefined) {
-		for (const notice of mcp.notices) process.stderr.write(`${notice}\n`);
-		for (const server of mcp.servers) {
-			process.stderr.write(`[mcp] ${server.name}: ${server.toolCount} tools\n`);
-		}
-	}
+	const mcp = await connectMcpServers({
+		servers: resolved.config.mcpServers,
+		workspaceRoot,
+	});
+	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
 	const controller = new AbortController();
 	const onSigint = (): void => controller.abort();
@@ -132,7 +126,7 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: mcp?.tools,
+			extraTools: mcp.tools,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
@@ -186,7 +180,7 @@ export async function runHeadless(
 		return exitCodeForReason(result.reason);
 	} finally {
 		process.off("SIGINT", onSigint);
-		await mcp?.dispose();
+		await mcp.dispose();
 	}
 }
 

@@ -69,6 +69,19 @@ export async function connectMcpServers(
 	};
 }
 
+// The lines a run prints to stderr for a connection: one per failed server and
+// one summary per connected server. The TUI transcript keeps its own format.
+export function mcpStderrLines(
+	connection: Pick<ConnectMcpServersResult, "notices" | "servers">,
+): string[] {
+	return [
+		...connection.notices,
+		...connection.servers.map(
+			(server) => `[mcp] ${server.name}: ${server.toolCount} tools`,
+		),
+	];
+}
+
 // Client errors already carry the "mcp <server>: " prefix; mapping errors do
 // not. Strip the duplicate so a notice always reads "mcp <server>: <detail>".
 function errorDetail(name: string, error: unknown): string {

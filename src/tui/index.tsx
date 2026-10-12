@@ -8,7 +8,7 @@ import {
 	verifyApiKey,
 } from "../cli/setup.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
-import { connectMcpServers } from "../mcp/manager.js";
+import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
 	autoApprovedLine,
@@ -109,6 +109,13 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	});
 
 	if (robs.length > 0) {
+		// Connect before Ink mounts so the tool list is ready for the first turn
+		// and the notices land above the UI, like the session line.
+		const mcp = await connectMcpServers({
+			servers: resolved.config.mcpServers,
+			workspaceRoot: options.workspaceRoot,
+		});
+		for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 		const allowAll = createAllowAll();
 		// Authorizers are built during Team construction, so the notice routes
 		// through a ref that points at the team once it exists.
@@ -120,6 +127,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			workspaceRoot: options.workspaceRoot,
 			permissions,
 			providerEnv: { [settings.apiKeyEnv]: apiKey },
+			extraTools: mcp.tools,
 			authorizerFactory: (rob) =>
 				createAuthorizer({
 					workspaceRoot: options.workspaceRoot,
@@ -140,7 +148,11 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 				allowAll={allowAll}
 			/>,
 		);
-		await instance.waitUntilExit();
+		try {
+			await instance.waitUntilExit();
+		} finally {
+			await mcp.dispose();
+		}
 		return;
 	}
 
@@ -182,23 +194,16 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 
 	// Connecting before render delays startup by one handshake per server. That
 	// is acceptable so the tools are advertised on the first turn.
-	const mcpServers = resolved.config.mcpServers;
-	const mcp =
-		Object.keys(mcpServers).length > 0
-			? await connectMcpServers({
-					servers: mcpServers,
-					workspaceRoot: options.workspaceRoot,
-				})
-			: undefined;
-	const startupLines =
-		mcp === undefined
-			? []
-			: [
-					...mcp.notices,
-					...mcp.servers.map(
-						(server) => `mcp ${server.name}: ${server.toolCount} tools`,
-					),
-				];
+	const mcp = await connectMcpServers({
+		servers: resolved.config.mcpServers,
+		workspaceRoot: options.workspaceRoot,
+	});
+	const startupLines = [
+		...mcp.notices,
+		...mcp.servers.map(
+			(server) => `mcp ${server.name}: ${server.toolCount} tools`,
+		),
+	];
 
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
 	// endpoints, so only forward them when the deepseek preset is active.
@@ -219,7 +224,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
-			extraTools={mcp?.tools}
+			extraTools={mcp.tools}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			onTurnEnd={writeSession}
@@ -229,7 +234,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	try {
 		await instance.waitUntilExit();
 	} finally {
-		await mcp?.dispose();
+		await mcp.dispose();
 	}
 }
 
