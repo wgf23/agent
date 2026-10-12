@@ -31,13 +31,14 @@ my-agent            # interactive TUI
 - `--yes` auto-approves every tool call. Without it, headless mode denies any tool that needs approval and keeps going.
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
+- `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
 - `my-agent setup` stores an API key and writes the provider, model, and endpoint to the global config file.
 
 ## TUI
 
-Slash commands: `/help`, `/clear`, `/model`, `/allow-all`, `/quit`.
+Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/allow-all`, `/quit`.
 
 Keys:
 
@@ -51,6 +52,10 @@ Keys:
 - `Up`/`Down` walk the input history (single-line input only).
 
 `/allow-all` toggles a run-wide switch that answers every permission request with allow once, so the model never stops for the dialog; `/allow-all on` and `/allow-all off` set it explicitly, and `Ctrl+A` toggles it. The status row shows an `allow-all` marker while it is on, and a dangerous call it approves prints one line, `allow-all: auto-approved dangerous <tool> <subject>`, to the transcript. Deny rules still win, nothing is written to `my-agent.json`, and the switch is per-run. It dies with the process and never persists. In team mode one switch covers every rob. `--yes` behavior is unchanged.
+
+Typing `@` completes workspace file names, and accepting one inserts it into the sentence. Sending the message expands each `@path` into a `Referenced files` block so the model sees the contents without reading the file again.
+
+`/compact` summarizes the older messages into a `[compacted summary]` and keeps the recent ones. Automatic compaction runs before a turn when the context estimate exceeds `compaction.thresholdTokens` (default 100000) and `compaction.auto` is true. The summary is saved with the session, so `--continue` keeps it. `/clear` ends the current session and starts a new one, and the `· session <id>` line tells you which session you are in.
 
 ## Configuration
 
@@ -181,8 +186,8 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 
 - `bash` is not sandboxed. It runs with your user's permissions; that is why it asks first.
 - `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
-- The context is not summarized. When it grows past the budget, older tool output is replaced with a placeholder.
-- The TUI keeps one conversation per run. There is no session persistence or resume.
+- Context compaction summarizes the older messages with one extra model call when the estimate exceeds the threshold. Reasoning blocks are not part of the estimate because the provider drops them from outbound requests.
+- Sessions are saved so `--continue` resumes them. The compaction summary is a `user` message tagged `[compacted summary]`; it persists, but the model must keep the facts it needs in that summary.
 - Robs that use a `cli` backend (`pi` or `opencode`) cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing either tool in their `permissions` is a config error. Both `cli` backends route `ask`-level tools through the rob's authorizer and the shared approval queue. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook those tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask.
 - CLI backends are `pi` and `opencode`. `claude`, `codex`, and `kimi` are not implemented.
 

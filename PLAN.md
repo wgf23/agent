@@ -441,7 +441,7 @@ API Key 优先来自环境变量（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`，或 `
 
 ## 7. v1 明确不做（Backlog）
 
-会话持久化/恢复 • `/compact` LLM 摘要压缩 • 子 Agent（subagent / task 工具）• MCP 客户端 • LSP 诊断集成 • hooks • 自定义命令 • 图片输入 • Web UI • 插件系统 • 沙箱隔离 • 原生 Anthropic 适配
+子 Agent（subagent / task 工具）• MCP 客户端 • LSP 诊断集成 • hooks • 自定义命令 • 图片输入 • Web UI • 插件系统 • 沙箱隔离 • 原生 Anthropic 适配
 
 ---
 
