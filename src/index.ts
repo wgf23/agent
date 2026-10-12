@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { DEFAULT_PORT } from "../shared/protocol.js";
 import { runConfigCommand } from "./cli/config.js";
-import { runHeadless } from "./cli/run.js";
+import { type OutputFormat, runHeadless } from "./cli/run.js";
 import { runSessionsListCommand } from "./cli/sessions.js";
 import { runSetupCommand } from "./cli/setup.js";
 import { runSkillAdd, runSkillList, runSkillRemove } from "./cli/skill.js";
@@ -25,6 +25,7 @@ interface RunOptions {
 	yes?: boolean;
 	continue?: boolean;
 	session?: string;
+	outputFormat?: string;
 }
 
 interface TeamOptions {
@@ -49,6 +50,10 @@ function parseMaxCost(value: string | undefined): number | undefined {
 	if (value === undefined) return undefined;
 	const cost = Number(value);
 	return Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+}
+
+function parseOutputFormat(value: string | undefined): OutputFormat {
+	return value === "json" ? "json" : "text";
 }
 
 function parsePort(value: string | undefined): number | undefined {
@@ -76,6 +81,7 @@ async function run(prompt: string, options: RunOptions): Promise<void> {
 		yesAll: options.yes,
 		continueSession: options.continue,
 		sessionId: options.session,
+		outputFormat: parseOutputFormat(options.outputFormat),
 	});
 }
 
@@ -94,6 +100,7 @@ program
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
+	.option("--output-format <format>", "output format: text or json", "text")
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
@@ -120,6 +127,7 @@ program
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
+	.option("--output-format <format>", "output format: text or json", "text")
 	.action(async (prompt: string, options: RunOptions) => {
 		await run(prompt, options);
 	});

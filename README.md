@@ -33,6 +33,7 @@ my-agent            # interactive TUI
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
 - `--max-cost <usd>` stops a run once the accumulated dollar cost exceeds the cap, in both headless mode and the TUI. No cap by default.
+- `--output-format json` writes one JSON object per agent event plus a final `summary` object to stdout for scripting and CI; the default `text` streams the answer as before.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
