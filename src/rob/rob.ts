@@ -12,6 +12,7 @@ import {
 } from "./backend.js";
 import { createCliBackend } from "./cli-backend.js";
 import { AsyncQueue } from "./inbox.js";
+import { createOpencodeBackend } from "./opencode-backend.js";
 import type {
 	Inbound,
 	RobBackendConfig,
@@ -21,6 +22,7 @@ import type {
 	RobUsage,
 	TeamPort,
 } from "./types.js";
+import { OPENCODE_CLI_COMMAND } from "./types.js";
 
 export interface AuthorizerInput {
 	name: RobName;
@@ -78,16 +80,25 @@ export class Rob {
 		});
 		this.backend =
 			options.backend?.kind === "cli"
-				? createCliBackend({
-						rob: options.name,
-						role: options.role,
-						command: options.backend.command,
-						provider: options.backend.provider,
-						model: options.backend.model,
-						sessionDir: options.backend.sessionDir,
-						authorize: this.authorize,
-						drain: () => this.inbox.drain(),
-					})
+				? options.backend.command === OPENCODE_CLI_COMMAND
+					? createOpencodeBackend({
+							rob: options.name,
+							role: options.role,
+							provider: options.backend.provider,
+							model: options.backend.model,
+							rules: options.rules,
+							drain: () => this.inbox.drain(),
+						})
+					: createCliBackend({
+							rob: options.name,
+							role: options.role,
+							command: options.backend.command,
+							provider: options.backend.provider ?? "",
+							model: options.backend.model ?? "",
+							sessionDir: options.backend.sessionDir,
+							authorize: this.authorize,
+							drain: () => this.inbox.drain(),
+						})
 				: createNativeBackend({
 						name: options.name,
 						provider: options.provider,
@@ -108,6 +119,7 @@ export class Rob {
 		if (this.stopRequested) return;
 		this.stopRequested = true;
 		this.currentRun?.abort();
+		this.backend.dispose?.();
 		this.setStatus("stopped");
 	}
 

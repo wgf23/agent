@@ -21,6 +21,8 @@ export type TurnResult =
 
 export interface RobBackend {
 	run(turn: RobTurn): Promise<TurnResult>;
+	// Releases resources a long-lived backend holds (child process, stream).
+	dispose?(): void;
 }
 
 export interface NativeBackendOptions {

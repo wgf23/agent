@@ -17,6 +17,8 @@ export const robNameSchema = z
 export type RobName = z.infer<typeof robNameSchema>;
 
 export const PI_CLI_COMMAND = "pi";
+export const OPENCODE_CLI_COMMAND = "opencode";
+const CLI_COMMANDS = [PI_CLI_COMMAND, OPENCODE_CLI_COMMAND] as const;
 
 const nativeBackendSchema = z.object({ kind: z.literal("native") }).strict();
 
@@ -24,8 +26,10 @@ const cliBackendSchema = z
 	.object({
 		kind: z.literal("cli"),
 		command: z.string().min(1),
-		provider: z.string().min(1),
-		model: z.string().min(1),
+		// pi needs an explicit provider and model; opencode resolves both from
+		// the user's own opencode setup, so they are optional there.
+		provider: z.string().min(1).optional(),
+		model: z.string().min(1).optional(),
 		sessionDir: z.string().min(1).optional(),
 	})
 	.strict();
@@ -36,7 +40,7 @@ export const robBackendSchema = z.discriminatedUnion("kind", [
 ]);
 export type RobBackendConfig = z.infer<typeof robBackendSchema>;
 
-// send_message and delegate are native-only; pi has no equivalent tool.
+// send_message and delegate are native-only; external CLIs have no equivalent.
 const CLI_UNSUPPORTED_TOOLS = ["send_message", "delegate"] as const;
 
 export const robConfigSchema = z
@@ -50,13 +54,25 @@ export const robConfigSchema = z
 	.superRefine((rob, ctx) => {
 		const backend = rob.backend;
 		if (backend === undefined || backend.kind !== "cli") return;
-		if (backend.command !== PI_CLI_COMMAND) {
+		if (
+			!CLI_COMMANDS.includes(backend.command as (typeof CLI_COMMANDS)[number])
+		) {
 			ctx.addIssue({
 				code: "custom",
 				path: ["backend", "command"],
-				message: `Unsupported CLI command "${backend.command}". Only "${PI_CLI_COMMAND}" is supported for now.`,
+				message: `Unsupported CLI command "${backend.command}". Only "pi" and "opencode" are supported.`,
 			});
 			return;
+		}
+		if (
+			backend.command === PI_CLI_COMMAND &&
+			(backend.provider === undefined || backend.model === undefined)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["backend"],
+				message: `A "pi" cli backend requires "provider" and "model".`,
+			});
 		}
 		const unsupported = CLI_UNSUPPORTED_TOOLS.filter(
 			(tool) => rob.permissions?.[tool] !== undefined,

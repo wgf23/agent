@@ -95,7 +95,79 @@ describe("rob backend schema", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.error).toContain('Unsupported CLI command "codex"');
-		expect(result.error).toContain('Only "pi" is supported');
+		expect(result.error).toContain('Only "pi" and "opencode" are supported');
+	});
+
+	it("accepts an opencode cli backend with a provider and model", () => {
+		const result = parseRobs([
+			{
+				name: "reviewer",
+				role: "review",
+				backend: {
+					kind: "cli",
+					command: "opencode",
+					provider: "deepseek",
+					model: "deepseek-v4-flash",
+				},
+			},
+		]);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].backend).toEqual({
+			kind: "cli",
+			command: "opencode",
+			provider: "deepseek",
+			model: "deepseek-v4-flash",
+		});
+	});
+
+	it("accepts an opencode cli backend without a provider or model", () => {
+		const result = parseRobs([
+			{
+				name: "reviewer",
+				role: "review",
+				backend: { kind: "cli", command: "opencode" },
+			},
+		]);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].backend).toEqual({
+			kind: "cli",
+			command: "opencode",
+		});
+	});
+
+	it("rejects a pi cli backend that omits provider or model", () => {
+		const result = parseRobs([
+			{
+				name: "reviewer",
+				role: "review",
+				backend: { kind: "cli", command: "pi" },
+			},
+		]);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain(
+			'A "pi" cli backend requires "provider" and "model"',
+		);
+	});
+
+	it("rejects send_message in an opencode cli rob's permissions", () => {
+		const result = parseRobs([
+			{
+				name: "reviewer",
+				role: "review",
+				permissions: { send_message: "allow", read_file: "allow" },
+				backend: { kind: "cli", command: "opencode" },
+			},
+		]);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain('A "cli" backend cannot use send_message');
 	});
 
 	it("rejects a global config that sets backend", async () => {
