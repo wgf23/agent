@@ -12,8 +12,9 @@ import {
 	resolveModelSpec,
 } from "../providers/presets.js";
 import type { ReasoningEffort, ThinkingSetting } from "../providers/types.js";
+import type { RobConfig } from "../rob/types.js";
 import { errorMessage } from "../util/errors.js";
-import { projectFilePath } from "./project-file.js";
+import { parseRobs, projectFilePath } from "./project-file.js";
 
 export type ConfigSource = "cli" | "env" | "project" | "global" | "default";
 
@@ -56,6 +57,7 @@ export interface ResolvedConfig {
 	apiKey: string | undefined;
 	sources: ProviderSources;
 	permissions: PermissionRules;
+	robs: RobConfig[];
 }
 
 export type ResolveConfigResult =
@@ -189,6 +191,10 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				maxSteps: maxSteps.source,
 			},
 			permissions: project.layer.permissions ?? {},
+			robs: (project.layer.robs ?? []).map((rob) => ({
+				...rob,
+				model: rob.model ?? model,
+			})),
 		},
 	};
 }
@@ -196,6 +202,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 interface Layer {
 	provider: ProviderOptions;
 	permissions?: PermissionRules;
+	robs?: RobConfig[];
 }
 
 function loadLayer(
@@ -228,6 +235,13 @@ function loadLayer(
 		};
 	}
 
+	if (role === "global" && "robs" in raw) {
+		return {
+			ok: false,
+			error: `The global config ${filePath} cannot set robs. Put the robs array in ${projectPath} instead.`,
+		};
+	}
+
 	const provider = providerOptionsSchema.safeParse(raw.provider ?? {});
 	if (!provider.success) {
 		return {
@@ -248,7 +262,19 @@ function loadLayer(
 		permissions = parsed.data;
 	}
 
-	return { ok: true, layer: { provider: provider.data, permissions } };
+	let robs: RobConfig[] | undefined;
+	if (role === "project" && raw.robs !== undefined) {
+		const parsed = parseRobs(raw.robs);
+		if (!parsed.ok) {
+			return {
+				ok: false,
+				error: `Invalid robs in ${filePath}: ${parsed.error}`,
+			};
+		}
+		robs = parsed.robs;
+	}
+
+	return { ok: true, layer: { provider: provider.data, permissions, robs } };
 }
 
 function readRaw(

@@ -6,6 +6,7 @@ export interface SystemPromptOptions {
 	platform: string;
 	date: string;
 	agentsMd?: string;
+	extraInstructions?: string;
 }
 
 export async function buildSystemPrompt(
@@ -29,6 +30,13 @@ export async function buildSystemPrompt(
 			`- date: ${options.date}`,
 		].join("\n"),
 	];
+
+	if (
+		options.extraInstructions !== undefined &&
+		options.extraInstructions.trim() !== ""
+	) {
+		sections.push(options.extraInstructions.trim());
+	}
 
 	if (agentsMd !== undefined && agentsMd.trim() !== "") {
 		sections.push(`## AGENTS.md\n\n${agentsMd.trim()}`);

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
+import { runTeamCommand } from "./cli/team.js";
 import { runTui } from "./tui/index.js";
 
 // src/ and dist/ both sit one level below package.json, so this resolves from
@@ -17,8 +18,22 @@ interface RunOptions {
 	yes?: boolean;
 }
 
+interface TeamOptions {
+	dispatch: string[];
+	waitMs?: string;
+	yes?: boolean;
+}
+
 function parseMaxSteps(value: string | undefined): number | undefined {
 	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function parseWaitMs(value: string | undefined): number | undefined {
+	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function collect(value: string, previous: string[]): string[] {
+	return [...previous, value];
 }
 
 async function run(prompt: string, options: RunOptions): Promise<void> {
@@ -73,6 +88,25 @@ program
 	)
 	.action(() => {
 		process.exitCode = runConfigCommand();
+	});
+
+program
+	.command("team")
+	.description("Run the configured robs headlessly")
+	.option(
+		"--dispatch <name=text>",
+		"dispatch a task to a rob (repeatable)",
+		collect,
+		[],
+	)
+	.option("--wait-ms <ms>", "maximum time to wait for the team to go idle")
+	.option("--yes", "auto-approve every tool call")
+	.action(async (options: TeamOptions) => {
+		process.exitCode = await runTeamCommand({
+			dispatch: options.dispatch,
+			waitMs: parseWaitMs(options.waitMs),
+			yesAll: options.yes,
+		});
 	});
 
 await program.parseAsync(process.argv);

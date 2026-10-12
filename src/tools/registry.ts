@@ -21,24 +21,23 @@ export function getTool(name: string): Tool | undefined {
 	return tools.find((tool) => tool.name === name);
 }
 
-export function toolDefinitions(): ToolDefinition[] {
-	return tools.map((tool) => ({
+export function toolDefinition(tool: Tool): ToolDefinition {
+	return {
 		name: tool.name,
 		description: tool.description,
 		parameters: Object.fromEntries(Object.entries(z.toJSONSchema(tool.schema))),
-	}));
+	};
 }
 
-export async function execute(
-	name: string,
+export function toolDefinitions(): ToolDefinition[] {
+	return tools.map(toolDefinition);
+}
+
+export async function executeTool(
+	tool: Tool,
 	rawArgs: unknown,
 	ctx: ToolContext,
 ): Promise<ToolResult> {
-	const tool = getTool(name);
-	if (!tool) {
-		return { ok: false, error: `Unknown tool: ${name}` };
-	}
-
 	const parsed = tool.schema.safeParse(rawArgs);
 	if (!parsed.success) {
 		return {
@@ -55,4 +54,16 @@ export async function execute(
 			error: `${tool.name} failed: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
+}
+
+export async function execute(
+	name: string,
+	rawArgs: unknown,
+	ctx: ToolContext,
+): Promise<ToolResult> {
+	const tool = getTool(name);
+	if (!tool) {
+		return { ok: false, error: `Unknown tool: ${name}` };
+	}
+	return executeTool(tool, rawArgs, ctx);
 }

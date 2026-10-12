@@ -8,14 +8,49 @@ import {
 	permissionRulesSchema,
 	type RuleEntry,
 } from "../permissions/rules.js";
+import {
+	duplicateRobName,
+	type RobConfig,
+	robConfigSchema,
+} from "../rob/types.js";
 import { errorMessage } from "../util/errors.js";
 
 export const PROJECT_FILE_NAME = "my-agent.json";
 
-export const projectFileSchema = z.looseObject({
-	permissions: permissionRulesSchema.optional(),
-});
+export const robsSchema = z.array(robConfigSchema);
+
+export const projectFileSchema = z
+	.looseObject({
+		permissions: permissionRulesSchema.optional(),
+		robs: robsSchema.optional(),
+	})
+	.superRefine((config, ctx) => {
+		const duplicate = duplicateRobName(config.robs ?? []);
+		if (duplicate !== undefined) {
+			ctx.addIssue({
+				code: "custom",
+				message: `Duplicate rob name "${duplicate}". Rob names must be unique.`,
+			});
+		}
+	});
 export type ProjectConfig = z.infer<typeof projectFileSchema>;
+
+export function parseRobs(
+	value: unknown,
+): { ok: true; robs: RobConfig[] } | { ok: false; error: string } {
+	const parsed = robsSchema.safeParse(value);
+	if (!parsed.success) {
+		return { ok: false, error: z.prettifyError(parsed.error) };
+	}
+	const duplicate = duplicateRobName(parsed.data);
+	if (duplicate !== undefined) {
+		return {
+			ok: false,
+			error: `Duplicate rob name "${duplicate}". Rob names must be unique.`,
+		};
+	}
+	return { ok: true, robs: parsed.data };
+}
 
 export type ProjectConfigResult =
 	| { ok: true; config: ProjectConfig }

@@ -1,9 +1,15 @@
 import { access, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { runAgent } from "../../src/agent/agent.js";
 import type { AgentEvent } from "../../src/agent/events.js";
-import type { Provider, ToolMessage } from "../../src/providers/types.js";
+import type {
+	Message,
+	Provider,
+	ToolMessage,
+} from "../../src/providers/types.js";
+import type { Tool } from "../../src/tools/types.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
@@ -381,5 +387,102 @@ describe("runAgent", () => {
 		expect(result.reason).toBe("max_steps");
 		expect(result.steps).toBe(2);
 		expect(provider.requests).toHaveLength(2);
+	});
+
+	it("appends drainInput messages before the next request", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "read_file",
+					args: { path: "a.txt" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		let calls = 0;
+		const drained: Message[] = [{ role: "user", content: "interjected" }];
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "read a.txt",
+			drainInput: () => {
+				calls += 1;
+				return calls === 2 ? drained : [];
+			},
+			onEvent: () => {},
+		});
+
+		expect(result.reason).toBe("finished");
+		expect(provider.requests[0].messages).not.toContainEqual({
+			role: "user",
+			content: "interjected",
+		});
+		const second = provider.requests[1].messages;
+		expect(second).toContainEqual({ role: "user", content: "interjected" });
+		expect(second[second.length - 1]).toEqual({
+			role: "user",
+			content: "interjected",
+		});
+		expect(second[second.length - 2].role).toBe("tool");
+	});
+
+	it("advertises and executes an extra tool", async () => {
+		const echoTool: Tool = {
+			name: "echo",
+			description: "Echo the text back.",
+			schema: z.object({ text: z.string() }),
+			readOnly: true,
+			async execute(args) {
+				return { ok: true, output: `echo:${args.text}` };
+			},
+		};
+		const provider = createMockProvider([
+			[
+				{ type: "tool_call", id: "call_1", name: "echo", args: { text: "hi" } },
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const events: AgentEvent[] = [];
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "echo",
+			extraTools: [echoTool],
+			onEvent: (event) => events.push(event),
+		});
+
+		expect(result.reason).toBe("finished");
+		expect(provider.requests[0].tools.map((tool) => tool.name)).toContain(
+			"echo",
+		);
+		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
+			role: "tool",
+			toolCallId: "call_1",
+			content: "echo:hi",
+			isError: false,
+		});
+		expect(events).toContainEqual({
+			type: "tool_finished",
+			id: "call_1",
+			name: "echo",
+			ok: true,
+			status: "ok",
+			summary: "echo:hi",
+			output: "echo:hi",
+		});
 	});
 });

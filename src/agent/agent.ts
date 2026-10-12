@@ -6,7 +6,12 @@ import type {
 	ThinkingSetting,
 	ToolCallBlock,
 } from "../providers/types.js";
-import { execute, getTool, toolDefinitions } from "../tools/registry.js";
+import {
+	executeTool,
+	getTool,
+	toolDefinition,
+	toolDefinitions,
+} from "../tools/registry.js";
 import type { Tool, ToolContext, ToolResult } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import { type Authorize, readOnlyAuthorize } from "./authorize.js";
@@ -35,6 +40,9 @@ export interface RunAgentOptions {
 	authorize?: Authorize;
 	onEvent: (event: AgentEvent) => void;
 	maxRetries?: number;
+	drainInput?: () => Message[];
+	extraTools?: Tool[];
+	extraInstructions?: string;
 }
 
 export interface RunAgentResult {
@@ -75,6 +83,7 @@ export async function runAgent(
 		workspaceRoot: options.workspaceRoot,
 		platform: process.platform,
 		date: new Date().toISOString(),
+		extraInstructions: options.extraInstructions,
 	});
 
 	let messages: Message[] = [
@@ -83,7 +92,11 @@ export async function runAgent(
 		{ role: "user", content: options.prompt },
 	];
 
-	const definitions = toolDefinitions();
+	const extraTools = options.extraTools ?? [];
+	const definitions = [...toolDefinitions(), ...extraTools.map(toolDefinition)];
+	function lookupTool(name: string): Tool | undefined {
+		return getTool(name) ?? extraTools.find((tool) => tool.name === name);
+	}
 	const usage: UsageTotals = {
 		inputTokens: 0,
 		outputTokens: 0,
@@ -178,6 +191,13 @@ export async function runAgent(
 				break;
 			}
 
+			if (options.drainInput !== undefined) {
+				const injected = options.drainInput();
+				for (const message of injected) {
+					messages.push(message);
+				}
+			}
+
 			steps += 1;
 			const step = await collectStep(messages);
 			if (step.kind === "aborted") {
@@ -212,7 +232,7 @@ export async function runAgent(
 					name: slot.call.name,
 					args: slot.call.args,
 				});
-				const tool = getTool(slot.call.name);
+				const tool = lookupTool(slot.call.name);
 				if (tool === undefined) {
 					slot.result = {
 						ok: false,
@@ -233,16 +253,17 @@ export async function runAgent(
 				signal,
 			};
 			const parallel = slots.filter(
-				(slot) => slot.tool?.readOnly === true && slot.result === undefined,
+				(slot): slot is CallSlot & { tool: Tool } =>
+					slot.tool?.readOnly === true && slot.result === undefined,
 			);
 			await Promise.all(
 				parallel.map(async (slot) => {
-					slot.result = await execute(slot.call.name, slot.call.args, ctx);
+					slot.result = await executeTool(slot.tool, slot.call.args, ctx);
 				}),
 			);
 			for (const slot of slots) {
 				if (slot.result !== undefined || slot.tool === undefined) continue;
-				slot.result = await execute(slot.call.name, slot.call.args, ctx);
+				slot.result = await executeTool(slot.tool, slot.call.args, ctx);
 			}
 
 			for (const slot of slots) {

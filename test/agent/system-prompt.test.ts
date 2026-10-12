@@ -46,4 +46,31 @@ describe("buildSystemPrompt", () => {
 
 		expect(prompt).not.toContain("## AGENTS.md");
 	});
+
+	it("appends extraInstructions when provided", async () => {
+		const prompt = await buildSystemPrompt({
+			workspaceRoot: withoutAgents,
+			platform: "linux",
+			date: "2026-10-11",
+			extraInstructions: 'You are rob "planner".',
+		});
+
+		expect(prompt).toContain('You are rob "planner".');
+	});
+
+	it("ignores blank extraInstructions", async () => {
+		const base = await buildSystemPrompt({
+			workspaceRoot: withoutAgents,
+			platform: "linux",
+			date: "2026-10-11",
+		});
+		const blank = await buildSystemPrompt({
+			workspaceRoot: withoutAgents,
+			platform: "linux",
+			date: "2026-10-11",
+			extraInstructions: "   ",
+		});
+
+		expect(blank).toBe(base);
+	});
 });
