@@ -3,11 +3,13 @@ import BotHeader from "./components/BotHeader";
 import BotPlaza from "./components/BotPlaza";
 import Composer from "./components/Composer";
 import MessageList from "./components/MessageList";
+import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
 import SessionTabs from "./components/SessionTabs";
 import Sidebar from "./components/Sidebar";
 import StatusBar from "./components/StatusBar";
 import TopBar from "./components/TopBar";
+import { robBots, workspaceBot } from "./state";
 import { useHub } from "./useHub";
 
 type View = "chat" | "plaza";
@@ -18,16 +20,19 @@ export default function App() {
 
 	const [view, setView] = useState<View>("chat");
 	const [selectedBot, setSelectedBot] = useState<string | null>(null);
+	const [dialogOpen, setDialogOpen] = useState(false);
 
 	const bots = state.bots;
-	const botName = selectedBot ?? bots[0]?.name ?? null;
+	const workspace = workspaceBot(bots);
+	const robs = robBots(bots);
+	const botName = selectedBot ?? workspace?.name ?? bots[0]?.name ?? null;
 
 	// Keep the selection valid as the bot roster (re)loads.
 	useEffect(() => {
 		if (selectedBot === null || !bots.some((bot) => bot.name === selectedBot)) {
-			setSelectedBot(bots[0]?.name ?? null);
+			setSelectedBot(workspace?.name ?? bots[0]?.name ?? null);
 		}
-	}, [bots, selectedBot]);
+	}, [bots, selectedBot, workspace?.name]);
 
 	const currentBot = bots.find((bot) => bot.name === botName) ?? null;
 	const messages = botName !== null ? (state.transcripts[botName] ?? []) : [];
@@ -44,9 +49,9 @@ export default function App() {
 			/>
 			<div className="app-body">
 				<Sidebar
-					bots={bots}
+					workspace={workspace ?? null}
+					robs={robs}
 					botStates={state.botStates}
-					mode={state.mode}
 					sessions={state.sessions}
 					activeSessionId={state.activeSessionId}
 					selectedBot={botName}
@@ -55,13 +60,15 @@ export default function App() {
 					onToggleAllowAll={hub.setAllowAll}
 					onNewSession={hub.newSession}
 					onOpenSession={hub.openSession}
+					onCreateBot={() => setDialogOpen(true)}
 				/>
 				{view === "plaza" ? (
 					<BotPlaza
-						bots={bots}
+						bots={robs}
 						botStates={state.botStates}
 						dms={state.dms}
 						notices={state.notices}
+						onCreateBot={() => setDialogOpen(true)}
 					/>
 				) : currentBot === null ? (
 					<main className="chat">
@@ -74,13 +81,14 @@ export default function App() {
 				) : (
 					<main className="chat">
 						<BotHeader bot={currentBot} state={botState} />
-						<SessionTabs
-							mode={state.mode}
-							sessions={state.sessions}
-							activeSessionId={state.activeSessionId}
-							botName={currentBot.name}
-							onOpenSession={hub.openSession}
-						/>
+						{currentBot.kind === "workspace" && (
+							<SessionTabs
+								sessions={state.sessions}
+								activeSessionId={state.activeSessionId}
+								botName={currentBot.name}
+								onOpenSession={hub.openSession}
+							/>
+						)}
 						<MessageList messages={messages} />
 						<Composer
 							model={state.model}
@@ -95,11 +103,18 @@ export default function App() {
 				usage={state.usage}
 				activeSessionId={state.activeSessionId}
 				connection={state.connection}
-				mode={state.mode}
+				botKind={currentBot?.kind ?? null}
 				lastError={state.lastError}
 			/>
 			{approval !== null && (
 				<PermissionModal request={approval} onRespond={hub.respondApproval} />
+			)}
+			{dialogOpen && (
+				<NewBotDialog
+					model={state.model}
+					onCreateBot={hub.createBot}
+					onClose={() => setDialogOpen(false)}
+				/>
 			)}
 		</div>
 	);

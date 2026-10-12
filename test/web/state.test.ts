@@ -17,12 +17,12 @@ function apply(events: ServerEvent[]) {
 
 const hello: ServerEvent = {
 	type: "hello",
-	mode: "solo",
 	workspaceRoot: "/tmp/ws",
 	model: "deepseek-flash",
 	bots: [
 		{
 			name: "assistant",
+			kind: "workspace",
 			role: "agent",
 			model: "deepseek-flash",
 			backend: "native",
@@ -46,7 +46,7 @@ const hello: ServerEvent = {
 };
 
 describe("clientReducer", () => {
-	it("loads a solo hello snapshot into one bot transcript", () => {
+	it("loads a hello snapshot into the workspace bot transcript", () => {
 		const state = apply([
 			{
 				...hello,
@@ -56,10 +56,44 @@ describe("clientReducer", () => {
 				],
 			},
 		]);
-		expect(state.mode).toBe("solo");
 		expect(state.connection).toBe("open");
 		expect(state.botStates.assistant.status).toBe("idle");
 		expect(state.transcripts.assistant).toHaveLength(2);
+	});
+
+	it("applies a bots event and keeps the workspace and robs split", () => {
+		const state = apply([
+			hello,
+			{
+				type: "bots",
+				bots: [
+					...hello.bots,
+					{
+						name: "writer",
+						kind: "rob",
+						role: "drafts prose",
+						model: "deepseek-flash",
+						backend: "native",
+					},
+				],
+				states: [
+					...hello.states,
+					{
+						bot: "writer",
+						status: "idle",
+						messageCount: 0,
+						pending: 0,
+						lastMessage: null,
+						usage: { input: 0, output: 0 },
+					},
+				],
+			},
+		]);
+		expect(state.bots.map((bot) => `${bot.kind}:${bot.name}`)).toEqual([
+			"workspace:assistant",
+			"rob:writer",
+		]);
+		expect(state.botStates.writer.status).toBe("idle");
 	});
 
 	it("accumulates streaming text and tool calls onto one assistant message", () => {

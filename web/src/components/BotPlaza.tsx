@@ -6,6 +6,7 @@ interface Props {
 	botStates: Record<string, BotState>;
 	dms: DmInfo[];
 	notices: NoticeView[];
+	onCreateBot: () => void;
 }
 
 const STATUS_LABEL: Record<BotState["status"], string> = {
@@ -15,12 +16,21 @@ const STATUS_LABEL: Record<BotState["status"], string> = {
 	stopped: "已停止",
 };
 
-export default function BotPlaza({ bots, botStates, dms, notices }: Props) {
+export default function BotPlaza({
+	bots,
+	botStates,
+	dms,
+	notices,
+	onCreateBot,
+}: Props) {
 	return (
 		<main className="plaza">
 			<div className="plaza-header">
 				<h2>Bot 广场</h2>
-				<span className="plaza-count">{bots.length} 个 Bot</span>
+				<span className="plaza-count">{bots.length} 个 Rob</span>
+				<button type="button" className="btn create-bot" onClick={onCreateBot}>
+					＋ 创建 Bot
+				</button>
 			</div>
 
 			<div className="bot-grid">

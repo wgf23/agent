@@ -343,6 +343,10 @@ pre {
 	background: var(--accent-soft);
 }
 
+.sidebar-subsection {
+	margin-top: 14px;
+}
+
 .sidebar-footer {
 	margin-top: auto;
 	padding: 12px 16px;
@@ -887,6 +891,11 @@ pre {
 	font-size: 13px;
 }
 
+.create-bot {
+	margin-left: auto;
+	color: var(--accent-strong);
+}
+
 .bot-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1151,6 +1160,117 @@ pre {
 
 .btn.deny:hover {
 	background: rgba(240, 100, 100, 0.12);
+}
+
+/* ---------- New bot dialog ---------- */
+
+.new-bot-form {
+	display: flex;
+	flex-direction: column;
+}
+
+.new-bot-form .modal-body {
+	gap: 14px;
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.field-label {
+	font-size: 12px;
+	color: var(--text-dim);
+}
+
+.field-input,
+.field-textarea {
+	width: 100%;
+	background: var(--bg-elevated);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text);
+	font-family: inherit;
+	font-size: 13px;
+	line-height: 1.5;
+	padding: 9px 11px;
+	outline: none;
+	transition:
+		border-color 0.15s,
+		box-shadow 0.15s;
+}
+
+.field-input:focus,
+.field-textarea:focus {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field-input::placeholder,
+.field-textarea::placeholder {
+	color: var(--text-faint);
+}
+
+.field-textarea {
+	resize: vertical;
+	min-height: 76px;
+}
+
+.field-hint {
+	font-size: 11px;
+	color: var(--text-faint);
+}
+
+.field-hint.field-error {
+	color: var(--red);
+}
+
+.field-row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+}
+
+.backend-options {
+	display: flex;
+	gap: 4px;
+	padding: 3px;
+	background: var(--bg-elevated);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+
+.backend-option {
+	flex: 1;
+	border: none;
+	background: transparent;
+	color: var(--text-dim);
+	font-size: 13px;
+	padding: 6px 0;
+	border-radius: var(--radius-sm);
+	transition:
+		color 0.12s,
+		background 0.12s;
+}
+
+.backend-option:hover {
+	color: var(--text);
+}
+
+.backend-option.active {
+	background: var(--accent-soft);
+	color: var(--accent-strong);
+}
+
+.dialog-error {
+	padding: 9px 11px;
+	border: 1px solid rgba(240, 100, 100, 0.4);
+	border-radius: var(--radius-sm);
+	background: rgba(240, 100, 100, 0.1);
+	color: var(--red);
+	font-size: 13px;
+	overflow-wrap: anywhere;
 }
 
 /* ---------- Status bar ---------- */

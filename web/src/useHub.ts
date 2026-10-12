@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer } from "react";
-import type { ApprovalChoice, ServerEvent } from "./protocol";
+import type { ApprovalChoice, BotDraft, ServerEvent } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
 async function post(path: string, body: unknown): Promise<void> {
@@ -21,6 +21,7 @@ export interface Hub {
 	setAllowAll: (on: boolean) => void;
 	newSession: (bot: string) => void;
 	openSession: (bot: string, id: string) => void;
+	createBot: (draft: BotDraft) => Promise<void>;
 }
 
 export function useHub(): Hub {
@@ -78,6 +79,28 @@ export function useHub(): Hub {
 		post("/api/sessions/open", { bot, id }).catch(() => {});
 	}, []);
 
+	const createBot = useCallback(async (draft: BotDraft) => {
+		const response = await fetch("/api/bots", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(draft),
+		});
+		if (!response.ok) {
+			// Surface the server's human-readable error so the dialog can show it
+			// inline; fall back to a generic message if the body is not JSON.
+			let message = `创建 Bot 失败 (${response.status})`;
+			try {
+				const body = (await response.json()) as { error?: string };
+				if (typeof body.error === "string" && body.error !== "") {
+					message = body.error;
+				}
+			} catch {
+				// keep the fallback message
+			}
+			throw new Error(message);
+		}
+	}, []);
+
 	return {
 		state,
 		send,
@@ -86,5 +109,6 @@ export function useHub(): Hub {
 		setAllowAll,
 		newSession,
 		openSession,
+		createBot,
 	};
 }

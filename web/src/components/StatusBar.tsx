@@ -1,11 +1,11 @@
-import type { HubMode, UsageTotals } from "../protocol";
+import type { BotKind, UsageTotals } from "../protocol";
 import type { ConnectionStatus } from "../state";
 
 interface Props {
 	usage: UsageTotals;
 	activeSessionId: string | null;
 	connection: ConnectionStatus;
-	mode: HubMode;
+	botKind: BotKind | null;
 	lastError: string | null;
 }
 
@@ -13,7 +13,7 @@ export default function StatusBar({
 	usage,
 	activeSessionId,
 	connection,
-	mode,
+	botKind,
 	lastError,
 }: Props) {
 	return (
@@ -26,9 +26,11 @@ export default function StatusBar({
 					会话 <code>{activeSessionId}</code>
 				</span>
 			)}
-			<span className="statusbar-item">
-				{mode === "team" ? "Team" : "Solo"}
-			</span>
+			{botKind !== null && (
+				<span className="statusbar-item">
+					{botKind === "workspace" ? "工作区" : "Rob"}
+				</span>
+			)}
 			{lastError !== null && (
 				<span className="statusbar-item error" title={lastError}>
 					{lastError}

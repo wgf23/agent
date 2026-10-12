@@ -5,7 +5,6 @@ import type {
 	BotState,
 	BotStatus,
 	DmInfo,
-	HubMode,
 	ServerEvent,
 	SessionSummaryInfo,
 	ToolCallView,
@@ -21,7 +20,6 @@ export interface NoticeView {
 }
 
 export interface ClientState {
-	mode: HubMode;
 	workspaceRoot: string;
 	model: string;
 	bots: BotInfo[];
@@ -46,7 +44,6 @@ export type ClientAction =
 
 export function initialState(): ClientState {
 	return {
-		mode: "solo",
 		workspaceRoot: "",
 		model: "",
 		bots: [],
@@ -62,6 +59,14 @@ export function initialState(): ClientState {
 		usage: { input: 0, output: 0 },
 		lastError: null,
 	};
+}
+
+export function workspaceBot(bots: BotInfo[]): BotInfo | undefined {
+	return bots.find((bot) => bot.kind === "workspace");
+}
+
+export function robBots(bots: BotInfo[]): BotInfo[] {
+	return bots.filter((bot) => bot.kind === "rob");
 }
 
 export function clientReducer(
@@ -115,15 +120,15 @@ export function clientReducer(
 function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 	switch (event.type) {
 		case "hello": {
-			// Solo mode carries exactly one bot and a single transcript; team mode
-			// starts each bot empty and fills in via agent_event.
+			// hello.transcript is the workspace bot's transcript; robs start empty
+			// and fill in via agent_event.
 			const transcripts: Record<string, TranscriptMessage[]> = {};
-			if (event.mode === "solo" && event.bots.length > 0) {
-				transcripts[event.bots[0].name] = event.transcript;
+			const workspace = workspaceBot(event.bots);
+			if (workspace !== undefined) {
+				transcripts[workspace.name] = event.transcript;
 			}
 			return {
 				...state,
-				mode: event.mode,
 				workspaceRoot: event.workspaceRoot,
 				model: event.model,
 				bots: event.bots,
@@ -140,6 +145,15 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 				connection: "open",
 			};
 		}
+
+		case "bots":
+			// The roster changed (e.g. a rob was created); keep any live state the
+			// server snapshot omits and layer the fresh states on top.
+			return {
+				...state,
+				bots: event.bots,
+				botStates: mergeBotStates(state.botStates, event.states),
+			};
 
 		case "session_opened":
 			return {
@@ -352,6 +366,17 @@ function setTranscript(
 	messages: TranscriptMessage[],
 ): ClientState {
 	return { ...state, transcripts: { ...state.transcripts, [bot]: messages } };
+}
+
+function mergeBotStates(
+	current: Record<string, BotState>,
+	incoming: BotState[],
+): Record<string, BotState> {
+	const merged = { ...current };
+	for (const state of incoming) {
+		merged[state.bot] = state;
+	}
+	return merged;
 }
 
 function setBotStatus(
