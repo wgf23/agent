@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import {
+	type CompactionSettings,
+	DEFAULT_COMPACTION,
+} from "../agent/compact.js";
+import {
 	type PermissionRules,
 	permissionRulesSchema,
 } from "../permissions/rules.js";
@@ -39,6 +43,13 @@ export const providerOptionsSchema = z.object({
 });
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
 
+export const compactionOptionsSchema = z.object({
+	auto: z.boolean().optional(),
+	thresholdTokens: z.number().int().positive().optional(),
+	keepRecentTokens: z.number().int().positive().optional(),
+});
+export type CompactionOptions = z.infer<typeof compactionOptionsSchema>;
+
 export interface ProviderSettings {
 	preset: BuiltinPresetName;
 	model: string;
@@ -66,6 +77,7 @@ export interface ResolvedConfig {
 	sources: ProviderSources;
 	permissions: PermissionRules;
 	robs: RobConfig[];
+	compaction: CompactionSettings;
 }
 
 export type ResolveConfigResult =
@@ -192,6 +204,11 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		{ value: DEFAULT_MAX_STEPS, source: "default" },
 	);
 
+	const compaction = resolveCompaction(
+		project.layer.compaction,
+		global.layer.compaction,
+	);
+
 	return {
 		ok: true,
 		config: {
@@ -220,6 +237,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				...rob,
 				model: rob.model ?? model,
 			})),
+			compaction,
 		},
 	};
 }
@@ -228,6 +246,7 @@ interface Layer {
 	provider: ProviderOptions;
 	permissions?: PermissionRules;
 	robs?: RobConfig[];
+	compaction?: CompactionOptions;
 }
 
 function loadLayer(
@@ -306,7 +325,22 @@ function loadLayer(
 		robs = parsed.robs;
 	}
 
-	return { ok: true, layer: { provider: provider.data, permissions, robs } };
+	let compaction: CompactionOptions | undefined;
+	if (raw.compaction !== undefined) {
+		const parsed = compactionOptionsSchema.safeParse(raw.compaction);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid compaction in ${filePath}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		compaction = parsed.data;
+	}
+
+	return {
+		ok: true,
+		layer: { provider: provider.data, permissions, robs, compaction },
+	};
 }
 
 function readRaw(
@@ -347,6 +381,23 @@ function pick<T>(
 		}
 	}
 	return fallback;
+}
+
+function resolveCompaction(
+	project: CompactionOptions | undefined,
+	global: CompactionOptions | undefined,
+): CompactionSettings {
+	return {
+		auto: project?.auto ?? global?.auto ?? DEFAULT_COMPACTION.auto,
+		thresholdTokens:
+			project?.thresholdTokens ??
+			global?.thresholdTokens ??
+			DEFAULT_COMPACTION.thresholdTokens,
+		keepRecentTokens:
+			project?.keepRecentTokens ??
+			global?.keepRecentTokens ??
+			DEFAULT_COMPACTION.keepRecentTokens,
+	};
 }
 
 interface Selection {

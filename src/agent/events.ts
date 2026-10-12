@@ -18,5 +18,10 @@ export type AgentEvent =
 			output: string;
 	  }
 	| Usage
+	| {
+			type: "compacted";
+			removedMessages: number;
+			summaryChars: number;
+	  }
 	| { type: "error"; message: string }
 	| { type: "done"; reason: AgentDoneReason; steps: number };

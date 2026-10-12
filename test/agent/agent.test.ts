@@ -486,3 +486,121 @@ describe("runAgent", () => {
 		});
 	});
 });
+
+describe("runAgent compaction", () => {
+	const oldest = "oldest question";
+
+	it("replaces the older history with a summary before the first request", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "SUMMARY-TEXT" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const events: AgentEvent[] = [];
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "new question",
+			history: [
+				{ role: "user", content: `${oldest} ${"x".repeat(4000)}` },
+				{ role: "assistant", content: [{ type: "text", text: "old answer" }] },
+			],
+			compaction: { auto: true, thresholdTokens: 100, keepRecentTokens: 1 },
+			onEvent: (event) => events.push(event),
+		});
+
+		expect(result.reason).toBe("finished");
+		expect(events).toContainEqual({
+			type: "compacted",
+			removedMessages: 2,
+			summaryChars: "SUMMARY-TEXT".length,
+		});
+		expect(provider.requests).toHaveLength(2);
+		const second = provider.requests[1].messages;
+		expect(second).toContainEqual({
+			role: "system",
+			content: "[compacted summary]\nSUMMARY-TEXT",
+		});
+		expect(
+			second.some(
+				(message) =>
+					message.role === "user" && message.content.includes(oldest),
+			),
+		).toBe(false);
+	});
+
+	it("leaves the history alone under a large threshold", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const events: AgentEvent[] = [];
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "new question",
+			history: [
+				{ role: "user", content: oldest },
+				{ role: "assistant", content: [{ type: "text", text: "old answer" }] },
+			],
+			compaction: {
+				auto: true,
+				thresholdTokens: 10_000_000,
+				keepRecentTokens: 1,
+			},
+			onEvent: (event) => events.push(event),
+		});
+
+		expect(result.reason).toBe("finished");
+		expect(provider.requests).toHaveLength(1);
+		expect(events.some((event) => event.type === "compacted")).toBe(false);
+		expect(provider.requests[0].messages).toContainEqual({
+			role: "user",
+			content: oldest,
+		});
+	});
+
+	it("skips compaction and continues when the summary call fails", async () => {
+		const provider = createMockProvider([
+			[{ type: "error", message: "summary down", retryable: false }],
+			[
+				{ type: "text_delta", text: "answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const events: AgentEvent[] = [];
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "new question",
+			history: [
+				{ role: "user", content: `${oldest} ${"x".repeat(4000)}` },
+				{ role: "assistant", content: [{ type: "text", text: "old answer" }] },
+			],
+			compaction: { auto: true, thresholdTokens: 100, keepRecentTokens: 1 },
+			onEvent: (event) => events.push(event),
+		});
+
+		expect(result.reason).toBe("finished");
+		expect(events.some((event) => event.type === "compacted")).toBe(false);
+		expect(
+			provider.requests[1].messages.some(
+				(message) =>
+					message.role === "user" && message.content.includes(oldest),
+			),
+		).toBe(true);
+	});
+});

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -174,6 +174,50 @@ describe("runHeadless sessions", () => {
 			expect(provider.requests).toHaveLength(0);
 		} finally {
 			errorSpy.mockRestore();
+		}
+	});
+
+	it("writes the compacted line to stderr when the history is over the threshold", async () => {
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			await writeFile(
+				path.join(workspaceRoot, "my-agent.json"),
+				JSON.stringify({
+					compaction: { thresholdTokens: 1, keepRecentTokens: 1 },
+				}),
+				"utf8",
+			);
+
+			const first = createMockProvider([
+				[
+					{ type: "text_delta", text: "first answer" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+			expect(await runWith(first, { prompt: "first question" })).toBe(0);
+
+			const second = createMockProvider([
+				[
+					{ type: "text_delta", text: "SUMMARY" },
+					{ type: "finish", reason: "stop" },
+				],
+				[
+					{ type: "text_delta", text: "second answer" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+			expect(
+				await runWith(second, {
+					prompt: "second question",
+					continueSession: true,
+				}),
+			).toBe(0);
+
+			expect(stderr).toHaveBeenCalledWith("· compacted 2 messages\n");
+		} finally {
+			stderr.mockRestore();
 		}
 	});
 });

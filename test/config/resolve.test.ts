@@ -174,6 +174,59 @@ describe("resolveConfig precedence", () => {
 	});
 });
 
+describe("resolveConfig compaction", () => {
+	it("uses the built-in compaction defaults", async () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.compaction).toEqual({
+			auto: true,
+			thresholdTokens: 100000,
+			keepRecentTokens: 20000,
+		});
+	});
+
+	it("merges project over global over defaults per field", async () => {
+		await writeGlobal({
+			compaction: { auto: false, thresholdTokens: 5000 },
+		});
+		await writeProject({ compaction: { thresholdTokens: 1234 } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.compaction).toEqual({
+			auto: false,
+			thresholdTokens: 1234,
+			keepRecentTokens: 20000,
+		});
+	});
+
+	it("reads compaction from the global file", async () => {
+		await writeGlobal({ compaction: { keepRecentTokens: 7 } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.compaction.keepRecentTokens).toBe(7);
+		expect(result.config.compaction.thresholdTokens).toBe(100000);
+	});
+
+	it("rejects an invalid compaction block and names the file", async () => {
+		await writeProject({ compaction: { thresholdTokens: "big" } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Invalid compaction");
+		expect(result.error).toContain(path.join(workspaceRoot, "my-agent.json"));
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({

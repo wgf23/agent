@@ -118,6 +118,7 @@ export async function runHeadless(
 			reasoningEffort: deepseek ? settings.reasoningEffort : undefined,
 			signal: controller.signal,
 			authorize,
+			compaction: resolved.config.compaction,
 			onEvent: (event: AgentEvent) => {
 				options.onEvent?.(event);
 				switch (event.type) {
@@ -130,6 +131,11 @@ export async function runHeadless(
 					case "tool_finished":
 						process.stderr.write(
 							`[tool] ${event.name} ${event.status}: ${event.summary}\n`,
+						);
+						break;
+					case "compacted":
+						process.stderr.write(
+							`· compacted ${event.removedMessages} messages\n`,
 						);
 						break;
 					case "error":

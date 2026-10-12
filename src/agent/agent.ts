@@ -15,6 +15,14 @@ import {
 import type { Tool, ToolContext, ToolResult } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import { type Authorize, readOnlyAuthorize } from "./authorize.js";
+import {
+	type CompactionSettings,
+	compactSummaryMessage,
+	estimateTokens,
+	shouldCompact,
+	splitForCompaction,
+	summarizeMessages,
+} from "./compact.js";
 import { trimForBudget } from "./context.js";
 import type { AgentDoneReason, AgentEvent, Usage } from "./events.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -43,6 +51,9 @@ export interface RunAgentOptions {
 	drainInput?: () => Message[];
 	extraTools?: Tool[];
 	extraInstructions?: string;
+	compaction?: CompactionSettings;
+	forceCompact?: boolean;
+	lastInputTokens?: number;
 }
 
 export interface RunAgentResult {
@@ -112,6 +123,39 @@ export async function runAgent(
 			addUsage(usage, event);
 			emit(event);
 		}
+	}
+
+	// Compaction runs once at the start of a run. Its own summary call is a
+	// provider request too, so the agent loop sees the compacted history.
+	async function compactOnce(): Promise<void> {
+		if (options.compaction === undefined) return;
+		const tail = messages.slice(1);
+		const { older, recent } = splitForCompaction(
+			tail,
+			options.compaction.keepRecentTokens,
+		);
+		if (older.length === 0) return;
+		const fires = shouldCompact({
+			force: options.forceCompact ?? false,
+			auto: options.compaction.auto,
+			estimatedTokens: estimateTokens(messages),
+			lastInputTokens: options.lastInputTokens,
+			thresholdTokens: options.compaction.thresholdTokens,
+		});
+		if (!fires) return;
+		const summary = await summarizeMessages(
+			options.provider,
+			options.model,
+			older,
+			signal,
+		);
+		if (!summary.ok) return;
+		messages = [messages[0], compactSummaryMessage(summary.summary), ...recent];
+		emit({
+			type: "compacted",
+			removedMessages: older.length,
+			summaryChars: summary.summary.length,
+		});
 	}
 
 	async function collectStep(current: Message[]): Promise<StepResult> {
@@ -185,6 +229,7 @@ export async function runAgent(
 	}
 
 	try {
+		await compactOnce();
 		while (steps < maxSteps) {
 			if (signal?.aborted) {
 				reason = "aborted";
