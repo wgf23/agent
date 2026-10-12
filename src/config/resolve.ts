@@ -317,6 +317,46 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 	};
 }
 
+export interface ProviderSelectionInput {
+	preset: string;
+	model: string;
+	baseURL?: string;
+	apiKeyEnv?: string;
+}
+
+export type ProviderSelectionResult =
+	| { ok: true; preset: BuiltinPresetName; model: string }
+	| { ok: false; error: string };
+
+// Validates a provider choice before it is written. It reuses the exact preset
+// and model rules resolveConfig applies, so a selection accepted here resolves
+// to the same provider afterwards. Only malformed files are fatal to
+// resolveConfig; this function is the friendly gate for user input.
+export function validateProviderSelection(
+	input: ProviderSelectionInput,
+): ProviderSelectionResult {
+	if (!isBuiltinPreset(input.preset)) {
+		return {
+			ok: false,
+			error: `Unknown preset "${input.preset}". Use "deepseek" or "openai".`,
+		};
+	}
+	const model = normalizeModelForPreset(input.preset, input.model);
+	if (model === undefined) {
+		return {
+			ok: false,
+			error: `Model "${input.model}" does not belong to preset "${input.preset}".`,
+		};
+	}
+	if (input.baseURL !== undefined && input.baseURL.trim() === "") {
+		return { ok: false, error: "Base URL must not be empty." };
+	}
+	if (input.apiKeyEnv !== undefined && input.apiKeyEnv.trim() === "") {
+		return { ok: false, error: "API key env var must not be empty." };
+	}
+	return { ok: true, preset: input.preset, model };
+}
+
 interface Layer {
 	provider: ProviderOptions;
 	permissions?: PermissionRules;

@@ -64,6 +64,46 @@ export interface BotDraft {
 	backend?: BotBackendDraft;
 }
 
+export type ProviderPresetName = "deepseek" | "openai";
+
+// Everything the browser may know about the provider. Deliberately has no key
+// field: the key never crosses back to the client.
+export interface ProviderView {
+	configured: boolean;
+	preset: ProviderPresetName;
+	model: string;
+	baseURL: string;
+	apiKeyEnv: string;
+	apiKeySource: "env" | "credentials" | null;
+}
+
+export interface PresetInfo {
+	name: ProviderPresetName;
+	baseURL: string;
+	apiKeyEnv: string;
+	defaultModel: string;
+}
+
+export interface SaveProviderBody {
+	preset: ProviderPresetName;
+	model: string;
+	baseURL?: string;
+	apiKeyEnv?: string;
+	// Omit to keep the current key. Empty string is rejected.
+	apiKey?: string;
+	// false saves without verifying the key (the dialog's "save anyway").
+	verify?: boolean;
+}
+
+export interface SettingsResponse {
+	provider: ProviderView;
+	presets: PresetInfo[];
+}
+
+export type SaveProviderResponse =
+	| { ok: true; provider: ProviderView; warning?: string }
+	| { ok: false; error: string };
+
 export interface UsageTotals {
 	input: number;
 	output: number;
@@ -125,6 +165,7 @@ export type ServerEvent =
 			type: "hello";
 			workspaceRoot: string;
 			model: string;
+			provider: ProviderView;
 			bots: BotInfo[];
 			states: BotState[];
 			sessions: SessionSummaryInfo[];
@@ -134,6 +175,7 @@ export type ServerEvent =
 			allowAll: boolean;
 	  }
 	| { type: "bots"; bots: BotInfo[]; states: BotState[] }
+	| { type: "settings"; provider: ProviderView }
 	| {
 			type: "session_opened";
 			bot: string;
