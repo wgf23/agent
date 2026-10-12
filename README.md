@@ -32,6 +32,7 @@ my-agent            # interactive TUI
 - `--yes` auto-approves every tool call. Without it, headless mode denies any tool that needs approval and keeps going.
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
+- `--output-format json` writes one JSON object per agent event plus a final `summary` object to stdout for scripting and CI; the default `text` streams the answer as before.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.

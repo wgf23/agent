@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { exitCodeForReason, runHeadless } from "../../src/cli/run.js";
+import {
+	eventJsonLine,
+	exitCodeForReason,
+	runHeadless,
+	summaryJsonLine,
+} from "../../src/cli/run.js";
 import { listSessions, loadSession } from "../../src/session/store.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { FAKE_MCP_SERVER, isAlive } from "../mcp/helpers.js";
@@ -13,6 +18,40 @@ describe("exitCodeForReason", () => {
 		expect(exitCodeForReason("max_steps")).toBe(1);
 		expect(exitCodeForReason("aborted")).toBe(1);
 		expect(exitCodeForReason("error")).toBe(1);
+	});
+});
+
+describe("eventJsonLine", () => {
+	it("serializes an event to one line carrying its type and payload", () => {
+		expect(eventJsonLine({ type: "text_delta", text: "hi" })).toBe(
+			'{"type":"text_delta","text":"hi"}',
+		);
+		expect(eventJsonLine({ type: "done", reason: "finished", steps: 2 })).toBe(
+			'{"type":"done","reason":"finished","steps":2}',
+		);
+		expect(eventJsonLine({ type: "error", message: "a\nb" })).toBe(
+			'{"type":"error","message":"a\\nb"}',
+		);
+	});
+});
+
+describe("summaryJsonLine", () => {
+	it("serializes the summary with reason, steps, and usage", () => {
+		expect(
+			summaryJsonLine({
+				reason: "finished",
+				steps: 3,
+				usage: {
+					inputTokens: 1,
+					outputTokens: 2,
+					cacheHitTokens: 0,
+					cacheMissTokens: 0,
+					reasoningTokens: 0,
+				},
+			}),
+		).toBe(
+			'{"type":"summary","reason":"finished","steps":3,"usage":{"inputTokens":1,"outputTokens":2,"cacheHitTokens":0,"cacheMissTokens":0,"reasoningTokens":0}}',
+		);
 	});
 });
 
@@ -306,5 +345,130 @@ describe("runHeadless with MCP servers", () => {
 		// The run's finally disposed the client, so the server process is gone.
 		const pid = Number((await readFile(pidFile, "utf8")).trim());
 		expect(isAlive(pid)).toBe(false);
+	});
+});
+
+describe("runHeadless json output", () => {
+	let sessionsDir: string;
+	let workspaceRoot: string;
+	const originalSessionsDir = process.env.MY_AGENT_SESSIONS_DIR;
+
+	beforeEach(async () => {
+		sessionsDir = await mkdtemp(path.join(tmpdir(), "my-agent-run-json-"));
+		workspaceRoot = await mkdtemp(path.join(tmpdir(), "my-agent-run-json-ws-"));
+		process.env.MY_AGENT_SESSIONS_DIR = sessionsDir;
+	});
+
+	afterEach(async () => {
+		if (originalSessionsDir === undefined) {
+			delete process.env.MY_AGENT_SESSIONS_DIR;
+		} else {
+			process.env.MY_AGENT_SESSIONS_DIR = originalSessionsDir;
+		}
+		await rm(sessionsDir, { recursive: true, force: true });
+		await rm(workspaceRoot, { recursive: true, force: true });
+	});
+
+	it("writes one JSON line per event and a summary line to stdout", async () => {
+		const stdout = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{ type: "text_delta", text: "hello" },
+					{ type: "text_delta", text: " world" },
+					{
+						type: "usage",
+						inputTokens: 12,
+						outputTokens: 7,
+						cacheHitTokens: 3,
+					},
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+
+			const code = await runHeadless({
+				prompt: "hi",
+				outputFormat: "json",
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(0);
+
+			const lines = stdout.mock.calls
+				.map((call) => String(call[0]))
+				.join("")
+				.trim()
+				.split("\n");
+			const events = lines.map((line) => JSON.parse(line));
+			expect(events).toEqual([
+				{ type: "text_delta", text: "hello" },
+				{ type: "text_delta", text: " world" },
+				{ type: "usage", inputTokens: 12, outputTokens: 7, cacheHitTokens: 3 },
+				{ type: "done", reason: "finished", steps: 1 },
+				{
+					type: "summary",
+					reason: "finished",
+					steps: 1,
+					usage: {
+						inputTokens: 12,
+						outputTokens: 7,
+						cacheHitTokens: 3,
+						cacheMissTokens: 0,
+						reasoningTokens: 0,
+					},
+				},
+			]);
+
+			const stderrLines = stderr.mock.calls.map((call) => String(call[0]));
+			expect(stderrLines.some((line) => line.includes("[done]"))).toBe(false);
+			expect(stderrLines.some((line) => line.includes("[usage]"))).toBe(false);
+		} finally {
+			stdout.mockRestore();
+			stderr.mockRestore();
+		}
+	});
+
+	it("keeps text mode stdout byte-identical", async () => {
+		const stdout = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{ type: "text_delta", text: "hello world" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+
+			const code = await runHeadless({
+				prompt: "hi",
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(0);
+			expect(stdout.mock.calls.map((call) => String(call[0])).join("")).toBe(
+				"hello world",
+			);
+			expect(
+				stderr.mock.calls.map((call) => String(call[0])).join(""),
+			).toContain("[usage] input=0 output=0");
+		} finally {
+			stdout.mockRestore();
+			stderr.mockRestore();
+		}
 	});
 });
