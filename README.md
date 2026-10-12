@@ -146,7 +146,7 @@ The directory is created `0700` and the file `0600`. The key is looked up by the
 
 Each tool maps to an action: `allow`, `ask`, or `deny`. A tool can also take an ordered list of `{ "pattern", "action" }` rules; the first matching pattern wins. `*` is a wildcard, so `git status*` matches `git status` and `git status --short`.
 
-Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, and `bash` ask.
+Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, and `task` ask.
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 
@@ -232,6 +232,10 @@ my-agent skill remove <name>
 ```
 
 Skills install into `~/.config/my-agent/skills`, which acts as an npm project (my-agent creates its `package.json`). Set `MY_AGENT_SKILLS_DIR` to use a different prefix; tests and sandboxes point it at a temp directory. npm runs with `--ignore-scripts --no-audit --no-fund`. A package that does not declare a valid skill is uninstalled again.
+
+## Task
+
+The `task` tool lets the solo agent delegate one self-contained sub-task to a fresh sub-agent and receive only its final text. The sub-agent inherits the parent's provider, model, workspace, permissions, and thinking, and it gets the standard tools but no `task` tool, so it cannot recurse. Its events never stream to your transcript; only the final text returns, capped at 4000 characters. `task` is available in headless runs, the TUI, and the web UI, and it asks for approval by default like `bash`.
 
 ## Robs
 

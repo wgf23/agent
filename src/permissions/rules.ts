@@ -22,6 +22,7 @@ const DEFAULTS: PermissionRules = {
 	write_file: "ask",
 	edit_file: "ask",
 	bash: "ask",
+	task: "ask",
 };
 
 export function defaultRules(): PermissionRules {

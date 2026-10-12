@@ -27,6 +27,7 @@ import {
 	saveSession,
 	withoutSystem,
 } from "../session/store.js";
+import { createTaskTool } from "../tools/task.js";
 import { summarizeArgs } from "../tui/summarize.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
@@ -201,6 +202,30 @@ export class SoloHub extends EventBus implements Hub {
 				}),
 		});
 
+		const thinking = deepseek ? this.options.settings.thinking : undefined;
+		const reasoningEffort = deepseek
+			? this.options.settings.reasoningEffort
+			: undefined;
+		// The sub-agent inherits the parent's provider, model, workspace,
+		// authorize, and thinking, and receives the standard tools only, so it
+		// cannot recurse.
+		const taskTool = createTaskTool({
+			depth: 0,
+			run: (task, signal) =>
+				runAgent({
+					provider: this.options.provider,
+					model: this.options.settings.model,
+					workspaceRoot: this.options.workspaceRoot,
+					prompt: task,
+					history: [],
+					signal,
+					authorize,
+					thinking,
+					reasoningEffort,
+					onEvent: () => {},
+				}).then((result) => lastAssistantText(result.messages) ?? ""),
+		});
+
 		try {
 			const result = await runAgent({
 				provider: this.options.provider,
@@ -209,14 +234,12 @@ export class SoloHub extends EventBus implements Hub {
 				prompt,
 				history: this.session.messages,
 				maxSteps: this.options.settings.maxSteps,
-				thinking: deepseek ? this.options.settings.thinking : undefined,
-				reasoningEffort: deepseek
-					? this.options.settings.reasoningEffort
-					: undefined,
+				thinking,
+				reasoningEffort,
 				signal: controller.signal,
 				authorize,
 				compaction: this.options.compaction,
-				extraTools: this.options.extraTools,
+				extraTools: [...this.options.extraTools, taskTool],
 				drainInput: () => {
 					const queued = this.queue.splice(0);
 					return queued.map((text) => ({ role: "user", content: text }));
