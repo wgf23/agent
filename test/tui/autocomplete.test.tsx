@@ -1,11 +1,14 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { cleanup, render } from "ink-testing-library";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { App, type AppProps } from "../../src/tui/App.js";
 import { createApprovalBridge } from "../../src/tui/approval.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
+import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
 afterEach(() => {
 	cleanup();
@@ -201,5 +204,35 @@ describe("status row", () => {
 
 		expect(lastFrame()).toContain("thinking enabled");
 		expect(lastFrame()).toContain("effort high");
+	});
+});
+
+describe("file mention autocomplete", () => {
+	let workspace: string;
+
+	beforeAll(async () => {
+		workspace = await makeWorkspace("my-agent-tui-files-");
+		await writeFile(
+			join(workspace, "package.json"),
+			'{ "name": "demo", "version": "9.9.9" }',
+			"utf8",
+		);
+	});
+
+	afterAll(async () => {
+		await removeWorkspace(workspace);
+	});
+
+	it("lists a matching file and inserts it without replacing the sentence", async () => {
+		const { stdin, lastFrame } = render(
+			app(createMockProvider([]), { workspaceRoot: workspace }),
+		);
+
+		stdin.write("see @packa");
+		await waitFor(() => expect(lastFrame()).toContain("❯ @package.json"));
+
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("> see @package.json "));
+		expect(lastFrame()).not.toContain("❯");
 	});
 });

@@ -273,6 +273,19 @@ describe("tuiReducer", () => {
 		expect(state.input).toBe("/clear ");
 	});
 
+	it("accepts a file mention into the middle of the line", () => {
+		let state = tuiReducer(base(), {
+			type: "files_loaded",
+			files: ["package.json"],
+		});
+		state = tuiReducer(state, { type: "set_input", text: "see @packa" });
+
+		state = tuiReducer(state, { type: "menu_accept", text: "see @packa" });
+
+		expect(state.input).toBe("see @package.json ");
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(false);
+	});
+
 	it("closes the menu on escape without touching the input", () => {
 		let state = tuiReducer(base(), { type: "set_input", text: "/he" });
 		state = tuiReducer(state, { type: "menu_close" });

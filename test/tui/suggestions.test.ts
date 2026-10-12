@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { fileSuggestions } from "../../src/tui/file-mentions.js";
 import {
+	acceptMenu,
 	COMMANDS,
 	commandSuggestions,
 	isMenuOpen,
@@ -93,5 +95,23 @@ describe("menu state", () => {
 		expect(menu.index).toBe(0);
 		menu = moveMenu(menu, list, -1);
 		expect(menu.index).toBe(list.length - 1);
+	});
+});
+
+describe("acceptMenu", () => {
+	it("still replaces the whole line for a command at anchor zero", () => {
+		expect(acceptMenu("/mo", MENU_NEUTRAL, commandSuggestions("/mo"))).toBe(
+			"/model ",
+		);
+	});
+
+	it("replaces only the @ token when the mention sits mid-line", () => {
+		expect(
+			acceptMenu(
+				"see @packa",
+				MENU_NEUTRAL,
+				fileSuggestions("see @packa", ["package.json"]),
+			),
+		).toBe("see @package.json ");
 	});
 });

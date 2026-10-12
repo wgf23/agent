@@ -282,3 +282,47 @@ describe("tool cards and folds", () => {
 		await waitFor(() => expect(lastFrame()).toContain("pondering"));
 	});
 });
+
+describe("file mention expansion", () => {
+	let workspace: string;
+
+	beforeAll(async () => {
+		workspace = await makeWorkspace("my-agent-tui-expand-");
+		await writeFile(
+			join(workspace, "notes.txt"),
+			"secret alpha\nsecret beta",
+			"utf8",
+		);
+	});
+
+	afterAll(async () => {
+		await removeWorkspace(workspace);
+	});
+
+	it("sends the referenced file content while the transcript keeps the original text", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "ok" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const { stdin, lastFrame } = render(
+			app(provider, { workspaceRoot: workspace }),
+		);
+
+		stdin.write("read @notes.txt");
+		await waitFor(() => expect(lastFrame()).toContain("❯ @notes.txt"));
+		stdin.write("\r");
+		stdin.write("\r");
+
+		await waitFor(() => expect(provider.requests).toHaveLength(1));
+		const sent = provider.requests[0].messages.at(-1);
+		const content = sent?.role === "user" ? sent.content : "";
+		expect(content).toContain("Referenced files:");
+		expect(content).toContain("secret alpha");
+		expect(content).toContain("secret beta");
+
+		await waitFor(() => expect(lastFrame()).toContain("you> read @notes.txt"));
+		expect(lastFrame()).not.toContain("secret alpha");
+	});
+});
