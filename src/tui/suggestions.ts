@@ -21,6 +21,7 @@ export const COMMANDS: readonly CommandSpec[] = [
 	{ name: "/model", hint: "show the current model" },
 	{ name: "/quit", hint: "exit my-agent" },
 	{ name: "/allow-all", hint: "auto-approve every tool call" },
+	{ name: "/compact", hint: "summarize the older messages" },
 ];
 
 // Team mode runs these commands; /clear and /model have no team handler.

@@ -1,5 +1,6 @@
 import os from "node:os";
 import { render } from "ink";
+import type { CompactionSettings } from "../agent/compact.js";
 import {
 	createSetupIo,
 	missingKeyDecision,
@@ -37,6 +38,7 @@ export interface RunTuiOptions {
 	maxSteps?: number;
 	continueSession?: boolean;
 	sessionId?: string;
+	compaction?: CompactionSettings;
 }
 
 export async function runTui(options: RunTuiOptions): Promise<void> {
@@ -196,6 +198,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
+			compaction={options.compaction ?? resolved.config.compaction}
 			onTurnEnd={writeSession}
 			onClearSession={startNewSession}
 		/>,

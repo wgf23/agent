@@ -3,6 +3,13 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
+import {
+	type CompactionSettings,
+	compactSummaryMessage,
+	DEFAULT_COMPACTION,
+	splitForCompaction,
+	summarizeMessages,
+} from "../agent/compact.js";
 import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
 import { friendlyProviderError } from "../providers/errors.js";
 import type {
@@ -44,6 +51,7 @@ export interface AppProps {
 	apiKeyEnv?: string;
 	initialHistory?: Message[];
 	initialSessionId?: string;
+	compaction?: CompactionSettings;
 	onTurnEnd?: (messages: Message[], usage: TuiUsage) => void;
 	onClearSession?: () => string;
 	onExit?: () => void;
@@ -53,6 +61,7 @@ interface CommandContext {
 	model: string;
 	exit: () => void;
 	clear: () => void;
+	compact: () => void;
 	system: (line: string) => void;
 	allowAll: (arg: string) => void;
 }
@@ -71,6 +80,7 @@ export function App({
 	apiKeyEnv,
 	initialHistory,
 	initialSessionId,
+	compaction,
 	onTurnEnd,
 	onClearSession,
 	onExit,
@@ -171,6 +181,7 @@ export function App({
 					reasoningEffort,
 					signal: controller.signal,
 					authorize,
+					compaction,
 					onEvent: (event) => dispatch({ type: "agent", event }),
 				});
 				historyRef.current = withoutSystem(result.messages);
@@ -208,6 +219,7 @@ export function App({
 			baseURL,
 			apiKeyEnv,
 			authorize,
+			compaction,
 			onTurnEnd,
 		],
 	);
@@ -221,6 +233,43 @@ export function App({
 		}
 	}, [onClearSession]);
 
+	const compact = useCallback(() => {
+		if (controllerRef.current !== null) return;
+		const { older, recent } = splitForCompaction(
+			historyRef.current,
+			compaction?.keepRecentTokens ?? DEFAULT_COMPACTION.keepRecentTokens,
+		);
+		if (older.length === 0) {
+			dispatch({ type: "append_system", text: "nothing to compact" });
+			return;
+		}
+		void (async () => {
+			const result = await summarizeMessages(provider, model, older, undefined);
+			if (!result.ok) {
+				dispatch({
+					type: "append_system",
+					text: `compaction failed: ${result.error}`,
+				});
+				return;
+			}
+			historyRef.current = [compactSummaryMessage(result.summary), ...recent];
+			dispatch({
+				type: "replace_messages",
+				messages: messagesToTuiMessages(historyRef.current),
+			});
+			dispatch({
+				type: "append_system",
+				text: `compacted ${older.length} messages`,
+			});
+			onTurnEnd?.(historyRef.current, {
+				input: 0,
+				output: 0,
+				cacheHit: 0,
+				cacheMiss: 0,
+			});
+		})();
+	}, [provider, model, compaction, onTurnEnd]);
+
 	const submit = useCallback(
 		(raw: string) => {
 			const text = raw.trim();
@@ -230,6 +279,7 @@ export function App({
 					model,
 					exit,
 					clear,
+					compact,
 					system: (line) => dispatch({ type: "append_system", text: line }),
 					allowAll: setAllowAll,
 				});
@@ -239,7 +289,7 @@ export function App({
 			if (controllerRef.current !== null) return;
 			void send(text);
 		},
-		[model, exit, clear, send, setAllowAll],
+		[model, exit, clear, compact, send, setAllowAll],
 	);
 
 	const cancel = useCallback(() => {
@@ -313,6 +363,9 @@ function runCommand(text: string, context: CommandContext): void {
 			return;
 		case "/clear":
 			context.clear();
+			return;
+		case "/compact":
+			context.compact();
 			return;
 		case "/quit":
 			context.exit();

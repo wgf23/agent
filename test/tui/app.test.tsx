@@ -252,6 +252,75 @@ describe("App", () => {
 		stdin.write("\u001b");
 		await waitFor(() => expect(lastFrame()).toContain("[cancelled]"));
 	});
+
+	it("compacts the seeded history on /compact", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "SUMMARY" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const onTurnEnd = vi.fn();
+		const { stdin, lastFrame } = render(
+			app(provider, {
+				compaction: {
+					auto: true,
+					thresholdTokens: 100000,
+					keepRecentTokens: 1,
+				},
+				onTurnEnd,
+				initialHistory: [
+					{ role: "user", content: "old question" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "old answer" }],
+					},
+					{ role: "user", content: "recent question" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "recent answer" }],
+					},
+				],
+			}),
+		);
+
+		await waitFor(() => expect(lastFrame()).toContain("old question"));
+
+		stdin.write("/compact");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
+		stdin.write("\r");
+
+		await waitFor(() =>
+			expect(lastFrame()).toContain("· compacted 2 messages"),
+		);
+		expect(lastFrame()).not.toContain("old question");
+		expect(lastFrame()).toContain("recent question");
+
+		expect(provider.requests).toHaveLength(1);
+		const sent = provider.requests[0].messages[1];
+		expect(sent.role).toBe("user");
+		if (sent.role === "user") expect(sent.content).toContain("old question");
+
+		await waitFor(() => expect(onTurnEnd).toHaveBeenCalledTimes(1));
+		expect(onTurnEnd.mock.calls[0][0]).toContainEqual({
+			role: "system",
+			content: "[compacted summary]\nSUMMARY",
+		});
+	});
+
+	it("says nothing to compact when the history is empty", async () => {
+		const provider = createMockProvider([]);
+		const { stdin, lastFrame } = render(app(provider));
+
+		stdin.write("/compact");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
+		stdin.write("\r");
+
+		await waitFor(() => expect(lastFrame()).toContain("· nothing to compact"));
+		expect(provider.requests).toHaveLength(0);
+	});
 });
 
 describe("tool cards and folds", () => {

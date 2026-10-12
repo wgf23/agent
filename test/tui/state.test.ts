@@ -344,4 +344,28 @@ describe("tuiReducer", () => {
 
 		expect(tuiReducer(both, { type: "toggle_tools" }).expandTools).toBe(false);
 	});
+
+	it("appends a system line for a compacted event", () => {
+		let state = tuiReducer(base(), { type: "submit", text: "hi", at: 1 });
+		state = tuiReducer(state, {
+			type: "agent",
+			event: { type: "compacted", removedMessages: 4, summaryChars: 20 },
+		});
+
+		expect(state.messages.at(-1)).toEqual({
+			id: 2,
+			role: "system",
+			text: "compacted 4 messages",
+		});
+	});
+
+	it("replaces the transcript and resets the id counter", () => {
+		const state = tuiReducer(base(), {
+			type: "replace_messages",
+			messages: [{ id: 1, role: "user", text: "kept" }],
+		});
+
+		expect(state.messages).toEqual([{ id: 1, role: "user", text: "kept" }]);
+		expect(state.nextId).toBe(2);
+	});
 });

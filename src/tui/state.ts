@@ -104,6 +104,7 @@ export type TuiAction =
 	| { type: "clear" }
 	| { type: "set_input"; text: string }
 	| { type: "append_system"; text: string }
+	| { type: "replace_messages"; messages: TuiMessage[] }
 	| { type: "history_prev" }
 	| { type: "history_next" }
 	| { type: "toggle_tools" }
@@ -245,6 +246,13 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 					{ id: state.nextId, role: "system", text: action.text },
 				],
 				nextId: state.nextId + 1,
+			};
+
+		case "replace_messages":
+			return {
+				...state,
+				messages: action.messages,
+				nextId: action.messages.length + 1,
 			};
 
 		case "history_prev": {
@@ -407,6 +415,19 @@ export function applyAgentEvent(
 			};
 		case "error":
 			return { ...state, status: "error", lastError: event.message };
+		case "compacted":
+			return {
+				...state,
+				messages: [
+					...state.messages,
+					{
+						id: state.nextId,
+						role: "system",
+						text: `compacted ${event.removedMessages} messages`,
+					},
+				],
+				nextId: state.nextId + 1,
+			};
 		case "done":
 			return {
 				...state,
