@@ -1,5 +1,5 @@
 import os from "node:os";
-import { Box, Text } from "ink";
+import { Text } from "ink";
 import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
 import type {
@@ -7,6 +7,7 @@ import type {
 	ThinkingSetting,
 } from "../../providers/types.js";
 import { cacheHitRatio, type TuiStatus, type TuiUsage } from "../state.js";
+import { StatusRow } from "./StatusRow.js";
 
 export const SPINNER_FRAMES = [
 	"⠋",
@@ -59,27 +60,25 @@ export function StatusBar({
 			: null;
 
 	return (
-		<Box width="100%">
-			<Text wrap="truncate">
-				<Text color="cyan">{model}</Text>
-				{thinking !== undefined ? (
-					<Text dimColor>{`  thinking ${thinking}`}</Text>
-				) : null}
-				{reasoningEffort !== undefined ? (
-					<Text dimColor>{`  effort ${reasoningEffort}`}</Text>
-				) : null}
-				<Text dimColor>{`  ${shortenCwd(cwd, os.homedir())}`}</Text>
-				<Text>{`  in ${usage.input} out ${usage.output}`}</Text>
-				{ratio !== null ? (
-					<Text dimColor>{`  cache ${Math.round(ratio * 100)}%`}</Text>
-				) : null}
-				{elapsed !== null ? <Text dimColor>{`  ${elapsed}s`}</Text> : null}
-				{streaming ? (
-					<Text color="yellow">{`  ${SPINNER_FRAMES[frame]}`}</Text>
-				) : null}
-				{awaiting ? <Text color="yellow"> waiting for approval</Text> : null}
-			</Text>
-		</Box>
+		<StatusRow>
+			<Text color="cyan">{model}</Text>
+			{thinking !== undefined ? (
+				<Text dimColor>{`  thinking ${thinking}`}</Text>
+			) : null}
+			{reasoningEffort !== undefined ? (
+				<Text dimColor>{`  effort ${reasoningEffort}`}</Text>
+			) : null}
+			<Text dimColor>{`  ${shortenCwd(cwd, os.homedir())}`}</Text>
+			<Text>{`  in ${usage.input} out ${usage.output}`}</Text>
+			{ratio !== null ? (
+				<Text dimColor>{`  cache ${Math.round(ratio * 100)}%`}</Text>
+			) : null}
+			{elapsed !== null ? <Text dimColor>{`  ${elapsed}s`}</Text> : null}
+			{streaming ? (
+				<Text color="yellow">{`  ${SPINNER_FRAMES[frame]}`}</Text>
+			) : null}
+			{awaiting ? <Text color="yellow"> waiting for approval</Text> : null}
+		</StatusRow>
 	);
 }
 
@@ -93,7 +92,7 @@ function useTicker(active: boolean): number {
 	return now;
 }
 
-function useSpinner(active: boolean): number {
+export function useSpinner(active: boolean): number {
 	const [frame, setFrame] = useState(0);
 	useEffect(() => {
 		if (!active) return;

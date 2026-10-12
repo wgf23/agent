@@ -4,6 +4,7 @@ import {
 	initialTuiState,
 	tuiReducer,
 } from "../../src/tui/state.js";
+import { commandSuggestions, isMenuOpen } from "../../src/tui/suggestions.js";
 
 function base() {
 	return initialTuiState({ workspaceRoot: "/ws", model: "deepseek-flash" });
@@ -237,6 +238,82 @@ describe("tuiReducer", () => {
 
 		expect(state.messages[0]).toBe(user);
 		expect(state.messages[1]).not.toBe(firstAssistant);
+	});
+
+	it("opens, moves, and accepts the command menu", () => {
+		let state = tuiReducer(base(), { type: "set_input", text: "/" });
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(true);
+		expect(commandSuggestions(state.input)[state.menu.index]?.value).toBe(
+			"/help",
+		);
+
+		state = tuiReducer(state, {
+			type: "menu_move",
+			text: state.input,
+			delta: 1,
+		});
+		expect(commandSuggestions(state.input)[state.menu.index]?.value).toBe(
+			"/clear",
+		);
+
+		state = tuiReducer(state, { type: "menu_accept", text: state.input });
+		expect(state.input).toBe("/clear ");
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(false);
+	});
+
+	it("accepts from the live text before its keystroke commits", () => {
+		const state = tuiReducer(base(), { type: "menu_accept", text: "/he" });
+		expect(state.input).toBe("/help ");
+	});
+
+	it("accepts the row a down moved to when move and accept share one tick", () => {
+		let state = tuiReducer(base(), { type: "set_input", text: "/" });
+		state = tuiReducer(state, { type: "menu_move", text: "/", delta: 1 });
+		state = tuiReducer(state, { type: "menu_accept", text: "/" });
+		expect(state.input).toBe("/clear ");
+	});
+
+	it("closes the menu on escape without touching the input", () => {
+		let state = tuiReducer(base(), { type: "set_input", text: "/he" });
+		state = tuiReducer(state, { type: "menu_close" });
+
+		expect(state.input).toBe("/he");
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(false);
+	});
+
+	it("closes the menu when a permission dialog opens", () => {
+		let state = tuiReducer(base(), { type: "set_input", text: "/" });
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(true);
+
+		state = tuiReducer(state, {
+			type: "permission",
+			request: {
+				toolName: "write_file",
+				subject: "out.txt",
+				dangerous: true,
+				rule: null,
+			},
+		});
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(false);
+	});
+
+	it("closes the menu on history recall", () => {
+		let state = tuiReducer(base(), { type: "submit", text: "/help", at: 1 });
+		state = tuiReducer(state, {
+			type: "agent",
+			event: { type: "done", reason: "finished", steps: 1 },
+		});
+		state = tuiReducer(state, { type: "set_input", text: "/" });
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(true);
+
+		state = tuiReducer(state, { type: "history_prev" });
+		expect(state.input).toBe("/help");
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(false);
+	});
+
+	it("hides the menu for a non-matching input", () => {
+		const state = tuiReducer(base(), { type: "set_input", text: "/zz" });
+		expect(isMenuOpen(state.menu, commandSuggestions(state.input))).toBe(false);
 	});
 
 	it("toggles tool and reasoning expansion", () => {

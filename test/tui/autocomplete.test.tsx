@@ -149,6 +149,32 @@ describe("slash command autocomplete", () => {
 	});
 });
 
+describe("deterministic accept", () => {
+	it("completes a typed prefix on enter within one tick, without submitting", async () => {
+		const { stdin, lastFrame } = render(app(createMockProvider([])));
+
+		stdin.write("/he");
+		stdin.write("\r");
+
+		await waitFor(() => expect(lastFrame()).toContain("> /help "));
+		expect(lastFrame()).not.toContain("❯");
+		expect(lastFrame()).not.toContain("Commands:");
+		expect(lastFrame()).not.toContain("Unknown command");
+	});
+
+	it("accepts the moved-to row when down and enter arrive in one tick", async () => {
+		const { stdin, lastFrame } = render(app(createMockProvider([])));
+
+		stdin.write("/");
+		stdin.write("\u001b[B");
+		stdin.write("\r");
+
+		await waitFor(() => expect(lastFrame()).toContain("> /clear "));
+		expect(lastFrame()).not.toContain("❯");
+		expect(lastFrame()).not.toContain("Ask anything");
+	});
+});
+
 describe("status row", () => {
 	it("shows the thinking mode and effort for the deepseek preset", () => {
 		const { lastFrame } = render(

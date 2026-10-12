@@ -7,6 +7,7 @@ import {
 	MENU_NEUTRAL,
 	moveMenu,
 	robSuggestions,
+	teamSuggestions,
 } from "../../src/tui/suggestions.js";
 
 describe("commandSuggestions", () => {
@@ -50,6 +51,29 @@ describe("robSuggestions", () => {
 
 	it("hides once a space starts the message", () => {
 		expect(robSuggestions("@planner hi", ["planner"])).toEqual([]);
+	});
+});
+
+describe("teamSuggestions", () => {
+	it("matches the team command set by prefix", () => {
+		expect(teamSuggestions("/", ["planner"]).map((item) => item.value)).toEqual(
+			["/help", "/dm", "/sub", "/quit"],
+		);
+		expect(
+			teamSuggestions("/d", ["planner"]).map((item) => item.value),
+		).toEqual(["/dm"]);
+	});
+
+	it("matches rob names for the @ trigger", () => {
+		expect(
+			teamSuggestions("@pl", ["planner", "worker"]).map((item) => item.value),
+		).toEqual(["@planner"]);
+	});
+
+	it("does not offer commands team mode cannot run", () => {
+		const names = teamSuggestions("/", []).map((item) => item.value);
+		expect(names).not.toContain("/clear");
+		expect(names).not.toContain("/model");
 	});
 });
 

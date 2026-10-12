@@ -193,7 +193,10 @@ export function App({
 				onSubmit={submit}
 				onHistoryPrev={() => dispatch({ type: "history_prev" })}
 				onHistoryNext={() => dispatch({ type: "history_next" })}
-				onMenuMove={(delta) => dispatch({ type: "menu_move", delta })}
+				onMenuMove={(text, delta) =>
+					dispatch({ type: "menu_move", text, delta })
+				}
+				onMenuAccept={(text) => dispatch({ type: "menu_accept", text })}
 				onMenuClose={() => dispatch({ type: "menu_close" })}
 				onCancel={cancel}
 				onExit={exit}

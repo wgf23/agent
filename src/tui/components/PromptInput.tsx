@@ -2,7 +2,13 @@ import { Box, Text, useInput } from "ink";
 import type { ReactElement } from "react";
 import { useReducer, useRef } from "react";
 import type { TuiStatus } from "../state.js";
-import { isMenuOpen, type MenuState, type Suggestion } from "../suggestions.js";
+import {
+	acceptMenu,
+	isMenuOpen,
+	type MenuState,
+	type Suggestion,
+} from "../suggestions.js";
+import { SuggestionMenu } from "./SuggestionMenu.js";
 
 const MAX_VISIBLE_LINES = 8;
 const PLACEHOLDER = "Ask anything. /help for commands";
@@ -18,7 +24,8 @@ export interface PromptInputProps {
 	onSubmit: (text: string) => void;
 	onHistoryPrev: () => void;
 	onHistoryNext: () => void;
-	onMenuMove: (delta: 1 | -1) => void;
+	onMenuMove: (text: string, delta: 1 | -1) => void;
+	onMenuAccept: (text: string) => void;
 	onMenuClose: () => void;
 	onCancel: () => void;
 	onExit: () => void;
@@ -38,6 +45,7 @@ export function PromptInput({
 	onHistoryPrev,
 	onHistoryNext,
 	onMenuMove,
+	onMenuAccept,
 	onMenuClose,
 	onCancel,
 	onExit,
@@ -67,6 +75,19 @@ export function PromptInput({
 
 	const moveCursor = (next: number): void => {
 		cursor.current = clamp(next, 0, latest.current.length);
+		forceRender();
+	};
+
+	// The reducers own committed accept. This mirror keeps the ref in step so
+	// an Enter in the same tick already sees the completed line and submits.
+	const acceptLive = (): void => {
+		const text = latest.current;
+		const accepted = acceptMenu(menu, suggestionsFor(text));
+		onMenuAccept(text);
+		if (accepted === null) return;
+		latest.current = accepted;
+		cursorText.current = accepted;
+		cursor.current = accepted.length;
 		forceRender();
 	};
 
@@ -105,19 +126,19 @@ export function PromptInput({
 			}
 			if (key.return) {
 				if (menuOpen) {
-					acceptSuggestion(matches, menu.index, apply);
+					acceptLive();
 					return;
 				}
 				if (!disabled && latest.current.trim() !== "") onSubmit(latest.current);
 				return;
 			}
 			if (key.tab) {
-				if (menuOpen) acceptSuggestion(matches, menu.index, apply);
+				if (menuOpen) acceptLive();
 				return;
 			}
 			if (key.upArrow || key.downArrow) {
 				if (menuOpen) {
-					onMenuMove(key.upArrow ? -1 : 1);
+					onMenuMove(latest.current, key.upArrow ? -1 : 1);
 					return;
 				}
 				const text = latest.current;
@@ -171,22 +192,7 @@ export function PromptInput({
 
 	return (
 		<Box flexDirection="column" width="100%">
-			{menuOpen ? (
-				<Box flexDirection="column" paddingX={1}>
-					{matches.map((suggestion, index) => (
-						<Text
-							key={suggestion.value}
-							color={index === selected ? "cyan" : undefined}
-							bold={index === selected}
-							dimColor={index !== selected}
-						>
-							{index === selected ? "❯ " : "  "}
-							{suggestion.label}
-							{suggestion.hint !== undefined ? `  ${suggestion.hint}` : ""}
-						</Text>
-					))}
-				</Box>
-			) : null}
+			{menuOpen ? <SuggestionMenu items={matches} index={selected} /> : null}
 			<Box
 				borderStyle="round"
 				borderColor={borderColor(status)}
@@ -212,16 +218,6 @@ export function PromptInput({
 			</Box>
 		</Box>
 	);
-}
-
-function acceptSuggestion(
-	matches: Suggestion[],
-	index: number,
-	apply: (text: string, cursor: number) => void,
-): void {
-	const choice = matches[clamp(index, 0, matches.length - 1)];
-	if (choice === undefined) return;
-	apply(`${choice.value} `, choice.value.length + 1);
 }
 
 function borderColor(status: TuiStatus): string {

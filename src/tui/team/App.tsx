@@ -7,7 +7,7 @@ import { MessageList } from "../components/MessageList.js";
 import { PermissionDialog } from "../components/PermissionDialog.js";
 import { PromptInput } from "../components/PromptInput.js";
 import type { TuiStatus } from "../state.js";
-import { isMenuOpen, robSuggestions } from "../suggestions.js";
+import { isMenuOpen, teamSuggestions } from "../suggestions.js";
 import { DmView } from "./components/DmView.js";
 import { RobList } from "./components/RobList.js";
 import { SubagentView } from "./components/SubagentView.js";
@@ -67,7 +67,7 @@ export function TeamApp({
 		const robNames = state.robs.map((rob) => rob.name);
 		const menuOpen = isMenuOpen(
 			state.menu,
-			robSuggestions(state.input, robNames),
+			teamSuggestions(state.input, robNames),
 		);
 		if (key.ctrl && input === "c") {
 			if (state.view !== "transcript" || dialogOpen) exit();
@@ -188,12 +188,15 @@ export function TeamApp({
 					active={state.approvals.length === 0}
 					status={promptStatus}
 					menu={state.menu}
-					suggestionsFor={(text) => robSuggestions(text, robNames)}
+					suggestionsFor={(text) => teamSuggestions(text, robNames)}
 					onChange={(text) => dispatch({ type: "set_input", text })}
 					onSubmit={submit}
 					onHistoryPrev={() => dispatch({ type: "history_prev" })}
 					onHistoryNext={() => dispatch({ type: "history_next" })}
-					onMenuMove={(delta) => dispatch({ type: "menu_move", delta })}
+					onMenuMove={(text, delta) =>
+						dispatch({ type: "menu_move", text, delta })
+					}
+					onMenuAccept={(text) => dispatch({ type: "menu_accept", text })}
 					onMenuClose={() => dispatch({ type: "menu_close" })}
 					onCancel={() => {}}
 					onExit={exit}

@@ -19,6 +19,14 @@ export const COMMANDS: readonly CommandSpec[] = [
 	{ name: "/quit", hint: "exit my-agent" },
 ];
 
+// Team mode runs these commands; /clear and /model have no team handler.
+export const TEAM_COMMANDS: readonly CommandSpec[] = [
+	{ name: "/help", hint: "list the commands" },
+	{ name: "/dm", hint: "open direct messages" },
+	{ name: "/sub", hint: "open sub-agents" },
+	{ name: "/quit", hint: "exit my-agent" },
+];
+
 export interface MenuState {
 	dismissed: boolean;
 	index: number;
@@ -38,12 +46,14 @@ function leadingQuery(input: string, prefix: string): string | null {
 	return input.slice(prefix.length).toLowerCase();
 }
 
-export function commandSuggestions(input: string): Suggestion[] {
+export function commandSuggestions(
+	input: string,
+	commands: readonly CommandSpec[] = COMMANDS,
+): Suggestion[] {
 	const query = leadingQuery(input, "/");
 	if (query === null) return [];
-	return COMMANDS.filter((command) =>
-		command.name.slice(1).toLowerCase().startsWith(query),
-	)
+	return commands
+		.filter((command) => command.name.slice(1).toLowerCase().startsWith(query))
 		.slice(0, MAX_SUGGESTIONS)
 		.map((command) => ({
 			value: command.name,
@@ -69,6 +79,28 @@ export function isMenuOpen(
 	suggestions: readonly Suggestion[],
 ): boolean {
 	return !menu.dismissed && suggestions.length > 0;
+}
+
+// Team mode filters its own command set, and falls back to rob names for the
+// @ trigger.
+export function teamSuggestions(
+	input: string,
+	names: readonly string[],
+): Suggestion[] {
+	if (input.startsWith("@")) return robSuggestions(input, names);
+	return commandSuggestions(input, TEAM_COMMANDS);
+}
+
+// The reducers own committed accept, and the input component mirrors this same
+// value into its local ref so an Enter in the next tick already sees the line.
+export function acceptMenu(
+	menu: MenuState,
+	suggestions: readonly Suggestion[],
+): string | null {
+	if (!isMenuOpen(menu, suggestions)) return null;
+	const index = Math.max(0, Math.min(menu.index, suggestions.length - 1));
+	const choice = suggestions[index];
+	return choice === undefined ? null : `${choice.value} `;
 }
 
 export function moveMenu(

@@ -1,6 +1,7 @@
 import type { AgentEvent } from "../agent/events.js";
 import type { PendingPermission } from "./approval.js";
 import {
+	acceptMenu,
 	commandSuggestions,
 	MENU_CLOSED,
 	MENU_NEUTRAL,
@@ -98,7 +99,8 @@ export type TuiAction =
 	| { type: "history_next" }
 	| { type: "toggle_tools" }
 	| { type: "toggle_reasoning" }
-	| { type: "menu_move"; delta: 1 | -1 }
+	| { type: "menu_move"; text: string; delta: 1 | -1 }
+	| { type: "menu_accept"; text: string }
 	| { type: "menu_close" }
 	| { type: "permission"; request: PendingPermission | null };
 
@@ -225,10 +227,24 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				...state,
 				menu: moveMenu(
 					state.menu,
-					commandSuggestions(state.input),
+					commandSuggestions(action.text),
 					action.delta,
 				),
 			};
+
+		case "menu_accept": {
+			// Accept reads the live text the component passes, so the line fills
+			// from the same matches the keystroke produced even before React has
+			// committed that keystroke.
+			const accepted = acceptMenu(state.menu, commandSuggestions(action.text));
+			if (accepted === null) return state;
+			return {
+				...state,
+				input: accepted,
+				historyIndex: null,
+				menu: MENU_NEUTRAL,
+			};
+		}
 
 		case "menu_close":
 			return { ...state, menu: MENU_CLOSED };

@@ -7,11 +7,12 @@ import {
 	type TuiMessage,
 } from "../state.js";
 import {
+	acceptMenu,
 	MENU_CLOSED,
 	MENU_NEUTRAL,
 	type MenuState,
 	moveMenu,
-	robSuggestions,
+	teamSuggestions,
 } from "../suggestions.js";
 
 export type TeamView = "transcript" | "dms" | "subagents";
@@ -55,7 +56,8 @@ export type TeamAction =
 	| { type: "toggle_reasoning" }
 	| { type: "history_prev" }
 	| { type: "history_next" }
-	| { type: "menu_move"; delta: 1 | -1 }
+	| { type: "menu_move"; text: string; delta: 1 | -1 }
+	| { type: "menu_accept"; text: string }
 	| { type: "menu_close" };
 
 export function initialTeamState(init: TeamInit): TeamState {
@@ -164,10 +166,24 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 				...state,
 				menu: moveMenu(
 					state.menu,
-					robSuggestions(state.input, robNames(state)),
+					teamSuggestions(action.text, robNames(state)),
 					action.delta,
 				),
 			};
+
+		case "menu_accept": {
+			const accepted = acceptMenu(
+				state.menu,
+				teamSuggestions(action.text, robNames(state)),
+			);
+			if (accepted === null) return state;
+			return {
+				...state,
+				input: accepted,
+				historyIndex: null,
+				menu: MENU_NEUTRAL,
+			};
+		}
 
 		case "menu_close":
 			return { ...state, menu: MENU_CLOSED };

@@ -114,6 +114,25 @@ describe("TeamApp", () => {
 		expect(providers.planner.requests).toHaveLength(1);
 	});
 
+	it("completes a team command from the slash menu and runs it", async () => {
+		const providers = {
+			planner: createMockProvider([]),
+			worker: createMockProvider([]),
+		};
+		const { stdin, lastFrame } = renderTeam(makeTeam(providers));
+		await waitFor(() => expect(lastFrame()).toContain("> planner"));
+
+		stdin.write("/dm");
+		await waitFor(() => expect(lastFrame()).toContain("❯ /dm"));
+
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("> /dm "));
+		expect(lastFrame()).not.toContain("❯");
+
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("Direct messages"));
+	});
+
 	it("cycles the selected rob with tab", async () => {
 		const providers = {
 			planner: createMockProvider([]),
