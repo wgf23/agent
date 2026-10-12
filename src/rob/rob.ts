@@ -12,6 +12,7 @@ import type {
 	RobName,
 	RobStatus,
 	RobStatusEntry,
+	RobUsage,
 	TeamPort,
 } from "./types.js";
 
@@ -49,6 +50,7 @@ export class Rob {
 
 	private history: Message[] = [];
 	private status: RobStatus = "idle";
+	private readonly usage: RobUsage = { input: 0, output: 0 };
 	private stopRequested = false;
 	private currentRun: AbortController | null = null;
 	private subagentSeq = 0;
@@ -96,6 +98,7 @@ export class Rob {
 			messageCount: this.history.length,
 			pending: this.inbox.size,
 			lastMessage: lastAssistantText(this.history),
+			usage: { ...this.usage },
 		};
 	}
 
@@ -166,6 +169,10 @@ export class Rob {
 				}),
 			],
 			onEvent: (event) => {
+				if (event.type === "usage") {
+					this.usage.input += event.inputTokens;
+					this.usage.output += event.outputTokens;
+				}
 				this.events.push(event);
 				this.team.emitRobEvent(this.name, event);
 			},

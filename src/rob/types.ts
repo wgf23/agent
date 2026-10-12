@@ -49,12 +49,18 @@ export interface SubagentEntry {
 	event: AgentEvent;
 }
 
+export interface RobUsage {
+	input: number;
+	output: number;
+}
+
 export interface RobStatusEntry {
 	name: string;
 	status: RobStatus;
 	messageCount: number;
 	pending: number;
 	lastMessage: string | null;
+	usage: RobUsage;
 }
 
 export interface TeamPort {

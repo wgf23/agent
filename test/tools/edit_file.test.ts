@@ -114,4 +114,33 @@ describe("edit_file", () => {
 			error: "edit_file: old_string must not be empty",
 		});
 	});
+
+	it("serializes concurrent edits so neither update is lost", async () => {
+		await writeFile(join(workspace, "f.txt"), "alpha beta\n", "utf8");
+
+		const [first, second] = await Promise.all([
+			execute(
+				"edit_file",
+				{ path: "f.txt", old_string: "alpha", new_string: "ALPHA" },
+				{ workspaceRoot: workspace },
+			),
+			execute(
+				"edit_file",
+				{ path: "f.txt", old_string: "beta", new_string: "BETA" },
+				{ workspaceRoot: workspace },
+			),
+		]);
+
+		expect(first).toEqual({
+			ok: true,
+			output: "Replaced 1 occurrence(s) in f.txt",
+		});
+		expect(second).toEqual({
+			ok: true,
+			output: "Replaced 1 occurrence(s) in f.txt",
+		});
+		expect(await readFile(join(workspace, "f.txt"), "utf8")).toBe(
+			"ALPHA BETA\n",
+		);
+	});
 });

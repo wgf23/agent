@@ -6,8 +6,10 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
+import type { Provider } from "../providers/types.js";
 import { Team, UnknownRobError } from "../rob/team.js";
 import { robToolRules } from "../rob/tools.js";
+import type { DmEntry, RobConfig, RobStatusEntry } from "../rob/types.js";
 
 const DEFAULT_WAIT_MS = 120_000;
 const POLL_INTERVAL_MS = 50;
@@ -16,6 +18,9 @@ export interface TeamCommandOptions {
 	dispatch: string[];
 	waitMs?: number;
 	yesAll?: boolean;
+	workspaceRoot?: string;
+	homeDir?: string;
+	providerFactory?: (rob: RobConfig) => Provider;
 }
 
 interface Dispatch {
@@ -46,11 +51,11 @@ function parseDispatches(
 export async function runTeamCommand(
 	options: TeamCommandOptions,
 ): Promise<number> {
-	const workspaceRoot = process.cwd();
+	const workspaceRoot = options.workspaceRoot ?? process.cwd();
 	const resolved = resolveConfig({
 		workspaceRoot,
 		env: process.env,
-		homeDir: os.homedir(),
+		homeDir: options.homeDir ?? os.homedir(),
 	});
 	if (!resolved.ok) {
 		console.error(resolved.error);
@@ -90,7 +95,7 @@ export async function runTeamCommand(
 	const team = new Team({
 		robs,
 		defaultModel: settings.model,
-		providerFactory: () => provider,
+		providerFactory: options.providerFactory ?? (() => provider),
 		workspaceRoot,
 		authorizerFactory: (rob) =>
 			createAuthorizer({
@@ -135,9 +140,12 @@ export async function runTeamCommand(
 
 	const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
 	const idle = await waitForIdle(team, waitMs);
+	// Stop moves every rob to "stopped", so read the statuses first to report
+	// what each rob actually did.
+	const statuses = team.statuses();
 	await team.stop();
 
-	printReport(team);
+	printReport(statuses, team.readDms());
 	return idle ? 0 : 1;
 }
 
@@ -156,9 +164,11 @@ async function waitForIdle(team: Team, waitMs: number): Promise<boolean> {
 	return false;
 }
 
-function printReport(team: Team): void {
+function printReport(
+	statuses: readonly RobStatusEntry[],
+	dms: readonly DmEntry[],
+): void {
 	console.log("=== DMs ===");
-	const dms = team.readDms();
 	if (dms.length === 0) {
 		console.log("(no DMs)");
 	}
@@ -166,7 +176,7 @@ function printReport(team: Team): void {
 		console.log(`${dm.from} -> ${dm.to}: ${dm.text}`);
 	}
 
-	for (const status of team.statuses()) {
+	for (const status of statuses) {
 		console.log("");
 		console.log(`=== ${status.name} (${status.status}) ===`);
 		console.log(status.lastMessage ?? "(no reply)");

@@ -56,6 +56,28 @@ describe("teamReducer", () => {
 		expect(teamTokens(state)).toEqual({ input: 10, output: 4 });
 	});
 
+	it("sums token usage across robs for the team total", () => {
+		let state = base();
+		state = teamReducer(state, {
+			type: "team_event",
+			event: {
+				kind: "rob_event",
+				rob: "planner",
+				event: { type: "usage", inputTokens: 10, outputTokens: 2 },
+			},
+		});
+		state = teamReducer(state, {
+			type: "team_event",
+			event: {
+				kind: "rob_event",
+				rob: "worker",
+				event: { type: "usage", inputTokens: 5, outputTokens: 3 },
+			},
+		});
+
+		expect(teamTokens(state)).toEqual({ input: 15, output: 5 });
+	});
+
 	it("moves a rob to waiting_approval on a status event", () => {
 		const state = teamReducer(base(), {
 			type: "team_event",

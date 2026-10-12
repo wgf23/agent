@@ -1,5 +1,20 @@
 # Rob 设计：独立 agent 团队
 
+## 实现状态
+
+- R1：核心（`Rob` actor、收件箱、`drainInput` 钩子、`send_message` 和 `delegate` 工具、`Team` 的无界面运行）。提交 `b0f21dc`。
+- R2：TUI（rob 列表、`@name` 派发、只读的私聊和子 agent 视图、审批队列、插话）。提交 `5cc9821`。
+- R3：加固（按解析后绝对路径的文件路径锁、私聊和深度上限验证、团队 token 统计、端到端测试）。本次提交，信息为 `feat: file locks, team usage, e2e team check`。
+
+外部 CLI 后端（pi、codex、kimi、claude）仍未实现，是待确认的 R4，不在 R1–R3 范围内。
+
+### 与设计的偏差
+
+- **allow_always 去重**：`ApprovalQueue` 在一条请求被回答为 `allow_always` 后，把队列中同工具、同规则、非危险的其他请求直接按 `allow_once` 解决，避免重复写规则。设计没有规定去重。
+- **写串行化的位置**：`allow_always` 对 `my-agent.json` 的读-改-写由 `addPermissionRule` 里的模块级 `writeChain` 串行化，authorizer 等待它；没有走本阶段新增的按路径文件锁。设计只要求「串行化写入」，没有指定位置。
+- **团队停止的拒绝理由**：`stop()` 用固定理由 `TEAM_STOPPED_REASON`（"The team stopped before this approval was answered."）拒绝所有待审批请求；停止开始后再来的审批也直接拒绝，避免入队后永远等待而卡住 `stop()`。设计没有规定该行为。
+- **R1 的审批缺口（R2 修复）**：R1 给每个 rob 直接传各自的 `headlessApproval`，绕过了 `Team`；R2 新增共享的 FIFO `ApprovalQueue`，审批经 `rob.approval` -> `Team.requestApproval` 入队，队列项带发起 rob 的名字并驱动 `waiting_approval` 状态。
+
 ## 问题
 
 用户希望同时派发不同类型的任务给不同的 rob。每个 rob 是独立的 agent，有自己的会话、子 agent、权限，可以写文件。rob 之间可以一对一私聊共享信息。用户可以在 rob 工作时插话，和 OpenCode 的使用方式一致。用户只能读取子 agent 的过程和 rob 之间的私聊，不能发言。

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Team } from "../../src/rob/team.js";
+import { createDelegateTool, MAX_DELEGATE_DEPTH } from "../../src/rob/tools.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 import { allowAllAuthorizerFactory, waitFor } from "./helpers.js";
@@ -201,5 +202,28 @@ describe("delegate", () => {
 			}),
 		);
 		expect(subagents.every((entry) => entry.parent === "planner")).toBe(true);
+	});
+
+	it("rejects a sub-agent that tries to delegate again", async () => {
+		let ran = false;
+		const tool = createDelegateTool({
+			from: "planner",
+			depth: MAX_DELEGATE_DEPTH,
+			run: async () => {
+				ran = true;
+				return "should not run";
+			},
+		});
+
+		const result = await tool.execute(
+			{ task: "depth two" },
+			{ workspaceRoot: workspace },
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Sub-agents cannot delegate further.",
+		});
+		expect(ran).toBe(false);
 	});
 });

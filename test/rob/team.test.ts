@@ -3,6 +3,7 @@ import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import { Team, UnknownRobError } from "../../src/rob/team.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+import { waitFor } from "./helpers.js";
 
 let workspace: string;
 
@@ -58,6 +59,7 @@ describe("Team", () => {
 				messageCount: 0,
 				pending: 0,
 				lastMessage: null,
+				usage: { input: 0, output: 0 },
 			},
 			{
 				name: "worker",
@@ -65,7 +67,35 @@ describe("Team", () => {
 				messageCount: 0,
 				pending: 0,
 				lastMessage: null,
+				usage: { input: 0, output: 0 },
 			},
 		]);
+	});
+
+	it("sums token usage per rob from the event stream", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "usage", inputTokens: 12, outputTokens: 7 },
+				{ type: "usage", inputTokens: 3, outputTokens: 5 },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [{ name: "planner", role: "plan" }],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+		});
+		team.start();
+
+		team.dispatch("planner", "go");
+		await waitFor(() => {
+			const status = team.statuses()[0];
+			return status.status === "idle" && status.pending === 0;
+		}, "the planner to finish");
+
+		expect(team.statuses()[0].usage).toEqual({ input: 15, output: 12 });
+		await team.stop();
 	});
 });

@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { errorMessage } from "../util/errors.js";
+import { withFileLock } from "../util/file-lock.js";
 import { resolveInWorkspace } from "../util/paths.js";
 import type { Tool } from "./types.js";
 
@@ -42,41 +43,43 @@ export const editFileTool: Tool<typeof schema> = {
 			};
 		}
 
-		let content: string;
-		try {
-			content = await readFile(target, "utf8");
-		} catch {
-			return { ok: false, error: `edit_file: file not found: ${args.path}` };
-		}
+		return withFileLock(target, async () => {
+			let content: string;
+			try {
+				content = await readFile(target, "utf8");
+			} catch {
+				return { ok: false, error: `edit_file: file not found: ${args.path}` };
+			}
 
-		const matches = countOccurrences(content, args.old_string);
-		if (matches === 0) {
+			const matches = countOccurrences(content, args.old_string);
+			if (matches === 0) {
+				return {
+					ok: false,
+					error: `edit_file: old_string not found in ${args.path}`,
+				};
+			}
+			if (matches > 1 && !args.replace_all) {
+				return {
+					ok: false,
+					error: `edit_file: old_string matches ${matches} times in ${args.path}; set replace_all to true to replace every occurrence`,
+				};
+			}
+
+			const updated = args.replace_all
+				? content.split(args.old_string).join(args.new_string)
+				: replaceFirst(content, args.old_string, args.new_string);
+			try {
+				await writeFile(target, updated, "utf8");
+			} catch (error) {
+				return { ok: false, error: `edit_file: ${errorMessage(error)}` };
+			}
+
+			const replaced = args.replace_all ? matches : 1;
 			return {
-				ok: false,
-				error: `edit_file: old_string not found in ${args.path}`,
+				ok: true,
+				output: `Replaced ${replaced} occurrence(s) in ${args.path}`,
 			};
-		}
-		if (matches > 1 && !args.replace_all) {
-			return {
-				ok: false,
-				error: `edit_file: old_string matches ${matches} times in ${args.path}; set replace_all to true to replace every occurrence`,
-			};
-		}
-
-		const updated = args.replace_all
-			? content.split(args.old_string).join(args.new_string)
-			: replaceFirst(content, args.old_string, args.new_string);
-		try {
-			await writeFile(target, updated, "utf8");
-		} catch (error) {
-			return { ok: false, error: `edit_file: ${errorMessage(error)}` };
-		}
-
-		const replaced = args.replace_all ? matches : 1;
-		return {
-			ok: true,
-			output: `Replaced ${replaced} occurrence(s) in ${args.path}`,
-		};
+		});
 	},
 };
 

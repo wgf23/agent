@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { errorMessage } from "../util/errors.js";
+import { withFileLock } from "../util/file-lock.js";
 import { resolveInWorkspace } from "../util/paths.js";
 import type { Tool } from "./types.js";
 
@@ -27,8 +28,10 @@ export const writeFileTool: Tool<typeof schema> = {
 		}
 
 		try {
-			await mkdir(path.dirname(target), { recursive: true });
-			await writeFile(target, args.content, "utf8");
+			await withFileLock(target, async () => {
+				await mkdir(path.dirname(target), { recursive: true });
+				await writeFile(target, args.content, "utf8");
+			});
 		} catch (error) {
 			return { ok: false, error: `write_file: ${errorMessage(error)}` };
 		}

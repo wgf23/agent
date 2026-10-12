@@ -23,7 +23,8 @@
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"smoke:provider": "tsx scripts/smoke-provider.ts",
-		"e2e": "tsx scripts/e2e.ts"
+		"e2e": "tsx scripts/e2e.ts",
+		"e2e:team": "tsx scripts/e2e-team.ts"
 	},
 	"dependencies": {
 		"commander": "^15.0.0",
