@@ -35,6 +35,7 @@ my-agent            # interactive TUI
 - `--max-cost <usd>` stops a run once the accumulated dollar cost exceeds the cap, in both headless mode and the TUI. No cap by default.
 - `--output-format json` writes one JSON object per agent event plus a final `summary` object to stdout for scripting and CI; the default `text` streams the answer as before.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
+- `my-agent sessions fork <id>` copies a saved session into a new one and prints the new id. `--at <n>` keeps only the first `n` messages of the fork.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
 - `my-agent setup` stores an API key and writes the provider, model, and endpoint to the global config file.
