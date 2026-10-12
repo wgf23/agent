@@ -87,6 +87,33 @@ describe("TeamApp", () => {
 		});
 	});
 
+	it("completes a rob name from @ and dispatches it", async () => {
+		const providers = {
+			planner: createMockProvider([
+				[
+					{ type: "text_delta", text: "planning" },
+					{ type: "finish", reason: "stop" },
+				],
+			]),
+			worker: createMockProvider([]),
+		};
+		const { stdin, lastFrame } = renderTeam(makeTeam(providers));
+		await waitFor(() => expect(lastFrame()).toContain("> planner"));
+
+		stdin.write("@pl");
+		await waitFor(() => expect(lastFrame()).toContain("❯ @planner"));
+
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("> @planner"));
+
+		stdin.write("hello");
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("you → planner: hello"));
+		await waitFor(() => expect(lastFrame()).toContain("planning"));
+
+		expect(providers.planner.requests).toHaveLength(1);
+	});
+
 	it("cycles the selected rob with tab", async () => {
 		const providers = {
 			planner: createMockProvider([]),

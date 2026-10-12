@@ -9,11 +9,13 @@ export interface TeamStatusBarProps {
 export function TeamStatusBar({ state }: TeamStatusBarProps): ReactElement {
 	const tokens = teamTokens(state);
 	return (
-		<Box>
-			<Text color="cyan">{state.model}</Text>
-			<Text>{`  robs ${state.robs.length}`}</Text>
-			<Text>{`  waiting ${state.approvals.length}`}</Text>
-			<Text>{`  tokens ${tokens.input + tokens.output}`}</Text>
+		<Box width="100%">
+			<Text wrap="truncate">
+				<Text color="cyan">{state.model}</Text>
+				<Text>{`  robs ${state.robs.length}`}</Text>
+				<Text>{`  waiting ${state.approvals.length}`}</Text>
+				<Text>{`  tokens ${tokens.input + tokens.output}`}</Text>
+			</Text>
 		</Box>
 	);
 }

@@ -95,6 +95,8 @@ describe("App", () => {
 		await waitFor(() => expect(lastFrame()).toContain("Hello from mock"));
 
 		stdin.write("/clear");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
 		stdin.write("\r");
 		await waitFor(() => expect(lastFrame()).not.toContain("Hello from mock"));
 
@@ -108,6 +110,8 @@ describe("App", () => {
 		const { stdin } = render(app(provider, { onExit }));
 
 		stdin.write("/quit");
+		// First enter accepts the autocomplete, second submits.
+		stdin.write("\r");
 		stdin.write("\r");
 
 		await waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));

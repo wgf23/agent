@@ -1,5 +1,12 @@
 import type { AgentEvent } from "../agent/events.js";
 import type { PendingPermission } from "./approval.js";
+import {
+	commandSuggestions,
+	MENU_CLOSED,
+	MENU_NEUTRAL,
+	type MenuState,
+	moveMenu,
+} from "./suggestions.js";
 import { summarizeArgs } from "./summarize.js";
 
 export type TuiStatus = "idle" | "streaming" | "error" | "awaiting_permission";
@@ -65,6 +72,7 @@ export interface TuiState {
 	expandTools: boolean;
 	expandReasoning: boolean;
 	permission: PendingPermission | null;
+	menu: MenuState;
 }
 
 export interface TuiInit {
@@ -90,6 +98,8 @@ export type TuiAction =
 	| { type: "history_next" }
 	| { type: "toggle_tools" }
 	| { type: "toggle_reasoning" }
+	| { type: "menu_move"; delta: 1 | -1 }
+	| { type: "menu_close" }
 	| { type: "permission"; request: PendingPermission | null };
 
 export const CANCEL_MESSAGE = "[cancelled]";
@@ -110,6 +120,7 @@ export function initialTuiState(init: TuiInit): TuiState {
 		expandTools: false,
 		expandReasoning: false,
 		permission: null,
+		menu: MENU_NEUTRAL,
 	};
 }
 
@@ -134,6 +145,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				input: "",
 				history: [...state.history, text],
 				historyIndex: null,
+				menu: MENU_NEUTRAL,
 			};
 		}
 
@@ -157,7 +169,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 			return { ...state, messages: [], lastError: null };
 
 		case "set_input":
-			return { ...state, input: action.text, historyIndex: null };
+			return {
+				...state,
+				input: action.text,
+				historyIndex: null,
+				menu: MENU_NEUTRAL,
+			};
 
 		case "append_system":
 			return {
@@ -179,19 +196,21 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				...state,
 				historyIndex: index,
 				input: state.history[index] ?? state.input,
+				menu: MENU_CLOSED,
 			};
 		}
 
 		case "history_next": {
 			if (state.historyIndex === null) return state;
 			if (state.historyIndex >= state.history.length - 1) {
-				return { ...state, historyIndex: null, input: "" };
+				return { ...state, historyIndex: null, input: "", menu: MENU_CLOSED };
 			}
 			const index = state.historyIndex + 1;
 			return {
 				...state,
 				historyIndex: index,
 				input: state.history[index] ?? "",
+				menu: MENU_CLOSED,
 			};
 		}
 
@@ -200,6 +219,19 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
 		case "toggle_reasoning":
 			return { ...state, expandReasoning: !state.expandReasoning };
+
+		case "menu_move":
+			return {
+				...state,
+				menu: moveMenu(
+					state.menu,
+					commandSuggestions(state.input),
+					action.delta,
+				),
+			};
+
+		case "menu_close":
+			return { ...state, menu: MENU_CLOSED };
 
 		case "permission": {
 			if (action.request === null) {
@@ -215,6 +247,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				...state,
 				permission: action.request,
 				status: "awaiting_permission",
+				menu: MENU_CLOSED,
 			};
 		}
 	}

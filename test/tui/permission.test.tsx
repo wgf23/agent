@@ -95,6 +95,7 @@ describe("PermissionDialog", () => {
 		await awaitDialog(lastFrame);
 		expect(lastFrame()).toContain("write_file");
 		expect(lastFrame()).toContain("out.txt");
+		expect(lastFrame()).toContain("waiting for approval");
 
 		stdin.write("zzz");
 		expect(lastFrame()).not.toContain("zzz");

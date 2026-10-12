@@ -1,17 +1,25 @@
 import { Box, Text, useInput } from "ink";
 import type { ReactElement } from "react";
 import { useReducer, useRef } from "react";
+import type { TuiStatus } from "../state.js";
+import { isMenuOpen, type MenuState, type Suggestion } from "../suggestions.js";
 
 const MAX_VISIBLE_LINES = 8;
+const PLACEHOLDER = "Ask anything. /help for commands";
 
 export interface PromptInputProps {
 	value: string;
 	disabled: boolean;
 	active: boolean;
+	status: TuiStatus;
+	menu: MenuState;
+	suggestionsFor: (text: string) => Suggestion[];
 	onChange: (text: string) => void;
 	onSubmit: (text: string) => void;
 	onHistoryPrev: () => void;
 	onHistoryNext: () => void;
+	onMenuMove: (delta: 1 | -1) => void;
+	onMenuClose: () => void;
 	onCancel: () => void;
 	onExit: () => void;
 	onToggleTools: () => void;
@@ -22,10 +30,15 @@ export function PromptInput({
 	value,
 	disabled,
 	active,
+	status,
+	menu,
+	suggestionsFor,
 	onChange,
 	onSubmit,
 	onHistoryPrev,
 	onHistoryNext,
+	onMenuMove,
+	onMenuClose,
 	onCancel,
 	onExit,
 	onToggleTools,
@@ -74,8 +87,11 @@ export function PromptInput({
 				onToggleReasoning();
 				return;
 			}
+			const matches = suggestionsFor(latest.current);
+			const menuOpen = isMenuOpen(menu, matches);
 			if (key.escape) {
-				onCancel();
+				if (menuOpen) onMenuClose();
+				else onCancel();
 				return;
 			}
 			if (input === "\n") {
@@ -88,10 +104,22 @@ export function PromptInput({
 				return;
 			}
 			if (key.return) {
+				if (menuOpen) {
+					acceptSuggestion(matches, menu.index, apply);
+					return;
+				}
 				if (!disabled && latest.current.trim() !== "") onSubmit(latest.current);
 				return;
 			}
+			if (key.tab) {
+				if (menuOpen) acceptSuggestion(matches, menu.index, apply);
+				return;
+			}
 			if (key.upArrow || key.downArrow) {
+				if (menuOpen) {
+					onMenuMove(key.upArrow ? -1 : 1);
+					return;
+				}
 				const text = latest.current;
 				if (!text.includes("\n")) {
 					if (key.upArrow) onHistoryPrev();
@@ -113,7 +141,7 @@ export function PromptInput({
 				apply(text.slice(0, position - 1) + text.slice(position), position - 1);
 				return;
 			}
-			if (key.ctrl || key.meta || key.tab || input === "") return;
+			if (key.ctrl || key.meta || input === "") return;
 			const text = latest.current;
 			const position = cursor.current;
 			apply(
@@ -136,21 +164,70 @@ export function PromptInput({
 		);
 	}
 	const visible = lines.slice(start, start + MAX_VISIBLE_LINES);
+	const matches = suggestionsFor(text);
+	const menuOpen = isMenuOpen(menu, matches);
+	const selected = clamp(menu.index, 0, matches.length - 1);
+	const isEmpty = text === "";
 
 	return (
-		<Box flexDirection="column">
-			{visible.map((line, index) => {
-				const absolute = start + index;
-				const indicator = absolute === 0 ? (disabled ? "… " : "> ") : "  ";
-				return (
-					<Text key={absolute}>
-						<Text color="cyan">{indicator}</Text>
-						<Text>{line}</Text>
-					</Text>
-				);
-			})}
+		<Box flexDirection="column" width="100%">
+			{menuOpen ? (
+				<Box flexDirection="column" paddingX={1}>
+					{matches.map((suggestion, index) => (
+						<Text
+							key={suggestion.value}
+							color={index === selected ? "cyan" : undefined}
+							bold={index === selected}
+							dimColor={index !== selected}
+						>
+							{index === selected ? "❯ " : "  "}
+							{suggestion.label}
+							{suggestion.hint !== undefined ? `  ${suggestion.hint}` : ""}
+						</Text>
+					))}
+				</Box>
+			) : null}
+			<Box
+				borderStyle="round"
+				borderColor={borderColor(status)}
+				borderDimColor={status === "idle" || status === "error"}
+				paddingX={1}
+				width="100%"
+				flexDirection="column"
+			>
+				{visible.map((line, index) => {
+					const absolute = start + index;
+					const indicator = absolute === 0 ? (disabled ? "… " : "> ") : "  ";
+					return (
+						<Text key={absolute}>
+							<Text color="cyan">{indicator}</Text>
+							{isEmpty && absolute === 0 ? (
+								<Text dimColor>{PLACEHOLDER}</Text>
+							) : (
+								<Text>{line}</Text>
+							)}
+						</Text>
+					);
+				})}
+			</Box>
 		</Box>
 	);
+}
+
+function acceptSuggestion(
+	matches: Suggestion[],
+	index: number,
+	apply: (text: string, cursor: number) => void,
+): void {
+	const choice = matches[clamp(index, 0, matches.length - 1)];
+	if (choice === undefined) return;
+	apply(`${choice.value} `, choice.value.length + 1);
+}
+
+function borderColor(status: TuiStatus): string {
+	if (status === "awaiting_permission") return "yellow";
+	if (status === "streaming") return "cyan";
+	return "gray";
 }
 
 function clamp(value: number, min: number, max: number): number {

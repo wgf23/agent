@@ -6,6 +6,13 @@ import {
 	type TranscriptState,
 	type TuiMessage,
 } from "../state.js";
+import {
+	MENU_CLOSED,
+	MENU_NEUTRAL,
+	type MenuState,
+	moveMenu,
+	robSuggestions,
+} from "../suggestions.js";
 
 export type TeamView = "transcript" | "dms" | "subagents";
 
@@ -27,6 +34,7 @@ export interface TeamState {
 	expandTools: boolean;
 	expandReasoning: boolean;
 	model: string;
+	menu: MenuState;
 }
 
 export interface TeamInit {
@@ -46,7 +54,9 @@ export type TeamAction =
 	| { type: "toggle_tools" }
 	| { type: "toggle_reasoning" }
 	| { type: "history_prev" }
-	| { type: "history_next" };
+	| { type: "history_next" }
+	| { type: "menu_move"; delta: 1 | -1 }
+	| { type: "menu_close" };
 
 export function initialTeamState(init: TeamInit): TeamState {
 	return {
@@ -70,6 +80,7 @@ export function initialTeamState(init: TeamInit): TeamState {
 		expandTools: false,
 		expandReasoning: false,
 		model: init.model,
+		menu: MENU_NEUTRAL,
 	};
 }
 
@@ -96,7 +107,12 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 			return applyTeamEvent(state, action.event);
 
 		case "set_input":
-			return { ...state, input: action.text, historyIndex: null };
+			return {
+				...state,
+				input: action.text,
+				historyIndex: null,
+				menu: MENU_NEUTRAL,
+			};
 
 		case "user_message": {
 			const label = action.interjection
@@ -109,6 +125,7 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 				input: "",
 				history: [...state.history, action.text],
 				historyIndex: null,
+				menu: MENU_CLOSED,
 			};
 		}
 
@@ -142,6 +159,19 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 		case "toggle_reasoning":
 			return { ...state, expandReasoning: !state.expandReasoning };
 
+		case "menu_move":
+			return {
+				...state,
+				menu: moveMenu(
+					state.menu,
+					robSuggestions(state.input, robNames(state)),
+					action.delta,
+				),
+			};
+
+		case "menu_close":
+			return { ...state, menu: MENU_CLOSED };
+
 		case "history_prev": {
 			if (state.history.length === 0) return state;
 			const index =
@@ -152,22 +182,28 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 				...state,
 				historyIndex: index,
 				input: state.history[index] ?? state.input,
+				menu: MENU_CLOSED,
 			};
 		}
 
 		case "history_next": {
 			if (state.historyIndex === null) return state;
 			if (state.historyIndex >= state.history.length - 1) {
-				return { ...state, historyIndex: null, input: "" };
+				return { ...state, historyIndex: null, input: "", menu: MENU_CLOSED };
 			}
 			const index = state.historyIndex + 1;
 			return {
 				...state,
 				historyIndex: index,
 				input: state.history[index] ?? "",
+				menu: MENU_CLOSED,
 			};
 		}
 	}
+}
+
+function robNames(state: TeamState): string[] {
+	return state.robs.map((rob) => rob.name);
 }
 
 function applyTeamEvent(state: TeamState, event: TeamEvent): TeamState {

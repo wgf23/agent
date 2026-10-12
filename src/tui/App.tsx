@@ -16,6 +16,7 @@ import { PermissionDialog } from "./components/PermissionDialog.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { initialTuiState, tuiReducer } from "./state.js";
+import { COMMANDS, commandSuggestions } from "./suggestions.js";
 
 export interface AppProps {
 	provider: Provider;
@@ -162,6 +163,8 @@ export function App({
 				usage={state.usage}
 				status={state.status}
 				runStartedAt={state.runStartedAt}
+				thinking={thinking}
+				reasoningEffort={reasoningEffort}
 			/>
 			<MessageList
 				messages={state.messages}
@@ -183,10 +186,15 @@ export function App({
 					state.status === "streaming" || state.status === "awaiting_permission"
 				}
 				active={state.permission === null}
+				status={state.status}
+				menu={state.menu}
+				suggestionsFor={commandSuggestions}
 				onChange={(text) => dispatch({ type: "set_input", text })}
 				onSubmit={submit}
 				onHistoryPrev={() => dispatch({ type: "history_prev" })}
 				onHistoryNext={() => dispatch({ type: "history_next" })}
+				onMenuMove={(delta) => dispatch({ type: "menu_move", delta })}
+				onMenuClose={() => dispatch({ type: "menu_close" })}
 				onCancel={cancel}
 				onExit={exit}
 				onToggleTools={() => dispatch({ type: "toggle_tools" })}
@@ -200,7 +208,9 @@ function runCommand(text: string, context: CommandContext): void {
 	const command = text.split(/\s+/)[0];
 	switch (command) {
 		case "/help":
-			context.system("Commands: /help, /clear, /model, /quit");
+			context.system(
+				`Commands: ${COMMANDS.map((command) => command.name).join(", ")}`,
+			);
 			return;
 		case "/clear":
 			context.clear();

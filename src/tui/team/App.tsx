@@ -6,6 +6,8 @@ import type { TeamListener } from "../../rob/events.js";
 import { MessageList } from "../components/MessageList.js";
 import { PermissionDialog } from "../components/PermissionDialog.js";
 import { PromptInput } from "../components/PromptInput.js";
+import type { TuiStatus } from "../state.js";
+import { isMenuOpen, robSuggestions } from "../suggestions.js";
 import { DmView } from "./components/DmView.js";
 import { RobList } from "./components/RobList.js";
 import { SubagentView } from "./components/SubagentView.js";
@@ -62,6 +64,11 @@ export function TeamApp({
 
 	useInput((input, key) => {
 		const dialogOpen = state.approvals.length > 0;
+		const robNames = state.robs.map((rob) => rob.name);
+		const menuOpen = isMenuOpen(
+			state.menu,
+			robSuggestions(state.input, robNames),
+		);
 		if (key.ctrl && input === "c") {
 			if (state.view !== "transcript" || dialogOpen) exit();
 			return;
@@ -71,7 +78,7 @@ export function TeamApp({
 			if (key.escape) dispatch({ type: "close_view" });
 			return;
 		}
-		if (key.tab) {
+		if (key.tab && !menuOpen) {
 			dispatch({ type: "cycle", direction: key.shift ? -1 : 1 });
 			return;
 		}
@@ -130,6 +137,13 @@ export function TeamApp({
 
 	const selected = selectedRob(state);
 	const head = state.approvals[0];
+	const robNames = state.robs.map((rob) => rob.name);
+	const promptStatus: TuiStatus =
+		state.approvals.length > 0
+			? "awaiting_permission"
+			: state.robs.some((rob) => rob.robStatus === "working")
+				? "streaming"
+				: "idle";
 
 	return (
 		<Box flexDirection="column">
@@ -172,10 +186,15 @@ export function TeamApp({
 					value={state.input}
 					disabled={false}
 					active={state.approvals.length === 0}
+					status={promptStatus}
+					menu={state.menu}
+					suggestionsFor={(text) => robSuggestions(text, robNames)}
 					onChange={(text) => dispatch({ type: "set_input", text })}
 					onSubmit={submit}
 					onHistoryPrev={() => dispatch({ type: "history_prev" })}
 					onHistoryNext={() => dispatch({ type: "history_next" })}
+					onMenuMove={(delta) => dispatch({ type: "menu_move", delta })}
+					onMenuClose={() => dispatch({ type: "menu_close" })}
 					onCancel={() => {}}
 					onExit={exit}
 					onToggleTools={() => dispatch({ type: "toggle_tools" })}
