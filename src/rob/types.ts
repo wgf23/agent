@@ -16,12 +16,59 @@ export const robNameSchema = z
 	);
 export type RobName = z.infer<typeof robNameSchema>;
 
-export const robConfigSchema = z.object({
-	name: robNameSchema,
-	role: z.string(),
-	model: z.string().min(1).optional(),
-	permissions: permissionRulesSchema.optional(),
-});
+export const PI_CLI_COMMAND = "pi";
+
+const nativeBackendSchema = z.object({ kind: z.literal("native") }).strict();
+
+const cliBackendSchema = z
+	.object({
+		kind: z.literal("cli"),
+		command: z.string().min(1),
+		provider: z.string().min(1),
+		model: z.string().min(1),
+		sessionDir: z.string().min(1).optional(),
+	})
+	.strict();
+
+export const robBackendSchema = z.discriminatedUnion("kind", [
+	nativeBackendSchema,
+	cliBackendSchema,
+]);
+export type RobBackendConfig = z.infer<typeof robBackendSchema>;
+
+// send_message and delegate are native-only; pi has no equivalent tool.
+const CLI_UNSUPPORTED_TOOLS = ["send_message", "delegate"] as const;
+
+export const robConfigSchema = z
+	.object({
+		name: robNameSchema,
+		role: z.string(),
+		model: z.string().min(1).optional(),
+		permissions: permissionRulesSchema.optional(),
+		backend: robBackendSchema.optional(),
+	})
+	.superRefine((rob, ctx) => {
+		const backend = rob.backend;
+		if (backend === undefined || backend.kind !== "cli") return;
+		if (backend.command !== PI_CLI_COMMAND) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["backend", "command"],
+				message: `Unsupported CLI command "${backend.command}". Only "${PI_CLI_COMMAND}" is supported for now.`,
+			});
+			return;
+		}
+		const unsupported = CLI_UNSUPPORTED_TOOLS.filter(
+			(tool) => rob.permissions?.[tool] !== undefined,
+		);
+		if (unsupported.length > 0) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["permissions"],
+				message: `A "cli" backend cannot use ${unsupported.join(", ")}. Those tools are only available to the native backend.`,
+			});
+		}
+	});
 export type RobConfig = z.infer<typeof robConfigSchema>;
 
 export type InboundKind = "user" | "dm" | "subagent_result";

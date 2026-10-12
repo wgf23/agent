@@ -3,12 +3,18 @@ import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
-import type { Message, Provider, TextBlock } from "../providers/types.js";
+import type { Message, Provider } from "../providers/types.js";
 import { errorMessage } from "../util/errors.js";
+import {
+	createNativeBackend,
+	lastAssistantText,
+	type RobBackend,
+} from "./backend.js";
+import { createCliBackend } from "./cli-backend.js";
 import { AsyncQueue } from "./inbox.js";
-import { createDelegateTool, createSendMessageTool } from "./tools.js";
 import type {
 	Inbound,
+	RobBackendConfig,
 	RobName,
 	RobStatus,
 	RobStatusEntry,
@@ -18,7 +24,7 @@ import type {
 
 export interface AuthorizerInput {
 	name: RobName;
-	permissions: PermissionRules;
+	rules: PermissionRules;
 	approval: Approval;
 }
 
@@ -27,24 +33,26 @@ export type AuthorizerFactory = (input: AuthorizerInput) => Authorize;
 export interface RobOptions {
 	name: RobName;
 	role: string;
-	permissions: PermissionRules;
+	rules: PermissionRules;
 	model: string;
 	provider: Provider;
 	workspaceRoot: string;
 	authorizerFactory: AuthorizerFactory;
 	team: TeamPort;
+	backend?: RobBackendConfig;
 }
 
 export class Rob {
 	readonly name: RobName;
 	readonly role: string;
-	readonly permissions: PermissionRules;
 	readonly model: string;
 
+	private readonly rules: PermissionRules;
 	private readonly provider: Provider;
 	private readonly workspaceRoot: string;
 	private readonly authorize: Authorize;
 	private readonly team: TeamPort;
+	private readonly backend: RobBackend;
 	private readonly inbox = new AsyncQueue<Inbound>();
 	private readonly events: AgentEvent[] = [];
 
@@ -58,16 +66,35 @@ export class Rob {
 	constructor(options: RobOptions) {
 		this.name = options.name;
 		this.role = options.role;
-		this.permissions = options.permissions;
+		this.rules = options.rules;
 		this.model = options.model;
 		this.provider = options.provider;
 		this.workspaceRoot = options.workspaceRoot;
 		this.team = options.team;
 		this.authorize = options.authorizerFactory({
 			name: options.name,
-			permissions: options.permissions,
+			rules: options.rules,
 			approval: (request) => this.team.requestApproval(this.name, request),
 		});
+		this.backend =
+			options.backend?.kind === "cli"
+				? createCliBackend({
+						rob: options.name,
+						command: options.backend.command,
+						provider: options.backend.provider,
+						model: options.backend.model,
+						sessionDir: options.backend.sessionDir,
+					})
+				: createNativeBackend({
+						name: options.name,
+						provider: options.provider,
+						model: options.model,
+						authorize: this.authorize,
+						systemInstructions: this.systemInstructions(),
+						team: options.team,
+						drain: () => this.inbox.drain(),
+						runSubagent: (task, signal) => this.runSubagent(task, signal),
+					});
 	}
 
 	deliver(inbound: Inbound): void {
@@ -138,49 +165,27 @@ export class Rob {
 	}
 
 	private async runOnce(batch: Inbound[], signal: AbortSignal): Promise<void> {
-		const [first, ...rest] = batch;
-		if (first === undefined) return;
-
-		// runAgent appends one prompt user message; the rest of the batch and any
-		// interjection that lands mid-run flow through drainInput before each step.
-		let queued = rest.map(toUserMessage);
-		const drainInput = (): Message[] => {
-			const messages = [...queued, ...this.inbox.drain().map(toUserMessage)];
-			queued = [];
-			return messages;
-		};
-
-		const result = await runAgent({
-			provider: this.provider,
-			model: this.model,
-			workspaceRoot: this.workspaceRoot,
-			prompt: promptFor(first),
+		const result = await this.backend.run({
 			history: this.history,
+			inbound: batch,
+			workspaceRoot: this.workspaceRoot,
+			rules: this.rules,
 			signal,
-			authorize: this.authorize,
-			extraInstructions: this.systemInstructions(),
-			drainInput,
-			extraTools: [
-				createSendMessageTool({ team: this.team, from: this.name }),
-				createDelegateTool({
-					from: this.name,
-					depth: 0,
-					run: (task, subSignal) => this.runSubagent(task, subSignal),
-				}),
-			],
-			onEvent: (event) => {
-				if (event.type === "usage") {
-					this.usage.input += event.inputTokens;
-					this.usage.output += event.outputTokens;
-				}
-				this.events.push(event);
-				this.team.emitRobEvent(this.name, event);
-			},
+			onEvent: (event) => this.handleEvent(event),
 		});
 
 		this.history = result.messages.filter(
 			(message) => message.role !== "system",
 		);
+	}
+
+	private handleEvent(event: AgentEvent): void {
+		if (event.type === "usage") {
+			this.usage.input += event.inputTokens;
+			this.usage.output += event.outputTokens;
+		}
+		this.events.push(event);
+		this.team.emitRobEvent(this.name, event);
 	}
 
 	private async runSubagent(
@@ -232,38 +237,6 @@ export class Rob {
 			this.role,
 		].join("\n");
 	}
-}
-
-function headerFor(inbound: Inbound): string {
-	switch (inbound.kind) {
-		case "user":
-			return "[from user]";
-		case "dm":
-			return `[from rob:${inbound.from}]`;
-		case "subagent_result":
-			return "[subagent result]";
-	}
-}
-
-function promptFor(inbound: Inbound): string {
-	return `${headerFor(inbound)} ${inbound.text}`;
-}
-
-function toUserMessage(inbound: Inbound): Message {
-	return { role: "user", content: promptFor(inbound) };
-}
-
-function lastAssistantText(messages: readonly Message[]): string | null {
-	for (let index = messages.length - 1; index >= 0; index -= 1) {
-		const message = messages[index];
-		if (message.role !== "assistant") continue;
-		const text = message.content
-			.filter((block): block is TextBlock => block.type === "text")
-			.map((block) => block.text)
-			.join("");
-		return text;
-	}
-	return null;
 }
 
 function abortBatch(signal: AbortSignal): Promise<Inbound[]> {

@@ -6,10 +6,8 @@ import {
 	createAuthorizer,
 	headlessApproval,
 } from "../src/permissions/authorizer.js";
-import { defaultRules } from "../src/permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../src/providers/openai-compatible.js";
 import { Team } from "../src/rob/team.js";
-import { robToolRules } from "../src/rob/tools.js";
 
 if (process.env.MY_AGENT_E2E !== "1") {
 	console.log("skipped: set MY_AGENT_E2E=1 to run against the real API");
@@ -70,15 +68,11 @@ try {
 				defaultModel: settings.model,
 				providerFactory: () => provider,
 				workspaceRoot: workspace,
+				permissions,
 				authorizerFactory: (rob) =>
 					createAuthorizer({
 						workspaceRoot: workspace,
-						rules: {
-							...defaultRules(),
-							...robToolRules(),
-							...permissions,
-							...rob.permissions,
-						},
+						rules: rob.rules,
 						approval: rob.approval,
 						yesAll,
 					}),

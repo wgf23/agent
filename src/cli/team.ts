@@ -4,11 +4,9 @@ import {
 	createAuthorizer,
 	headlessApproval,
 } from "../permissions/authorizer.js";
-import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Provider } from "../providers/types.js";
 import { Team, UnknownRobError } from "../rob/team.js";
-import { robToolRules } from "../rob/tools.js";
 import type { DmEntry, RobConfig, RobStatusEntry } from "../rob/types.js";
 
 const DEFAULT_WAIT_MS = 120_000;
@@ -97,15 +95,11 @@ export async function runTeamCommand(
 		defaultModel: settings.model,
 		providerFactory: options.providerFactory ?? (() => provider),
 		workspaceRoot,
+		permissions,
 		authorizerFactory: (rob) =>
 			createAuthorizer({
 				workspaceRoot,
-				rules: {
-					...defaultRules(),
-					...robToolRules(),
-					...permissions,
-					...rob.permissions,
-				},
+				rules: rob.rules,
 				approval: rob.approval,
 				yesAll,
 			}),

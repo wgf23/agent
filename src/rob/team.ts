@@ -4,10 +4,12 @@ import type {
 	ApprovalDecision,
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
+import { defaultRules, type PermissionRules } from "../permissions/rules.js";
 import type { Provider } from "../providers/types.js";
 import { ApprovalQueue } from "./approvals.js";
 import type { TeamEvent, TeamListener } from "./events.js";
 import { type AuthorizerFactory, Rob } from "./rob.js";
+import { robToolRules } from "./tools.js";
 import type {
 	DmEntry,
 	RobConfig,
@@ -37,6 +39,7 @@ export interface TeamOptions {
 	providerFactory: (rob: RobConfig) => Provider;
 	workspaceRoot: string;
 	authorizerFactory: AuthorizerFactory;
+	permissions?: PermissionRules;
 }
 
 export class Team implements TeamPort {
@@ -56,12 +59,13 @@ export class Team implements TeamPort {
 				new Rob({
 					name: config.name,
 					role: config.role,
-					permissions: config.permissions ?? {},
+					rules: resolveRobRules(options.permissions ?? {}, config),
 					model: config.model ?? options.defaultModel,
 					provider: options.providerFactory(config),
 					workspaceRoot: options.workspaceRoot,
 					authorizerFactory: options.authorizerFactory,
 					team: this,
+					backend: config.backend,
 				}),
 			);
 		}
@@ -187,4 +191,18 @@ export class Team implements TeamPort {
 function toChoice(decision: ApprovalDecision): ApprovalChoice {
 	if (typeof decision === "object") return "deny";
 	return decision;
+}
+
+// One merge for the authorizer and the cli tool allowlist, so a rob's effective
+// rules cannot differ between the two.
+function resolveRobRules(
+	project: PermissionRules,
+	rob: RobConfig,
+): PermissionRules {
+	return {
+		...defaultRules(),
+		...robToolRules(),
+		...project,
+		...rob.permissions,
+	};
 }

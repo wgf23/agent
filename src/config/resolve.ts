@@ -242,6 +242,13 @@ function loadLayer(
 		};
 	}
 
+	if (role === "global" && "backend" in raw) {
+		return {
+			ok: false,
+			error: `The global config ${filePath} cannot set backend. Put a rob's backend in ${projectPath} instead.`,
+		};
+	}
+
 	const provider = providerOptionsSchema.safeParse(raw.provider ?? {});
 	if (!provider.success) {
 		return {

@@ -5,7 +5,6 @@ import { createAuthorizer } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import { Team } from "../rob/team.js";
-import { robToolRules } from "../rob/tools.js";
 import { App } from "./App.js";
 import { createApprovalBridge } from "./approval.js";
 import { TeamApp } from "./team/App.js";
@@ -50,15 +49,11 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			defaultModel: settings.model,
 			providerFactory: () => provider,
 			workspaceRoot: options.workspaceRoot,
+			permissions,
 			authorizerFactory: (rob) =>
 				createAuthorizer({
 					workspaceRoot: options.workspaceRoot,
-					rules: {
-						...defaultRules(),
-						...robToolRules(),
-						...permissions,
-						...rob.permissions,
-					},
+					rules: rob.rules,
 					approval: rob.approval,
 					yesAll: false,
 				}),

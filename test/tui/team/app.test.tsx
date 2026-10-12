@@ -1,10 +1,8 @@
 import { cleanup, render } from "ink-testing-library";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuthorizer } from "../../../src/permissions/authorizer.js";
-import { defaultRules } from "../../../src/permissions/rules.js";
 import type { StreamEvent } from "../../../src/providers/types.js";
 import { Team } from "../../../src/rob/team.js";
-import { robToolRules } from "../../../src/rob/tools.js";
 import { TeamApp, type TeamController } from "../../../src/tui/team/App.js";
 import {
 	createMockProvider,
@@ -51,7 +49,7 @@ function makeTeam(providers: Record<string, MockProvider>): Team {
 		authorizerFactory: (rob) =>
 			createAuthorizer({
 				workspaceRoot: workspace,
-				rules: { ...defaultRules(), ...robToolRules(), ...rob.permissions },
+				rules: rob.rules,
 				approval: rob.approval,
 				yesAll: false,
 			}),

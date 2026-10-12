@@ -98,7 +98,7 @@ describe("Rob", () => {
 		const rob = new Rob({
 			name: "planner",
 			role: "work",
-			permissions: {},
+			rules: {},
 			model: "deepseek-flash",
 			provider,
 			workspaceRoot: workspace,
