@@ -10,9 +10,11 @@ import {
 import {
 	defaultRules,
 	type PermissionRules,
+	resolveAction,
 } from "../../src/permissions/rules.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { readFileTool } from "../../src/tools/read_file.js";
+import type { Tool } from "../../src/tools/types.js";
 import { writeFileTool } from "../../src/tools/write_file.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
@@ -352,6 +354,61 @@ describe("createAuthorizer", () => {
 		expect(decision).toEqual({ allowed: true });
 		expect(approval).toHaveBeenCalledTimes(1);
 		expect(allowAll.get()).toBe(false);
+	});
+});
+
+describe("mcp tool permissions", () => {
+	const name = "mcp__memory__create_entities";
+	const tool: Tool = {
+		name,
+		description: "An external tool.",
+		readOnly: false,
+		parameters: { type: "object" },
+		execute: async () => ({ ok: true, output: "" }),
+	};
+
+	it("defaults an unknown mcp tool to ask and consults approval", async () => {
+		expect(resolveAction(defaultRules(), name, "")).toBe("ask");
+
+		const approval = vi.fn(async () => "deny" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval,
+			yesAll: false,
+		});
+
+		const decision = await authorize(
+			{ id: "call_1", name, args: { name: "Ada" } },
+			tool,
+		);
+
+		expect(approval).toHaveBeenCalledTimes(1);
+		expect(decision).toEqual({
+			allowed: false,
+			reason: `The user denied ${name} .`,
+		});
+	});
+
+	it("persists allow always under the exact mcp tool name", async () => {
+		const approval = vi.fn(async () => "allow_always" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval,
+			yesAll: false,
+		});
+
+		const decision = await authorize(
+			{ id: "call_1", name, args: { name: "Ada" } },
+			tool,
+		);
+
+		expect(decision).toEqual({ allowed: true, remember: true });
+		const written = await readFile(join(workspace, "my-agent.json"), "utf8");
+		expect(JSON.parse(written)).toEqual({
+			permissions: { [name]: [{ pattern: "", action: "allow" }] },
+		});
 	});
 });
 
