@@ -1,6 +1,6 @@
 # my-agent
 
-A terminal coding agent powered by DeepSeek (OpenAI-compatible API). It streams answers, reads and edits files, runs commands, and asks for permission before anything risky. TypeScript, Node 20+.
+A terminal coding agent powered by DeepSeek (OpenAI-compatible API). It streams answers, reads and edits files, runs commands, fetches web pages, and asks for permission before anything risky. TypeScript, Node 20+.
 
 ## Install
 
@@ -142,11 +142,15 @@ Keys are not allowed in either file. A file with an `apiKey` field is rejected; 
 
 The directory is created `0700` and the file `0600`. The key is looked up by the resolved `apiKeyEnv` name. Resolution order for the key: the environment variable first, then the credentials file. A corrupt file is an error and names the file rather than silently ignoring it. The key value is never printed.
 
+## Tools
+
+`web_fetch` retrieves one `http` or `https` URL and returns the body. Other schemes are rejected before any request. `format` is `markdown` (the default), `text`, or `html`. `markdown` and `text` strip HTML tags to readable text. `html` returns the response body unchanged. The result is cut at 2000 lines or 50 KB, the same limits as file reads. `timeout_ms` defaults to 30000, must be at least 1, and cannot be higher than 120000. A non-2xx status, an invalid URL, a network failure, a timeout, or an abort returns an error.
+
 ## Permissions
 
 Each tool maps to an action: `allow`, `ask`, or `deny`. A tool can also take an ordered list of `{ "pattern", "action" }` rules; the first matching pattern wins. `*` is a wildcard, so `git status*` matches `git status` and `git status --short`.
 
-Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, and `bash` ask.
+Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, and `web_fetch` ask.
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 
