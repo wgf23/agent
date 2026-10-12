@@ -207,6 +207,27 @@ MCP tools default to `ask`, so the dialog approves them like `bash`, and "allow 
 
 Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode connects them once per run: every native rob receives the configured tools, and the connection set is disposed when the team stops. A `cli` rob (`pi` or `opencode`) runs its own tool registry and uses its own MCP configuration instead. A sub-agent a rob starts through `delegate` does not receive MCP tools.
 
+## Hooks
+
+A project can run a shell command before or after each tool call. Configure a top-level `hooks` block in `<workspace>/my-agent.json`:
+
+```json
+{
+  "hooks": {
+    "preToolUse": [
+      { "match": "bash", "command": "node scripts/check.mjs" }
+    ],
+    "postToolUse": [
+      { "match": "*", "command": "node scripts/audit.mjs" }
+    ]
+  }
+}
+```
+
+Each entry has a `match` glob against the tool name (`*` matches every tool, exact names match themselves) and a `command` run through the system shell with the workspace root as the working directory. The command receives one JSON object on stdin, `{ "hook": "preToolUse", "tool": "<name>", "args": <args> }`, and the tool name is also exported as `MY_AGENT_TOOL`.
+
+A `preToolUse` hook that exits zero lets the call proceed. A non-zero exit blocks the tool, and the tool result becomes `ok: false` whose reason is the hook's trimmed stdout, or a default message when stdout is empty. Pre hooks run before authorization, so a hook denial is reported even for a call that also needs approval. A `postToolUse` hook runs after the tool finishes and its output is ignored, so it never changes the result. A hook that cannot be spawned blocks the pre case and is ignored for the post case. Hooks come only from the project file; the global config does not accept them.
+
 ## AGENTS.md
 
 If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only.

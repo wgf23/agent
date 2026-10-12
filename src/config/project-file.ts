@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { hooksSchema } from "../hooks/hooks.js";
 import {
 	type Action,
 	mergeRule,
@@ -23,6 +24,7 @@ export const projectFileSchema = z
 	.looseObject({
 		permissions: permissionRulesSchema.optional(),
 		robs: robsSchema.optional(),
+		hooks: hooksSchema.optional(),
 	})
 	.superRefine((config, ctx) => {
 		const duplicate = duplicateRobName(config.robs ?? []);

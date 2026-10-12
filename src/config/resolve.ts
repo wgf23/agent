@@ -5,6 +5,7 @@ import {
 	type CompactionSettings,
 	DEFAULT_COMPACTION,
 } from "../agent/compact.js";
+import { type HooksConfig, hooksSchema } from "../hooks/hooks.js";
 import {
 	type PermissionRules,
 	permissionRulesSchema,
@@ -141,6 +142,7 @@ export interface ResolvedConfig {
 	sources: ProviderSources;
 	permissions: PermissionRules;
 	robs: RobConfig[];
+	hooks: HooksConfig;
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
 	mcpServers: McpServers;
@@ -310,6 +312,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				...rob,
 				model: rob.model ?? model,
 			})),
+			hooks: project.layer.hooks ?? {},
 			compaction,
 			sandbox,
 			mcpServers,
@@ -361,6 +364,7 @@ interface Layer {
 	provider: ProviderOptions;
 	permissions?: PermissionRules;
 	robs?: RobConfig[];
+	hooks?: HooksConfig;
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
 	mcp?: McpServers;
@@ -442,6 +446,18 @@ function loadLayer(
 		robs = parsed.robs;
 	}
 
+	let hooks: HooksConfig | undefined;
+	if (role === "project" && raw.hooks !== undefined) {
+		const parsed = hooksSchema.safeParse(raw.hooks);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid hooks in ${filePath}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		hooks = parsed.data;
+	}
+
 	let compaction: CompactionOptions | undefined;
 	if (raw.compaction !== undefined) {
 		const parsed = compactionOptionsSchema.safeParse(raw.compaction);
@@ -479,6 +495,7 @@ function loadLayer(
 			provider: provider.data,
 			permissions,
 			robs,
+			hooks,
 			compaction,
 			sandbox,
 			mcp,
