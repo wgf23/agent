@@ -8,6 +8,7 @@ import {
 	verifyApiKey,
 } from "../cli/setup.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { connectMcpServers } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
 	autoApprovedLine,
@@ -179,6 +180,26 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		onAutoApproved: (request) => approval.notice(autoApprovedLine(request)),
 	});
 
+	// Connecting before render delays startup by one handshake per server. That
+	// is acceptable so the tools are advertised on the first turn.
+	const mcpServers = resolved.config.mcpServers;
+	const mcp =
+		Object.keys(mcpServers).length > 0
+			? await connectMcpServers({
+					servers: mcpServers,
+					workspaceRoot: options.workspaceRoot,
+				})
+			: undefined;
+	const startupLines =
+		mcp === undefined
+			? []
+			: [
+					...mcp.notices,
+					...mcp.servers.map(
+						(server) => `mcp ${server.name}: ${server.toolCount} tools`,
+					),
+				];
+
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
 	// endpoints, so only forward them when the deepseek preset is active.
 	const deepseek = settings.preset === "deepseek";
@@ -198,12 +219,18 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
+			extraTools={mcp?.tools}
+			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			onTurnEnd={writeSession}
 			onClearSession={startNewSession}
 		/>,
 	);
-	await instance.waitUntilExit();
+	try {
+		await instance.waitUntilExit();
+	} finally {
+		await mcp?.dispose();
+	}
 }
 
 // A resumed run loads the chosen session; any load problem falls back to a

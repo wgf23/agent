@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { exitCodeForReason, runHeadless } from "../../src/cli/run.js";
 import { listSessions, loadSession } from "../../src/session/store.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
+import { FAKE_MCP_SERVER, isAlive } from "../mcp/helpers.js";
 
 describe("exitCodeForReason", () => {
 	it("maps finished to 0 and every other reason to 1", () => {
@@ -219,5 +220,91 @@ describe("runHeadless sessions", () => {
 		} finally {
 			stderr.mockRestore();
 		}
+	});
+});
+
+describe("runHeadless with MCP servers", () => {
+	let workspaceRoot: string;
+	const originalSessionsDir = process.env.MY_AGENT_SESSIONS_DIR;
+	let sessionsDir: string;
+
+	beforeEach(async () => {
+		sessionsDir = await mkdtemp(path.join(tmpdir(), "my-agent-run-mcp-"));
+		workspaceRoot = await mkdtemp(path.join(tmpdir(), "my-agent-run-mcp-ws-"));
+		process.env.MY_AGENT_SESSIONS_DIR = sessionsDir;
+	});
+
+	afterEach(async () => {
+		if (originalSessionsDir === undefined) {
+			delete process.env.MY_AGENT_SESSIONS_DIR;
+		} else {
+			process.env.MY_AGENT_SESSIONS_DIR = originalSessionsDir;
+		}
+		await rm(sessionsDir, { recursive: true, force: true });
+		await rm(workspaceRoot, { recursive: true, force: true });
+	});
+
+	it("connects a configured server, advertises its tool, and disposes it", async () => {
+		const pidFile = path.join(workspaceRoot, "server.pid");
+		await writeFile(
+			path.join(workspaceRoot, "my-agent.json"),
+			JSON.stringify({
+				mcp: {
+					servers: {
+						memory: {
+							command: [process.execPath, FAKE_MCP_SERVER],
+							env: { FAKE_MCP_PID_FILE: pidFile },
+						},
+					},
+				},
+			}),
+			"utf8",
+		);
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{
+						type: "tool_call",
+						id: "call_1",
+						name: "mcp__memory__create_entity",
+						args: { name: "Ada" },
+					},
+					{ type: "finish", reason: "tool_calls" },
+				],
+				[
+					{ type: "text_delta", text: "created" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+
+			const code = await runHeadless({
+				prompt: "create Ada",
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+				yesAll: true,
+			});
+
+			expect(code).toBe(0);
+			expect(stderr).toHaveBeenCalledWith("[mcp] memory: 2 tools\n");
+			const toolMessage = provider.requests[1].messages.find(
+				(message) => message.role === "tool",
+			);
+			expect(toolMessage).toEqual({
+				role: "tool",
+				toolCallId: "call_1",
+				content: 'create_entity:{"name":"Ada"}\nok',
+				isError: false,
+			});
+		} finally {
+			stderr.mockRestore();
+		}
+		// The run's finally disposed the client, so the server process is gone.
+		const pid = Number((await readFile(pidFile, "utf8")).trim());
+		expect(isAlive(pid)).toBe(false);
 	});
 });

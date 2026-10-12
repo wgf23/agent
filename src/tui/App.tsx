@@ -18,6 +18,7 @@ import type {
 	ReasoningEffort,
 	ThinkingSetting,
 } from "../providers/types.js";
+import type { Tool } from "../tools/types.js";
 import type { ApprovalBridge } from "./approval.js";
 import { MessageList } from "./components/MessageList.js";
 import { PermissionDialog } from "./components/PermissionDialog.js";
@@ -51,6 +52,8 @@ export interface AppProps {
 	apiKeyEnv?: string;
 	initialHistory?: Message[];
 	initialSessionId?: string;
+	extraTools?: Tool[];
+	startupLines?: string[];
 	compaction?: CompactionSettings;
 	onTurnEnd?: (messages: Message[], usage: TuiUsage) => void;
 	onClearSession?: () => string;
@@ -80,6 +83,8 @@ export function App({
 	apiKeyEnv,
 	initialHistory,
 	initialSessionId,
+	extraTools,
+	startupLines,
 	compaction,
 	onTurnEnd,
 	onClearSession,
@@ -98,6 +103,7 @@ export function App({
 	);
 	const historyRef = useRef<Message[]>(withoutSystem(initialHistory ?? []));
 	const controllerRef = useRef<AbortController | null>(null);
+	const startupAppended = useRef(false);
 	const allowAllOn = useAllowAllState(allowAll);
 
 	useEffect(() => {
@@ -109,6 +115,16 @@ export function App({
 			dispatch({ type: "append_system", text: `session ${initialSessionId}` });
 		}
 	}, [initialSessionId]);
+
+	// MCP notices and tool counts are fixed for the app's life, so append them
+	// once even if a re-render hands back a new array.
+	useEffect(() => {
+		if (startupAppended.current) return;
+		startupAppended.current = true;
+		for (const line of startupLines ?? []) {
+			dispatch({ type: "append_system", text: line });
+		}
+	}, [startupLines]);
 
 	useEffect(() => {
 		return approval.subscribe((request) => {
@@ -182,6 +198,7 @@ export function App({
 					signal: controller.signal,
 					authorize,
 					compaction,
+					extraTools,
 					// No lastInputTokens: state.usage.input is cumulative across
 					// turns, so auto compaction trusts the character estimate instead.
 					onEvent: (event) => dispatch({ type: "agent", event }),
@@ -222,6 +239,7 @@ export function App({
 			apiKeyEnv,
 			authorize,
 			compaction,
+			extraTools,
 			onTurnEnd,
 		],
 	);

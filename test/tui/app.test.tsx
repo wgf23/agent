@@ -18,6 +18,7 @@ import {
 } from "../../src/permissions/authorizer.js";
 import { defaultRules } from "../../src/permissions/rules.js";
 import type { Provider } from "../../src/providers/types.js";
+import type { Tool } from "../../src/tools/types.js";
 import { App, type AppProps } from "../../src/tui/App.js";
 import { createApprovalBridge } from "../../src/tui/approval.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
@@ -224,6 +225,36 @@ describe("App", () => {
 
 		await waitFor(() =>
 			expect(lastFrame()).toContain("Unknown command: /nope"),
+		);
+	});
+	it("shows startup lines and advertises extra tools", async () => {
+		const external: Tool = {
+			name: "mcp__memory__create_entity",
+			description: "An external tool.",
+			readOnly: true,
+			parameters: { type: "object" },
+			execute: async () => ({ ok: true, output: "made" }),
+		};
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const { stdin, lastFrame } = render(
+			app(provider, {
+				extraTools: [external],
+				startupLines: ["mcp memory: 2 tools"],
+			}),
+		);
+
+		await waitFor(() => expect(lastFrame()).toContain("mcp memory: 2 tools"));
+
+		stdin.write("go");
+		stdin.write("\r");
+		await waitFor(() => expect(provider.requests).toHaveLength(1));
+		expect(provider.requests[0].tools.map((tool) => tool.name)).toContain(
+			"mcp__memory__create_entity",
 		);
 	});
 
