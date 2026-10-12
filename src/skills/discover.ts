@@ -1,8 +1,9 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { errorMessage } from "../util/errors.js";
+import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { resolveInside, skillsRoot } from "./paths.js";
+import { skillsRoot } from "./paths.js";
 
 export const SKILL_FILENAME = "SKILL.md";
 export const SKILL_PACKAGE_FIELD = "my-agent-skill";
@@ -68,7 +69,7 @@ export async function loadSkillPackage(
 
 	let skillDir: string;
 	try {
-		skillDir = resolveInside(packageDir, field);
+		skillDir = resolveInWorkspace(packageDir, field);
 	} catch {
 		return {
 			ok: false,
@@ -79,10 +80,10 @@ export async function loadSkillPackage(
 	let skillText: string;
 	let skillFile: string;
 	try {
-		skillFile = resolveInside(skillDir, SKILL_FILENAME);
+		skillFile = resolveInWorkspace(skillDir, SKILL_FILENAME);
 		skillText = await readFile(skillFile, "utf8");
 	} catch (error) {
-		if (error instanceof Error && error.name === "SkillPathError") {
+		if (error instanceof PathEscapeError) {
 			return {
 				ok: false,
 				error: `Package "${packageName}" has an unsafe ${SKILL_FILENAME} path.`,
@@ -117,7 +118,15 @@ export async function loadSkillPackage(
 export async function discoverSkills(
 	root: string = skillsRoot(),
 ): Promise<Skill[]> {
-	const dirs = await listPackageDirs(root);
+	let dirs: string[];
+	try {
+		dirs = await listPackageDirs(root);
+	} catch {
+		// An unreadable node_modules means no discoverable skills. A missing one
+		// is already handled in listPackageDirs, so this covers the rest such as
+		// permissions and a non-directory entry.
+		return [];
+	}
 	const skills: Skill[] = [];
 	for (const dir of dirs) {
 		const loaded = await loadSkillPackage(dir);

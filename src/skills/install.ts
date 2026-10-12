@@ -44,7 +44,10 @@ export async function addSkill(
 	const argvSpec = normalizeSpec(spec);
 	const before = new Set(await listPackageDirs(root));
 	try {
-		await runNpm(["install", argvSpec, "--prefix", root, ...NPM_FLAGS], root);
+		await runNpm(
+			["install", "--prefix", root, ...NPM_FLAGS, "--", argvSpec],
+			root,
+		);
 	} catch (error) {
 		const afterFailure = await listPackageDirs(root);
 		await rollback(
@@ -73,13 +76,19 @@ export async function addSkill(
 		errors.push(loaded.error);
 	}
 
+	const failure =
+		errors[0] ?? `Package "${spec}" is not a valid my-agent skill.`;
+	// A re-add of a package that was already installed adds nothing, so there is
+	// nothing this invocation may undo. Uninstalling it would delete state that
+	// existed before the call.
+	if (added.length === 0) {
+		return { ok: false, error: failure };
+	}
+
 	const intended = candidates[0];
-	const rollbackDirs = added.length > 0 ? added : intended ? [intended] : [];
-	await rollback(root, intended, rollbackDirs);
-	return {
-		ok: false,
-		error: errors[0] ?? `Package "${spec}" is not a valid my-agent skill.`,
-	};
+	const intendedAdded = intended !== undefined && added.includes(intended);
+	await rollback(root, intendedAdded ? intended : undefined, added);
+	return { ok: false, error: failure };
 }
 
 export async function removeSkill(
@@ -94,7 +103,7 @@ export async function removeSkill(
 
 	try {
 		await runNpm(
-			["uninstall", skill.packageName, "--prefix", root, ...NPM_FLAGS],
+			["uninstall", "--prefix", root, ...NPM_FLAGS, "--", skill.packageName],
 			root,
 		);
 	} catch (error) {
@@ -129,7 +138,10 @@ async function rollback(
 	if (intendedDir !== undefined) {
 		const name = path.relative(path.join(root, "node_modules"), intendedDir);
 		try {
-			await runNpm(["uninstall", name, "--prefix", root, ...NPM_FLAGS], root);
+			await runNpm(
+				["uninstall", "--prefix", root, ...NPM_FLAGS, "--", name],
+				root,
+			);
 		} catch {
 			// Best effort; the directory removal below still restores the prefix.
 		}

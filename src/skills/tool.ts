@@ -2,9 +2,9 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
+import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
 import { discoverSkills, SKILL_FILENAME } from "./discover.js";
 import { SKILL_NAME_PATTERN } from "./frontmatter.js";
-import { resolveInside, SkillPathError } from "./paths.js";
 
 const schema = z
 	.object({
@@ -32,10 +32,10 @@ export const loadSkillTool: Tool<typeof schema> = {
 		}
 
 		try {
-			const file = resolveInside(skill.dir, SKILL_FILENAME);
+			const file = resolveInWorkspace(skill.dir, SKILL_FILENAME);
 			return { ok: true, output: await readFile(file, "utf8") };
 		} catch (error) {
-			if (error instanceof SkillPathError) {
+			if (error instanceof PathEscapeError) {
 				return { ok: false, error: `Unsafe skill path for: ${args.name}` };
 			}
 			return { ok: false, error: errorMessage(error) };

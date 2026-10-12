@@ -132,6 +132,12 @@ describe("discoverSkills", () => {
 			},
 		]);
 	});
+
+	it("returns [] when node_modules cannot be read", async () => {
+		await writeFile(path.join(root, "node_modules"), "not a directory", "utf8");
+
+		await expect(discoverSkills()).resolves.toEqual([]);
+	});
 });
 
 describe("loadSkillPackage validation", () => {

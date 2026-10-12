@@ -1,9 +1,10 @@
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	formatSkillList,
 	runSkillAdd,
 	runSkillList,
 	runSkillRemove,
@@ -53,6 +54,26 @@ async function captureConsole(
 	} finally {
 		logSpy.mockRestore();
 		errSpy.mockRestore();
+	}
+}
+
+async function captureStdout(
+	fn: () => Promise<number>,
+): Promise<{ code: number; out: string }> {
+	const chunks: string[] = [];
+	const spy = vi.spyOn(process.stdout, "write").mockImplementation(((
+		chunk: string | Uint8Array,
+	) => {
+		chunks.push(
+			typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+		);
+		return true;
+	}) as typeof process.stdout.write);
+	try {
+		const code = await fn();
+		return { code, out: chunks.join("") };
+	} finally {
+		spy.mockRestore();
 	}
 }
 
@@ -133,22 +154,74 @@ describe("skill add", () => {
 });
 
 describe("skill list", () => {
-	it("prints nothing but a notice when no skills are installed", async () => {
-		const { code, out } = await captureConsole(() => runSkillList());
+	it("prints a notice when no skills are installed", async () => {
+		const { code, out } = await captureStdout(() => runSkillList());
 
 		expect(code).toBe(0);
-		expect(out).toEqual(["No skills installed."]);
+		expect(out).toBe("No skills installed.\n");
 	});
 
-	it("prints one row per installed skill", async () => {
+	it("prints an aligned row per installed skill", async () => {
 		await runSkillAdd(validFixture);
 
-		const { code, out } = await captureConsole(() => runSkillList());
+		const { code, out } = await captureStdout(() => runSkillList());
 
 		expect(code).toBe(0);
-		expect(out).toEqual([
-			`fixture-greeting\tfixture-valid-skill\t1.2.3\tA greeting skill for tests.\t${realpathSync(validFixture)}`,
-		]);
+		expect(out).toBe(
+			`name              package              version  description                  path\nfixture-greeting  fixture-valid-skill  1.2.3    A greeting skill for tests.  ${realpathSync(validFixture)}\n`,
+		);
+	});
+});
+
+describe("formatSkillList", () => {
+	it("aligns the header and every row to the widest cell", () => {
+		expect(
+			formatSkillList([
+				{
+					name: "demo",
+					description: "does things",
+					packageName: "demopkg",
+					version: "1.2.3.4",
+					dir: "/skills/demo",
+				},
+			]),
+		).toBe(
+			"name  package  version  description  path\ndemo  demopkg  1.2.3.4  does things  /skills/demo\n",
+		);
+	});
+
+	it("prints the notice when nothing is installed", () => {
+		expect(formatSkillList([])).toBe("No skills installed.\n");
+	});
+});
+
+describe("addSkill rollback", () => {
+	it("keeps a pre-existing package when a re-add fails validation", async () => {
+		const first = await addSkill(invalidFixture);
+		expect(first.ok).toBe(false);
+
+		const dir = path.join(root, "node_modules", "fixture-invalid-skill");
+		await mkdir(dir, { recursive: true });
+		await writeFile(
+			path.join(dir, "package.json"),
+			'{"name":"fixture-invalid-skill","version":"0.0.1"}',
+			"utf8",
+		);
+
+		const second = await addSkill(invalidFixture);
+		expect(second).toEqual({
+			ok: false,
+			error:
+				'Package "fixture-invalid-skill" does not declare a "my-agent-skill" field.',
+		});
+
+		await expect(access(dir)).resolves.toBeUndefined();
+		const prefix = JSON.parse(
+			await readFile(path.join(root, "package.json"), "utf8"),
+		) as { dependencies?: Record<string, string> };
+		expect(Object.keys(prefix.dependencies ?? {})).toContain(
+			"fixture-invalid-skill",
+		);
 	});
 });
 
