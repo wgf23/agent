@@ -17,6 +17,7 @@
 - Session persistence. The TUI and headless runs save the transcript after every turn under `~/.local/share/my-agent/sessions/<project>/`, and `--continue` (newest) or `--session <id>` resumes one. `my-agent sessions list` prints them and `/clear` ends the current session to start a new one.
 - Context compaction. `/compact` summarizes the older messages into a `[compacted summary]` and keeps the recent ones; automatic compaction runs before a turn when the context estimate exceeds `compaction.thresholdTokens` (default 100000) with `compaction.auto` on. The summary is a persisted `user` message, so a resumed session keeps it, and the TUI shows a `compacted summary (N chars)` line instead of the raw text.
 - `@file` mentions. Typing `@` completes workspace files with an anchored accept that replaces only the token, and sending a message expands each resolvable `@path` into a bounded `Referenced files` block so the model does not need a separate read.
+- Tool-lifecycle hooks. A top-level `hooks` block in `my-agent.json` runs a shell command before (`preToolUse`) or after (`postToolUse`) each tool call, matched by a tool-name glob (`*` matches all). A pre hook exiting non-zero blocks the tool with its stdout as the reason; a post hook runs after the tool and never changes the result.
 
 ### Changed
 
