@@ -7,6 +7,7 @@ import {
 } from "../../shared/protocol.js";
 import { addRob } from "../config/project-file.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
+import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
 import {
 	type ApplyRuntimeResult,
@@ -113,6 +114,14 @@ export class CompositeHub extends EventBus implements Hub {
 		const parsed = robConfigSchema.safeParse(toRobConfig(draft));
 		if (!parsed.success) {
 			throw new BotDraftError(z.prettifyError(parsed.error));
+		}
+		if (
+			parsed.data.backend?.kind === "cli" &&
+			!commandExists(parsed.data.backend.command)
+		) {
+			throw new BotDraftError(
+				`Cannot use the "${parsed.data.backend.command}" backend: the command is not on PATH. Install it first, or choose the built-in backend.`,
+			);
 		}
 		if (this.robs.bots().some((bot) => bot.name === parsed.data.name)) {
 			throw new BotDraftError(

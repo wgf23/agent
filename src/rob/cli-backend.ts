@@ -51,6 +51,18 @@ const PI_TOOLS: ReadonlyArray<readonly [string, string]> = [
 
 const PI_TO_OURS = new Map(PI_TOOLS.map(([ours, pi]) => [pi, ours]));
 
+// A missing binary is common on a fresh machine, so name the command and the way
+// out instead of surfacing Node's raw "spawn pi ENOENT".
+function spawnFailureMessage(
+	command: string,
+	error: NodeJS.ErrnoException,
+): string {
+	if (error.code === "ENOENT") {
+		return `Cannot start "${command}": command not found on PATH. Install it, or set this bot's backend to native.`;
+	}
+	return `Failed to start "${command}": ${error.message}`;
+}
+
 // Without a bridge, pi has no channel to ask for approval, so a tool that
 // resolves to "ask" is left out entirely: only an outright "allow" for the
 // tool's default subject ("*") exposes it. With the bridge, "ask" tools are
@@ -430,9 +442,17 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 				finish({ ok: false, error: "Turn aborted.", usage, messages });
 				return;
 			}
-			emit({ type: "error", message: error.message });
+			emit({
+				type: "error",
+				message: spawnFailureMessage(options.command, error),
+			});
 			emit({ type: "done", reason: "error", steps });
-			finish({ ok: false, error: error.message, usage, messages });
+			finish({
+				ok: false,
+				error: spawnFailureMessage(options.command, error),
+				usage,
+				messages,
+			});
 		});
 
 		child.on("close", (code) => {
