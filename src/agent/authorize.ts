@@ -6,8 +6,10 @@ export interface ToolCall {
 	args: unknown;
 }
 
+// remember marks an allow that also persisted a standing rule, so a backend
+// bridging approvals can mirror it (opencode's "always" reply).
 export type AuthorizeResult =
-	| { allowed: true }
+	| { allowed: true; remember?: boolean }
 	| { allowed: false; reason: string };
 
 export type Authorize = (

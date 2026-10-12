@@ -128,7 +128,7 @@ describe("allow_always", () => {
 
 		queue.resolve("approval-0", "allow_always");
 
-		expect(await first).toEqual({ allowed: true });
+		expect(await first).toEqual({ allowed: true, remember: true });
 		expect(await second).toEqual({ allowed: true });
 		expect(queue.pending()).toEqual([]);
 		expect(vi.mocked(addPermissionRule)).toHaveBeenCalledTimes(1);

@@ -91,7 +91,7 @@ export function createAuthorizer(options: AuthorizerOptions): Authorize {
 		const entry: RuleEntry = { pattern, action: "allow" };
 		await addPermissionRule(options.workspaceRoot, call.name, pattern, "allow");
 		rules[call.name] = mergeRule(rules[call.name], entry);
-		return { allowed: true };
+		return { allowed: true, remember: true };
 	};
 }
 

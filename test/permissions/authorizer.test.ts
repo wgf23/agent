@@ -100,7 +100,7 @@ describe("createAuthorizer", () => {
 		});
 
 		const first = await authorize(writeCall, writeFileTool);
-		expect(first).toEqual({ allowed: true });
+		expect(first).toEqual({ allowed: true, remember: true });
 		expect(approval).toHaveBeenCalledTimes(1);
 
 		const written = await readFile(join(workspace, "my-agent.json"), "utf8");
