@@ -5,6 +5,12 @@ const args = process.argv.slice(2);
 if (process.env.FAKE_PI_ARGV_FILE) {
 	writeFileSync(process.env.FAKE_PI_ARGV_FILE, JSON.stringify(args));
 }
+if (process.env.FAKE_PI_ENV_FILE) {
+	writeFileSync(
+		process.env.FAKE_PI_ENV_FILE,
+		process.env[process.env.FAKE_PI_ENV_NAME ?? ""] ?? "",
+	);
+}
 
 const scenario = process.env.FAKE_PI_SCENARIO ?? "events";
 

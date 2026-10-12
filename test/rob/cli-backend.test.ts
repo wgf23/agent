@@ -31,6 +31,8 @@ afterEach(async () => {
 	delete process.env.FAKE_PI_ARGV_FILE;
 	delete process.env.FAKE_PI_PID_FILE;
 	delete process.env.FAKE_PI_STEER_FILE;
+	delete process.env.FAKE_PI_ENV_FILE;
+	delete process.env.FAKE_PI_ENV_NAME;
 });
 
 describe("createCliBackend missing command", () => {
@@ -106,6 +108,31 @@ describe("piToolAllowlist", () => {
 });
 
 describe("cli backend", () => {
+	it("forwards a provider env key to the pi child", async () => {
+		const envFile = path.join(workspace, "env.txt");
+		process.env.FAKE_PI_ENV_FILE = envFile;
+		process.env.FAKE_PI_ENV_NAME = "MY_AGENT_TEST_FORWARDED_KEY";
+
+		const backend = createCliBackend({
+			rob: "reviewer",
+			role: "review code",
+			command: FIXTURE,
+			provider: "deepseek",
+			model: "deepseek-v4-flash",
+			extraEnv: { MY_AGENT_TEST_FORWARDED_KEY: "forwarded-value" },
+		});
+		await backend.run({
+			history: [],
+			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
+			workspaceRoot: workspace,
+			rules: {},
+			signal: new AbortController().signal,
+			onEvent: () => {},
+		});
+
+		expect(await readFile(envFile, "utf8")).toBe("forwarded-value");
+	});
+
 	it("parses a pi rpc stream into ordered agent events and a final answer", async () => {
 		const argvFile = path.join(workspace, "argv.json");
 		process.env.FAKE_PI_ARGV_FILE = argvFile;
