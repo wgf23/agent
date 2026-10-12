@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
-import type { Provider } from "../../src/providers/types.js";
+import type { Provider, ToolMessage } from "../../src/providers/types.js";
 import { Rob } from "../../src/rob/rob.js";
 import { Team } from "../../src/rob/team.js";
+import type { Tool } from "../../src/tools/types.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 import { allowAllAuthorizerFactory, FakeTeam, waitFor } from "./helpers.js";
@@ -171,6 +172,71 @@ describe("Rob", () => {
 			type: "done",
 			reason: "aborted",
 			steps: 1,
+		});
+	});
+
+	it("advertises and runs an injected extra tool beside send_message and delegate", async () => {
+		const extra: Tool = {
+			name: "mcp__memory__create_entity",
+			description: "create an entity",
+			readOnly: false,
+			parameters: { type: "object", properties: { name: { type: "string" } } },
+			execute: async () => ({ ok: true, output: "created Ada" }),
+		};
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "mcp__memory__create_entity",
+					args: { name: "Ada" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const rob = new Rob({
+			name: "planner",
+			role: "work",
+			rules: {},
+			model: "deepseek-flash",
+			provider,
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+			team: new FakeTeam(),
+			extraTools: [extra],
+		});
+
+		const running = rob.run();
+		rob.deliver({ kind: "user", from: "user", text: "go", at: 0 });
+		await waitFor(
+			() =>
+				rob
+					.readEvents()
+					.some(
+						(event) => event.type === "done" && event.reason === "finished",
+					),
+			"the rob to finish",
+		);
+		rob.stop();
+		await running;
+
+		const names = provider.requests[0].tools.map((tool) => tool.name);
+		expect(names).toContain("mcp__memory__create_entity");
+		expect(names).toContain("send_message");
+		expect(names).toContain("delegate");
+
+		const toolMessages = provider.requests[1].messages.filter(
+			(message): message is ToolMessage => message.role === "tool",
+		);
+		expect(toolMessages).toContainEqual({
+			role: "tool",
+			toolCallId: "call_1",
+			content: "created Ada",
+			isError: false,
 		});
 	});
 });

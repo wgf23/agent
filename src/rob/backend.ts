@@ -3,6 +3,7 @@ import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
+import type { Tool } from "../tools/types.js";
 import { createDelegateTool, createSendMessageTool } from "./tools.js";
 import type { Inbound, RobName, TeamPort } from "./types.js";
 
@@ -34,6 +35,7 @@ export interface NativeBackendOptions {
 	team: TeamPort;
 	drain: () => Inbound[];
 	runSubagent: (task: string, signal?: AbortSignal) => Promise<string>;
+	extraTools?: Tool[];
 }
 
 export function createNativeBackend(options: NativeBackendOptions): RobBackend {
@@ -75,6 +77,7 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 						depth: 0,
 						run: options.runSubagent,
 					}),
+					...(options.extraTools ?? []),
 				],
 				onEvent: turn.onEvent,
 			});

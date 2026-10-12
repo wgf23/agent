@@ -4,6 +4,7 @@ import type { AgentEvent } from "../agent/events.js";
 import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider } from "../providers/types.js";
+import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import {
 	createNativeBackend,
@@ -43,6 +44,8 @@ export interface RobOptions {
 	team: TeamPort;
 	backend?: RobBackendConfig;
 	providerEnv?: Record<string, string>;
+	// MCP tools are native-only; a cli backend runs its own tool registry.
+	extraTools?: Tool[];
 }
 
 export class Rob {
@@ -111,6 +114,7 @@ export class Rob {
 						team: options.team,
 						drain: () => this.inbox.drain(),
 						runSubagent: (task, signal) => this.runSubagent(task, signal),
+						extraTools: options.extraTools,
 					});
 	}
 

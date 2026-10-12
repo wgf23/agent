@@ -6,6 +6,7 @@ import type {
 } from "../permissions/authorizer.js";
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
 import type { Provider } from "../providers/types.js";
+import type { Tool } from "../tools/types.js";
 import { ApprovalQueue } from "./approvals.js";
 import type { TeamEvent, TeamListener } from "./events.js";
 import { type AuthorizerFactory, Rob } from "./rob.js";
@@ -41,6 +42,8 @@ export interface TeamOptions {
 	authorizerFactory: AuthorizerFactory;
 	permissions?: PermissionRules;
 	providerEnv?: Record<string, string>;
+	// Native robs receive these; cli backends run their own tool registry.
+	extraTools?: Tool[];
 }
 
 export class Team implements TeamPort {
@@ -68,6 +71,7 @@ export class Team implements TeamPort {
 					team: this,
 					backend: config.backend,
 					providerEnv: options.providerEnv,
+					extraTools: options.extraTools,
 				}),
 			);
 		}
