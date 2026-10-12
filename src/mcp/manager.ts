@@ -55,7 +55,7 @@ export async function connectMcpServers(
 			tools.push(...mapped.tools);
 			servers.push({ name, toolCount: mapped.tools.length });
 		} catch (error) {
-			notices.push(`mcp ${name}: ${errorMessage(error)}`);
+			notices.push(`mcp ${name}: ${errorDetail(name, error)}`);
 		}
 	}
 
@@ -67,4 +67,12 @@ export async function connectMcpServers(
 			await Promise.all(clients.map((client) => client.dispose()));
 		},
 	};
+}
+
+// Client errors already carry the "mcp <server>: " prefix; mapping errors do
+// not. Strip the duplicate so a notice always reads "mcp <server>: <detail>".
+function errorDetail(name: string, error: unknown): string {
+	const message = errorMessage(error);
+	const prefix = `mcp ${name}: `;
+	return message.startsWith(prefix) ? message.slice(prefix.length) : message;
 }

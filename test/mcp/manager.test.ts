@@ -39,8 +39,9 @@ describe("connectMcpServers", () => {
 		});
 		disposed.push(result.dispose);
 
-		expect(result.notices).toHaveLength(1);
-		expect(result.notices[0]).toContain("mcp bad:");
+		expect(result.notices).toEqual([
+			"mcp bad: spawn /nonexistent-binary ENOENT",
+		]);
 		expect(result.servers).toEqual([{ name: "good", toolCount: 2 }]);
 		expect(result.tools.map((tool) => tool.name).sort()).toEqual([
 			"mcp__good__create_entity",

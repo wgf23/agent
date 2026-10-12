@@ -169,7 +169,7 @@ export class StdioMcpClient implements McpClient {
 		}
 		// A message with a method and an id is a server-initiated request.
 		if (typeof message.method === "string" && message.id !== undefined) {
-			this.answer(message.id as number | string, message.method);
+			this.answer(message.id, message.method);
 		}
 	}
 
@@ -187,7 +187,7 @@ export class StdioMcpClient implements McpClient {
 		pending.resolve(message.result);
 	}
 
-	private answer(id: number | string, method: string): void {
+	private answer(id: unknown, method: string): void {
 		if (method === "ping") {
 			this.write({ jsonrpc: "2.0", id, result: {} });
 			return;

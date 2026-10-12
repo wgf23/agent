@@ -90,7 +90,7 @@ Project file `<workspace>/my-agent.json`:
 }
 ```
 
-Global file `~/.config/my-agent/config.json` accepts the `provider` block only. It cannot set `permissions`; permission rules come only from the project file:
+Global file `~/.config/my-agent/config.json` accepts the `provider`, `compaction`, `sandbox`, and `mcp` blocks. It cannot set `permissions` or `robs`; those come only from the project file:
 
 ```json
 {
@@ -160,6 +160,28 @@ The backend is detected once per process.
 - Only the `bash` tool is sandboxed. `read_file`, `write_file`, and `edit_file` are not.
 - `opencode` and `pi` rob backends run their own agent and are not sandboxed by this layer.
 - macOS and Windows fall back to no sandbox until a seatbelt backend exists.
+
+## MCP
+
+my-agent can use tools from [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio. Configure them in `my-agent.json` or the global config:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "memory": { "command": ["npx", "-y", "@modelcontextprotocol/server-memory"] }
+    }
+  }
+}
+```
+
+Each server takes `command` (the executable and its arguments) and an optional `env` object merged over the process environment. The server starts with the workspace root as its working directory. Project servers merge over global servers by name. Server names use letters, digits, `_`, and `-`; a bad name, an empty command, or a non-stdio entry that sets `url`, `transport`, or `type` is a config error. Only the stdio transport is supported for now.
+
+Every server tool is namespaced `mcp__<server>__<tool>`, with any character outside `[A-Za-z0-9_-]` replaced by `_`. The `memory` server's `create_entities` becomes `mcp__memory__create_entities`. A tool name that collides with an existing tool disables that whole server and prints a notice.
+
+MCP tools default to `ask`, so the dialog approves them like `bash`, and "allow always" persists the exact `mcp__...` name to `my-agent.json`. A server that fails to start prints `mcp <server>: <error>` and does not stop the others. Headless runs print `[mcp] <server>: N tools` for each connected server; the TUI shows the same counts as transcript lines.
+
+Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode (`robs`) does not connect MCP servers yet.
 
 ## AGENTS.md
 
