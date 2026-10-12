@@ -77,6 +77,8 @@ The sidebar has two areas. The **工作区** area is the default assistant, a pl
 
 The **Bot 广场** view lists the robs with their status, and shows rob-to-rob DMs and allow-all notices. Rob transcripts are in memory only for now, and rob tools are sandboxed like the rest of the agent.
 
+The server also starts with **no API key at all**. Open Settings (the gear in the top bar) to choose a provider preset, model, an optional custom base URL and API key environment, and the key itself. The key is saved to `~/.config/my-agent/credentials.json` (`0600`) and the non-secret settings to `config.json`, and the next turn uses the new provider immediately with no restart. Until a key is configured the composer is disabled and a send is refused with a clear message, so you can install and open the UI before you have a key.
+
 Build both the CLI and the web client with `pnpm build`. For hot-reload development, run `pnpm dev serve` in one terminal and `pnpm web:dev` in another, then open the Vite URL (`http://localhost:5173`), which proxies `/api` to the server on 4317.
 
 ## Configuration

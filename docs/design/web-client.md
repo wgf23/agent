@@ -270,6 +270,16 @@ Bot 模型修正为两个并存的概念：
 - 审批 id：工作区用 `ws-approval-` 前缀，`CompositeHub` 按前缀路由，避免与 rob 队列的 `approval-` 冲突。
 - 测试：`test/serve/composite.test.ts` 覆盖创建、重名、保留字段、保留名、非法 name 与不完整 cli 后端。
 
+## 新增能力：无 key 启动 + 网页设置
+
+- 「未配置」是 `resolveConfig` 的一个正常结果（`apiKey === undefined`），不是错误。`serve` 不再退出、不再跑 TTY 向导（向导仍保留为 `my-agent setup`）；只有配置解析失败才退出。
+- `src/serve/runtime.ts` 的 `ProviderRuntime` 持有可热替换的 `Provider` + `ProviderSettings`，未配置时用 stub provider。`HubOptions` 的 `provider` / `settings` 在 `runServe` 里绑到 runtime 的 getter 上，所以 `SoloHub` 每次回合自动读到新 provider，**一行未改**；`TeamHub` 因 `Rob` 在构造时固化 provider，改为 `reconfigure` 重建 `Team`（有 rob 忙碌时拒绝）。
+- 未配置时两个 hub 的 dispatch 都拦截并发一条 error，不发注定失败的请求；前端同时禁用输入。
+- 端点：`GET /api/settings` → `{provider, presets}`；`POST /api/settings`（`SaveProviderBody`）→ `200 / 400 / 409 / 500`。POST 在非回环绑定时被拒绝。
+- 保存流程（`src/serve/settings.ts`，单条 promise 链串行）：`validateProviderSelection` → 可选 `verifyApiKey`（失败可「仍然保存」`verify:false`）→ `writeCredential` → `writeGlobalProviderSettings` → 重新 `resolveConfig` → `buildProvider` → `applyRuntime` → 广播 `settings`。
+- 密钥只进 `credentials.json`（0700/0600，原子写），不进 `config.json`，不上线，不落日志。`ProviderView` 没有密钥字段，浏览器结构上拿不到。
+- 项目 `my-agent.json` 的 `provider` 会盖过全局配置。保存后检测到不一致只返回 `warning`，不假装回滚（文件此时已写入）。
+
 ## 风险与边界
 
 - **系统提示差异**：工作区走 `SoloHub`，用标准编码 agent prompt；rob 走 `Team`，带团队提示词。两者并存，互不影响。
