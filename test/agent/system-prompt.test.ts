@@ -6,8 +6,14 @@ import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
 let withAgents: string;
 let withoutAgents: string;
+let skillsDir: string;
+const previousSkillsDir = process.env.MY_AGENT_SKILLS_DIR;
 
 beforeAll(async () => {
+	// Point discovery at an empty temp prefix so the prompt tests never read the
+	// real home directory.
+	skillsDir = await makeWorkspace("my-agent-prompt-skills-");
+	process.env.MY_AGENT_SKILLS_DIR = skillsDir;
 	withAgents = await makeWorkspace("my-agent-prompt-with-");
 	await writeFile(
 		path.join(withAgents, "AGENTS.md"),
@@ -20,6 +26,12 @@ beforeAll(async () => {
 afterAll(async () => {
 	await removeWorkspace(withAgents);
 	await removeWorkspace(withoutAgents);
+	await removeWorkspace(skillsDir);
+	if (previousSkillsDir === undefined) {
+		delete process.env.MY_AGENT_SKILLS_DIR;
+	} else {
+		process.env.MY_AGENT_SKILLS_DIR = previousSkillsDir;
+	}
 });
 
 describe("buildSystemPrompt", () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ToolDefinition } from "../providers/types.js";
+import { loadSkillTool } from "../skills/tool.js";
 import { bashTool } from "./bash.js";
 import { editFileTool } from "./edit_file.js";
 import { globTool } from "./glob.js";
@@ -15,6 +16,7 @@ export const tools: Tool[] = [
 	bashTool,
 	globTool,
 	grepTool,
+	loadSkillTool,
 ];
 
 export function getTool(name: string): Tool | undefined {

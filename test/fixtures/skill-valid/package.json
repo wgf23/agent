@@ -1,0 +1,5 @@
+{
+	"name": "fixture-valid-skill",
+	"version": "1.2.3",
+	"my-agent-skill": "."
+}

@@ -47,6 +47,7 @@ describe("getTool", () => {
 		expect(getTool("read_file")?.readOnly).toBe(true);
 		expect(getTool("glob")?.readOnly).toBe(true);
 		expect(getTool("grep")?.readOnly).toBe(true);
+		expect(getTool("load_skill")?.readOnly).toBe(true);
 		expect(getTool("write_file")?.readOnly).toBe(false);
 		expect(getTool("edit_file")?.readOnly).toBe(false);
 		expect(getTool("bash")?.readOnly).toBe(false);
@@ -63,6 +64,7 @@ describe("toolDefinitions", () => {
 			"bash",
 			"glob",
 			"grep",
+			"load_skill",
 		]);
 
 		const readFile = definitions[0].parameters as {

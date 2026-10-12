@@ -122,6 +122,28 @@ In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Al
 
 If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only.
 
+## Skills
+
+A skill is an npm package that ships a directory containing `SKILL.md`. The file starts with YAML frontmatter holding `name` (lowercase kebab-case) and a one-line `description`; the rest is markdown instructions for the model. The package points at the directory with a top-level `my-agent-skill` field:
+
+```json
+{
+  "name": "my-greeting-skill",
+  "version": "1.0.0",
+  "my-agent-skill": "."
+}
+```
+
+Installed skills are listed in the system prompt under `## Skills`, and the model loads one on demand with the read-only `load_skill` tool.
+
+```bash
+my-agent skill add <spec>   # install from npm or a local directory
+my-agent skill list         # one row per skill: name, package, version, description, path
+my-agent skill remove <name>
+```
+
+Skills install into `~/.config/my-agent/skills`, which acts as an npm project (my-agent creates its `package.json`). Set `MY_AGENT_SKILLS_DIR` to use a different prefix; tests and sandboxes point it at a temp directory. npm runs with `--ignore-scripts --no-audit --no-fund`. A package that does not declare a valid skill is uninstalled again.
+
 ## Known limits
 
 - `bash` is not sandboxed. It runs with your user's permissions; that is why it asks first.

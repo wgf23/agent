@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
 import { runSetupCommand } from "./cli/setup.js";
+import { runSkillAdd, runSkillList, runSkillRemove } from "./cli/skill.js";
 import { runTeamCommand } from "./cli/team.js";
 import { runTui } from "./tui/index.js";
 
@@ -115,6 +116,33 @@ program
 			waitMs: parseWaitMs(options.waitMs),
 			yesAll: options.yes,
 		});
+	});
+
+const skill = program
+	.command("skill")
+	.description("Install, list, and remove skills from npm");
+
+skill
+	.command("add")
+	.description("Install a skill package from npm or a local path")
+	.argument("<spec>", "npm package spec or local directory")
+	.action(async (spec: string) => {
+		process.exitCode = await runSkillAdd(spec);
+	});
+
+skill
+	.command("list")
+	.description("List installed skills")
+	.action(async () => {
+		process.exitCode = await runSkillList();
+	});
+
+skill
+	.command("remove")
+	.description("Remove the installed skill with this name")
+	.argument("<name>", "skill name")
+	.action(async (name: string) => {
+		process.exitCode = await runSkillRemove(name);
 	});
 
 await program.parseAsync(process.argv);

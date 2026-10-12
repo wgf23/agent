@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { discoverSkills, type Skill } from "../skills/discover.js";
 
 export interface SystemPromptOptions {
 	workspaceRoot: string;
@@ -7,6 +8,7 @@ export interface SystemPromptOptions {
 	date: string;
 	agentsMd?: string;
 	extraInstructions?: string;
+	skills?: Skill[];
 }
 
 export async function buildSystemPrompt(
@@ -36,6 +38,16 @@ export async function buildSystemPrompt(
 		options.extraInstructions.trim() !== ""
 	) {
 		sections.push(options.extraInstructions.trim());
+	}
+
+	const skills = options.skills ?? (await discoverSkills());
+	if (skills.length > 0) {
+		sections.push(
+			[
+				"## Skills",
+				...skills.map((skill) => `- ${skill.name}: ${skill.description}`),
+			].join("\n"),
+		);
 	}
 
 	if (agentsMd !== undefined && agentsMd.trim() !== "") {
