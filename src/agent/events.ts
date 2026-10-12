@@ -2,7 +2,12 @@ import type { StreamEvent } from "../providers/types.js";
 
 export type Usage = Extract<StreamEvent, { type: "usage" }>;
 
-export type AgentDoneReason = "finished" | "max_steps" | "aborted" | "error";
+export type AgentDoneReason =
+	| "finished"
+	| "max_steps"
+	| "aborted"
+	| "error"
+	| "budget";
 
 export type AgentEvent =
 	| { type: "text_delta"; text: string }

@@ -37,6 +37,7 @@ export interface RunTuiOptions {
 	workspaceRoot: string;
 	model?: string;
 	maxSteps?: number;
+	maxCost?: number;
 	continueSession?: boolean;
 	sessionId?: string;
 	compaction?: CompactionSettings;
@@ -218,6 +219,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			model={settings.model}
 			workspaceRoot={options.workspaceRoot}
 			maxSteps={settings.maxSteps}
+			maxCost={options.maxCost}
 			thinking={deepseek ? settings.thinking : undefined}
 			reasoningEffort={deepseek ? settings.reasoningEffort : undefined}
 			baseURL={settings.baseURL}
