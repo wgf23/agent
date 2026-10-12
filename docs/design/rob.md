@@ -10,6 +10,7 @@
 - R4.2：关闭 G5 和 G7（`--mode rpc` 的中途插话、`tool_call` 扩展审批桥）。提交信息为 `feat: pi interjection, approvals, or peer tools, as verified`。
 - R4.3：修复 pi CLI 后端的空闲 steer 丢失（`turnActive` 回合状态、`queue_update.steering` 补投递、`success:false` 重发、未投递计数失败）。提交信息为 `fix: pi steer delivery, no silent message loss`。
 - R5：opencode CLI 后端（`opencode serve` 私有常驻进程、每 rob 一个持久会话、回合中途 steer、`dispose` 关闭进程与 SSE、serve 模式权限强制）。实现见 `src/rob/opencode-backend.ts`。
+- R5.1：opencode rob 审批桥（`ask` 工具翻译成 opencode `ask` 规则并暴露；`permission.asked` 经该 rob 的 authorizer 和共享 FIFO 审批队列回答；规则翻译修正为「只有不可能解析成其他效果时才普通 allow」；abort/dispose 拒绝所有待决请求）。
 
 claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 opencode。
 
@@ -25,6 +26,8 @@ claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 openc
 - **R4.2 的插话**：cli 后端每 50ms 调一次 rob 收件箱的 drain，把新消息作为 `steer` 发给正在运行的 pi。R4.3 修正了投递语义：轮询器只在 `turnActive` 为真时 drain，空闲时不碰收件箱（交给 rob 的下一轮）；`agent_end` 时若 `queue_update.steering` 仍非空，说明这些 steer 没投递，cli 后端把它们按顺序拼成一条 `prompt` 在同一进程重发；`success:false` 的 steer 也重发；已取走却既未投递也未入队的消息让回合以 `ok:false` 结束并报出丢失条数。
 - **R4.2 的审批桥**：cli 后端把自己的 authorizer 传给 pi 扩展。扩展在 `tool_call` 钩子里对每次工具调用发起 `ctx.ui.confirm`，我们的进程用 authorizer 判断后回复；因此解析为 `ask` 的工具也能进入 `--tools` 白名单。`ask`/`allow` 的暴露只在桥存在（即 rob 传了 authorizer）时发生。
 - **R4 的权限（R4 第一版）**：R4 第一版 pi 没有审批通道，解析为 `ask` 的工具不会进入 `--tools` 白名单，只有 `allow` 才暴露。R4.2 由审批桥关闭。
+- **R5.1 的 allow_always 信号**：authorizer 之前只返回 `{allowed:true}`，无法区分 `allow_once` 和落了持久规则的 `allow_always`。为让 opencode 桥精确回 `once` 或 `always`，`AuthorizeResult` 的允许分支新增可选 `remember`，仅在 authorizer 真正写入规则的那条分支置真。没有新增第二条持久化路径；opencode 的 `always` 只是镜像该信号。
+- **R5.1 的 edit 工具选择**：opencode 的 `permission.asked` 只带 `action:"edit"`，不带 write 还是 edit 工具名。桥在该请求的 resource 上取规则解析为 `ask` 的工具，优先 `write_file`。这是协议信息不足下唯一可行的映射；离线测试锁定该选择。
 
 ### R4 的已知缺口
 
@@ -242,6 +245,14 @@ RobBackend
 完成判定用显式的 `session.execution.succeeded` / `failed` / `interrupted`，不轮询回退。用量按每步 `session.step.ended` 累加；`session.usage.updated` 是会话累计值，跨回合重复计数，故不采用。
 
 serve 模式权限强制（本轮补验，关闭唯一未验证的安全声明）：agent 的 `permissions` 规则集在 serve 模式生效。规则集以 `[{action:"*",resource:"*",effect:"deny"}]` 起底再追加 allow。实测：允许 `edit` 时 write 工具创建了文件；拒绝 `edit` 时模型回答写工具不可用，文件未创建；`effect:"ask"` 时发出 `permission.asked` 并阻塞回合（无文件）。会话级 `permissions` 规则集同样生效（allow-all agent + 会话级 deny edit 时不写入）。agent 级已足够，实现只在 `OPENCODE_CONFIG_CONTENT` 注入规则集。opencode 工具名到我们的名字：`read→read_file`、`write→write_file`、`edit→edit_file`、`shell→bash`，`glob`/`grep` 同名。
+
+### R5.1 审批桥（已验证：opencode 2.0.24 + 真实 DeepSeek）
+
+规则翻译（`opencodePermissions`，纯函数）。一个工具只有满足下面两种形状之一，才翻译成 opencode 的普通 `allow`：标量 `"allow"`，或整张列表的每一项都是 `{pattern:"*", action:"allow"}`。任何带具体 pattern、或 `deny`、或 `ask` 项的列表都降级为 `ask`；解析为 `deny` 的工具整个动作不暴露。原因是 opencode 的规则是 last-match-wins 的 `{action, resource, effect}`，而我们的规则按 pattern 匹配 subject：`[{pattern:"rm *",action:"deny"},{pattern:"*",action:"allow"}]` 对 subject `"*"` 解析为 `allow`，若照旧翻译成 `effect:"allow"` 就会让 `rm -rf x` 绕过 `rm *` 的 deny。测试用该列表断言 `shell` 得到 `ask` 而非 `allow`。`write_file` 与 `edit_file` 共享 opencode 的 `edit` 动作，按最严格合并：两者都 allow 才是 allow；任一 ask（含带 pattern 的门控）就是 ask；其余（含一 allow 一 deny）整个动作不暴露。基础 `{action:"*",resource:"*",effect:"deny"}` 保持在首位，allow/ask 追加在后。
+
+请求与应答。回合中 opencode 发 `permission.asked` SSE，`data` 字段为 `{id, sessionID, action, resources:[...], save:[...], source:{type:"tool", messageID, id}}`；实测 `action` 取值 `shell`（`resources` 为命令字符串）、`read`（路径）、`glob`/`grep`（pattern）、`edit`（路径）。后端把 `action` 映射回本侧工具（`read→read_file`、`glob`、`grep`、`shell→bash`；`edit` 取规则在 `resources[0]` 上解析为 `ask` 的那个，优先 `write_file`），用 `resources[0]` 构造合成调用（bash 用 `{command}`，read/write/edit 用 `{path}`，glob/grep 用 `{pattern}`），调用该 rob 的 authorizer。authorizer 走共享 FIFO 队列，用户看到带 rob 名字的对话框，`waiting_approval` 状态由既有路径设置。答复用 `POST /api/session/{sessionID}/permission/{requestID}/reply`，body `{decision:"once"|"always"|"reject", message?}`：允许一次回 `once`；authorizer 落了持久规则（`AuthorizeResult.remember === true`）回 `always`；拒绝回 `reject`，`message` 为 authorizer 的理由。危险命令 authorizer 不落规则，因此永远回 `once`。`action` 无法映射回任何工具时回 `reject` 并附清晰理由，绝不静默放行。
+
+生命周期。待决请求记录在 `pendingPermissions`。回合中途 abort 会先对所有待决请求回 `reject`（理由 "Turn aborted before the approval was answered."）再 `interrupt`；`dispose` 同样回 `reject`（理由 "my-agent stopped before the approval was answered."）并结束回合，避免 `Team.stop` 卡住、opencode 阻塞在已停的 server 上。真实验证：TUI 里对 `bash echo APPROVED_ONE` 按 `y` 后工具执行并出现 `APPROVED_ONE` 的 `✓` 卡片与输出；对 `bash echo DENIED_TWO` 按 `n` 后出现红色 `✗` 卡片和理由 "The user denied bash echo DENIED_TWO."；`/quit` 退出码 0，且没有本轮的 `opencode serve` 残留（对照：直接 SIGKILL 父进程会留下孤儿子进程）。离线测试用注入的假 fetch/spawn 和假 authorizer 覆盖上述每条分支。
 
 ### 建议
 

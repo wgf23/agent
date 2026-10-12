@@ -5,11 +5,13 @@
 ### Added
 
 - Persistent `opencode` CLI backend for robs: a private long-lived `opencode serve` process with one session per rob, mid-turn `steer` interjections, and SIGTERM teardown on stop. Configure with `{ "kind": "cli", "command": "opencode", "provider": "deepseek", "model": "deepseek-v4-flash" }`.
+- `opencode` robs now expose `ask`-level tools and answer each opencode `permission.asked` request through the rob's authorizer and the shared FIFO approval queue, so the dialog shows the rob's name and `allow once` / `allow always` / `deny` behave like every other rob. A pending request is rejected on turn abort or dispose so opencode never blocks on a stopped server.
 - Interactive `my-agent setup` wizard and first-run TUI setup that stores an API key in `~/.config/my-agent/credentials.json`, with environment variables taking precedence.
 
 ### Changed
 
 - Rob `opencode` backends now run isolated under `~/.config/my-agent/opencode/<name>/` and receive the configured provider key as its environment variable, so rob sessions stay out of your own opencode data and a key stored with `my-agent setup` authenticates the child without exporting anything.
+- An `opencode` action is exposed as a blanket `allow` only when its rules cannot resolve any subject to something else: a scalar `allow`, or a list of catch-all `allow` entries. A pattern-specific, `deny`, or `ask` entry gates the action as `ask` instead, closing a bypass where `[{ "pattern": "rm *", "action": "deny" }, { "pattern": "*", "action": "allow" }]` was translated to an unconditional allow. `write_file` and `edit_file` share opencode's `edit` action and merge most-restrictively.
 
 ## 0.1.0 - 2026-10-11
 
