@@ -4,8 +4,11 @@ import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
+import { Team } from "../rob/team.js";
+import { robToolRules } from "../rob/tools.js";
 import { App } from "./App.js";
 import { createApprovalBridge } from "./approval.js";
+import { TeamApp } from "./team/App.js";
 
 export interface RunTuiOptions {
 	workspaceRoot: string;
@@ -27,7 +30,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		return;
 	}
 
-	const { provider: settings, apiKey, permissions } = resolved.config;
+	const { provider: settings, apiKey, permissions, robs } = resolved.config;
 	if (apiKey === undefined) {
 		console.error(missingApiKeyMessage(settings.apiKeyEnv));
 		process.exitCode = 1;
@@ -40,6 +43,32 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		apiKey,
 		apiKeyEnv: settings.apiKeyEnv,
 	});
+
+	if (robs.length > 0) {
+		const team = new Team({
+			robs,
+			defaultModel: settings.model,
+			providerFactory: () => provider,
+			workspaceRoot: options.workspaceRoot,
+			authorizerFactory: (rob) =>
+				createAuthorizer({
+					workspaceRoot: options.workspaceRoot,
+					rules: {
+						...defaultRules(),
+						...robToolRules(),
+						...permissions,
+						...rob.permissions,
+					},
+					approval: rob.approval,
+					yesAll: false,
+				}),
+		});
+		const instance = render(
+			<TeamApp team={team} robs={robs} model={settings.model} />,
+		);
+		await instance.waitUntilExit();
+		return;
+	}
 
 	const rules = {
 		...defaultRules(),

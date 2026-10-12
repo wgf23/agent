@@ -98,7 +98,27 @@ export async function readProjectConfig(
 	return { ok: true, config: parsed.data };
 }
 
-export async function addPermissionRule(
+let writeChain: Promise<unknown> = Promise.resolve();
+
+// Two robs can answer allow_always at the same moment, so the whole
+// read-merge-write runs one call at a time or the second clobbers the first.
+export function addPermissionRule(
+	workspaceRoot: string,
+	toolName: string,
+	pattern: string,
+	action: Action,
+): Promise<WriteResult> {
+	const run = writeChain.then(() =>
+		writePermissionRule(workspaceRoot, toolName, pattern, action),
+	);
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+async function writePermissionRule(
 	workspaceRoot: string,
 	toolName: string,
 	pattern: string,

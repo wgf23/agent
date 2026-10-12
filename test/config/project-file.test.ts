@@ -102,6 +102,21 @@ describe("addPermissionRule", () => {
 `);
 	});
 
+	it("serializes concurrent writes so neither rule is lost", async () => {
+		await Promise.all([
+			addPermissionRule(workspace, "write_file", "a.txt", "allow"),
+			addPermissionRule(workspace, "bash", "npm *", "allow"),
+		]);
+
+		const written = await readFile(join(workspace, "my-agent.json"), "utf8");
+		expect(JSON.parse(written)).toEqual({
+			permissions: {
+				write_file: [{ pattern: "a.txt", action: "allow" }],
+				bash: [{ pattern: "npm *", action: "allow" }],
+			},
+		});
+	});
+
 	it("returns an error result when the existing file is invalid", async () => {
 		await writeFile(join(workspace, "my-agent.json"), "{ not json", "utf8");
 

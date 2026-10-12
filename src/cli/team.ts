@@ -83,6 +83,10 @@ export async function runTeamCommand(
 	});
 
 	const yesAll = options.yesAll ?? false;
+	const approve = headlessApproval({
+		yesAll,
+		log: (line) => process.stderr.write(line),
+	});
 	const team = new Team({
 		robs,
 		defaultModel: settings.model,
@@ -97,12 +101,22 @@ export async function runTeamCommand(
 					...permissions,
 					...rob.permissions,
 				},
-				approval: headlessApproval({
-					yesAll,
-					log: (line) => process.stderr.write(line),
-				}),
+				approval: rob.approval,
 				yesAll,
 			}),
+	});
+
+	// Headless mode has no user, so answer the shared queue the moment a rob asks.
+	team.subscribe((event) => {
+		if (event.kind !== "approval_requested") return;
+		const decision = approve(event.request);
+		if (decision instanceof Promise) {
+			void decision.then((value) =>
+				team.resolveApproval(event.request.id, value),
+			);
+			return;
+		}
+		team.resolveApproval(event.request.id, decision);
 	});
 
 	team.start();

@@ -50,7 +50,7 @@ const MessageView = memo(function MessageView({
 	if (message.role === "user") {
 		return (
 			<Text color="green">
-				{"you> "}
+				{message.label ?? "you> "}
 				{message.text}
 			</Text>
 		);

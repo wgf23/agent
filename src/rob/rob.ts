@@ -1,6 +1,7 @@
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
+import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
 import { errorMessage } from "../util/errors.js";
@@ -17,6 +18,7 @@ import type {
 export interface AuthorizerInput {
 	name: RobName;
 	permissions: PermissionRules;
+	approval: Approval;
 }
 
 export type AuthorizerFactory = (input: AuthorizerInput) => Authorize;
@@ -62,6 +64,7 @@ export class Rob {
 		this.authorize = options.authorizerFactory({
 			name: options.name,
 			permissions: options.permissions,
+			approval: (request) => this.team.requestApproval(this.name, request),
 		});
 	}
 
@@ -73,7 +76,17 @@ export class Rob {
 		if (this.stopRequested) return;
 		this.stopRequested = true;
 		this.currentRun?.abort();
-		this.status = "stopped";
+		this.setStatus("stopped");
+	}
+
+	markWaitingApproval(): void {
+		if (this.stopRequested) return;
+		this.setStatus("waiting_approval");
+	}
+
+	markWorking(): void {
+		if (this.stopRequested) return;
+		this.setStatus("working");
 	}
 
 	statusSnapshot(): RobStatusEntry {
@@ -91,14 +104,14 @@ export class Rob {
 	}
 
 	async run(): Promise<void> {
-		this.status = "idle";
+		this.setStatus("idle");
 		while (!this.stopRequested) {
 			const controller = new AbortController();
 			this.currentRun = controller;
 			const batch = await this.waitForBatch(controller.signal);
 			if (this.stopRequested || batch.length === 0) break;
 
-			this.status = "working";
+			this.setStatus("working");
 			try {
 				await this.runOnce(batch, controller.signal);
 			} catch (error) {
@@ -106,9 +119,15 @@ export class Rob {
 			} finally {
 				this.currentRun = null;
 			}
-			if (!this.stopRequested) this.status = "idle";
+			if (!this.stopRequested) this.setStatus("idle");
 		}
-		this.status = "stopped";
+		this.setStatus("stopped");
+	}
+
+	private setStatus(status: RobStatus): void {
+		if (this.status === status) return;
+		this.status = status;
+		this.team.emitStatus(this.name, status);
 	}
 
 	private async waitForBatch(signal: AbortSignal): Promise<Inbound[]> {
@@ -146,7 +165,10 @@ export class Rob {
 					run: (task, subSignal) => this.runSubagent(task, subSignal),
 				}),
 			],
-			onEvent: (event) => this.events.push(event),
+			onEvent: (event) => {
+				this.events.push(event);
+				this.team.emitRobEvent(this.name, event);
+			},
 		});
 
 		this.history = result.messages.filter(

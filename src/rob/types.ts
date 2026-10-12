@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { AgentEvent } from "../agent/events.js";
+import type {
+	ApprovalDecision,
+	ApprovalRequest,
+} from "../permissions/authorizer.js";
 import { permissionRulesSchema } from "../permissions/rules.js";
 
 const ROB_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -57,6 +61,12 @@ export interface TeamPort {
 	hasRob(name: string): boolean;
 	postDm(from: RobName, to: RobName, text: string): void;
 	recordSubagent(entry: SubagentEntry): void;
+	requestApproval(
+		rob: RobName,
+		request: ApprovalRequest,
+	): Promise<ApprovalDecision>;
+	emitRobEvent(rob: RobName, event: AgentEvent): void;
+	emitStatus(rob: RobName, status: RobStatus): void;
 }
 
 export function duplicateRobName(

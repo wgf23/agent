@@ -6,11 +6,17 @@ import type { PendingPermission } from "../approval.js";
 export interface PermissionDialogProps {
 	request: PendingPermission;
 	onChoice: (choice: ApprovalChoice) => void;
+	title?: string;
+	prefix?: string;
+	footer?: string;
 }
 
 export function PermissionDialog({
 	request,
 	onChoice,
+	title = "Permission required",
+	prefix = "",
+	footer,
 }: PermissionDialogProps): ReactElement {
 	useInput((input, key) => {
 		if (key.escape) {
@@ -38,11 +44,13 @@ export function PermissionDialog({
 			borderColor="yellow"
 			paddingX={1}
 		>
-			<Text bold>Permission required</Text>
+			<Text bold>{title}</Text>
 			<Text>
+				{prefix}
 				<Text bold>{request.toolName}</Text>
 				{` ${request.subject}`}
 			</Text>
+			{footer !== undefined ? <Text dimColor>{footer}</Text> : null}
 			{request.dangerous ? (
 				<Text color="red">Warning: this command looks dangerous.</Text>
 			) : null}

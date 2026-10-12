@@ -28,6 +28,7 @@ export interface TuiUserMessage {
 	id: number;
 	role: "user";
 	text: string;
+	label?: string;
 }
 
 export interface TuiSystemMessage {
@@ -70,6 +71,13 @@ export interface TuiInit {
 	workspaceRoot: string;
 	model: string;
 }
+
+// The fields an AgentEvent stream writes. Extraction lets the team reducer
+// reuse the same event handling per rob without carrying TuiState.
+export type TranscriptState = Pick<
+	TuiState,
+	"messages" | "status" | "usage" | "lastError" | "nextId"
+>;
 
 export type TuiAction =
 	| { type: "submit"; text: string; at: number }
@@ -130,7 +138,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 		}
 
 		case "agent":
-			return applyAgentEvent(state, action.event);
+			return { ...state, ...applyAgentEvent(state, action.event) };
 
 		case "cancel": {
 			if (state.status !== "streaming") return state;
@@ -213,9 +221,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 }
 
 function upsertAssistant(
-	state: TuiState,
+	state: TranscriptState,
 	update: (message: TuiAssistantMessage) => TuiAssistantMessage,
-): TuiState {
+): TranscriptState {
 	const last = state.messages[state.messages.length - 1];
 	if (last !== undefined && last.role === "assistant") {
 		return {
@@ -237,7 +245,10 @@ function upsertAssistant(
 	};
 }
 
-function applyAgentEvent(state: TuiState, event: AgentEvent): TuiState {
+export function applyAgentEvent(
+	state: TranscriptState,
+	event: AgentEvent,
+): TranscriptState {
 	switch (event.type) {
 		case "text_delta":
 			return upsertAssistant(state, (message) => ({
