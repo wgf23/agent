@@ -149,6 +149,12 @@ interface RunPiOptions {
 	drain?: () => Inbound[];
 }
 
+interface InFlightSteer {
+	message: string;
+	queued: boolean;
+	failed: boolean;
+}
+
 function runPi(options: RunPiOptions): Promise<TurnResult> {
 	const usage = emptyUsage();
 	const messages: Message[] = [
@@ -164,6 +170,11 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 	let stderr = "";
 	let ended = false;
 	let buffer = "";
+	let turnActive = false;
+	let steering: string[] = [];
+	let inFlight: InFlightSteer[] = [];
+	const pendingResponses: InFlightSteer[] = [];
+	let awaitingPrompt: string[] = [];
 
 	const child = spawn(options.command, options.args, {
 		cwd: options.cwd,
@@ -174,9 +185,10 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 		let settled = false;
 		let exitTimer: NodeJS.Timeout | undefined;
 
-		const send = (command: Record<string, unknown>): void => {
-			if (!child.stdin.writable) return;
+		const send = (command: Record<string, unknown>): boolean => {
+			if (!child.stdin.writable) return false;
 			child.stdin.write(`${JSON.stringify(command)}\n`);
+			return true;
 		};
 
 		const finish = (result: TurnResult): void => {
@@ -206,6 +218,8 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 				finish({ ok: false, error: promptFailure, usage, messages });
 				return;
 			}
+			const lost = lostSteerCount(inFlight, steering) + awaitingPrompt.length;
+			if (lost > 0) failure = lostMessageError(lost);
 			if (failure !== null) {
 				emit({ type: "error", message: failure });
 				emit({ type: "done", reason: "error", steps });
@@ -223,9 +237,16 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 		};
 
 		const poller = setInterval(() => {
-			if (settled || options.drain === undefined) return;
+			if (settled || !turnActive || options.drain === undefined) return;
 			for (const item of options.drain()) {
-				send({ type: "steer", message: promptFor(item) });
+				const message = promptFor(item);
+				const steer: InFlightSteer = { message, queued: false, failed: false };
+				inFlight.push(steer);
+				if (!send({ type: "steer", message })) {
+					steer.failed = true;
+					continue;
+				}
+				pendingResponses.push(steer);
 			}
 		}, INTERJECT_POLL_MS);
 
@@ -252,11 +273,25 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 			const record = event as Record<string, unknown>;
 			switch (record.type) {
 				case "response": {
+					if (record.command === "steer") {
+						const steer = pendingResponses.shift();
+						if (steer !== undefined && record.success === false) {
+							steer.failed = true;
+						}
+						return;
+					}
 					if (record.command === "prompt" && record.success === false) {
 						promptFailure =
 							stringField(record.error) || "pi rejected the prompt.";
 						conclude();
 						if (child.stdin.writable) child.stdin.end();
+					}
+					return;
+				}
+				case "queue_update": {
+					steering = stringList(record.steering);
+					for (const steer of inFlight) {
+						if (steering.includes(steer.message)) steer.queued = true;
 					}
 					return;
 				}
@@ -330,6 +365,24 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 					return;
 				}
 				case "agent_end": {
+					turnActive = false;
+					awaitingPrompt = [];
+					// A steer still in pi's queue at agent_end was never delivered, so
+					// resend it as a prompt in this process instead of dropping it.
+					const resend = inFlight
+						.filter((steer) => steer.failed || steering.includes(steer.message))
+						.map((steer) => steer.message);
+					if (resend.length > 0) {
+						inFlight = [];
+						steering = [];
+						currentText = "";
+						awaitingPrompt = resend;
+						turnActive = true;
+						if (send({ type: "prompt", message: resend.join("\n\n") })) {
+							ended = false;
+							return;
+						}
+					}
 					ended = true;
 					conclude();
 					// Let pi drain and exit on its own so the session is saved.
@@ -395,6 +448,7 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 			conclude();
 		});
 
+		turnActive = true;
 		send({
 			type: "prompt",
 			message: options.inbound.map(promptFor).join("\n\n"),
@@ -519,4 +573,25 @@ function stringField(value: unknown): string {
 
 function numberField(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function stringList(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === "string");
+}
+
+// A drained message is delivered only once pi has acknowledged it into a
+// steering queue and then consumed it. Anything else at conclude is lost.
+function lostSteerCount(
+	inFlight: readonly InFlightSteer[],
+	steering: readonly string[],
+): number {
+	return inFlight.filter(
+		(steer) => !(steer.queued && !steering.includes(steer.message)),
+	).length;
+}
+
+function lostMessageError(count: number): string {
+	const noun = count === 1 ? "interjection was" : "interjections were";
+	return `${count} ${noun} not delivered by pi.`;
 }

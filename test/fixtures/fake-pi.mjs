@@ -8,6 +8,11 @@ if (process.env.FAKE_PI_ARGV_FILE) {
 
 const scenario = process.env.FAKE_PI_SCENARIO ?? "events";
 
+let promptCount = 0;
+let lastSteer = "";
+// Scenarios where a steer is queued but not consumed before agent_end.
+const STEER_SCENARIOS = ["steer-late", "steer-fail", "steer-lost"];
+
 if (scenario === "sleep") {
 	if (process.env.FAKE_PI_PID_FILE) {
 		writeFileSync(process.env.FAKE_PI_PID_FILE, String(process.pid));
@@ -40,6 +45,7 @@ function handleLine(line) {
 		return;
 	}
 	if (command.type === "prompt") {
+		promptCount += 1;
 		emit({ type: "response", command: "prompt", success: true });
 		if (scenario === "error") {
 			process.stderr.write("boom: fake pi failed\n");
@@ -57,15 +63,51 @@ function handleLine(line) {
 			emitApprovalStart();
 			return;
 		}
+		if (STEER_SCENARIOS.includes(scenario)) {
+			if (promptCount > 1) emitSteerAnswer();
+			else emitSteerWait();
+			return;
+		}
 		emitScript();
 		return;
 	}
 	if (command.type === "steer") {
-		emit({ type: "response", command: "steer", success: true });
+		lastSteer = command.message;
 		if (process.env.FAKE_PI_STEER_FILE) {
 			appendFileSync(process.env.FAKE_PI_STEER_FILE, `${command.message}\n`);
 		}
-		if (scenario === "interjection") emitInterjectionEnd();
+		if (scenario === "interjection") {
+			// Real pi acknowledges a consumed steer by filling then emptying
+			// queue_update.steering around the response.
+			emit({ type: "queue_update", steering: [command.message], followUp: [] });
+			emit({ type: "response", command: "steer", success: true });
+			emitInterjectionEnd();
+			return;
+		}
+		if (scenario === "steer-late") {
+			// success:true but the steer stays queued; no turn consumes it.
+			emit({ type: "response", command: "steer", success: true });
+			emit({ type: "queue_update", steering: [command.message], followUp: [] });
+			emit({ type: "turn_end" });
+			emit({ type: "agent_end" });
+			return;
+		}
+		if (scenario === "steer-fail") {
+			emit({ type: "response", command: "steer", success: false });
+			emit({ type: "queue_update", steering: [], followUp: [] });
+			emit({ type: "turn_end" });
+			emit({ type: "agent_end" });
+			return;
+		}
+		if (scenario === "steer-lost") {
+			// Acked, never queued, never delivered: unaccounted.
+			emit({ type: "response", command: "steer", success: true });
+			emit({ type: "queue_update", steering: [], followUp: [] });
+			emit({ type: "turn_end" });
+			emit({ type: "agent_end" });
+			return;
+		}
+		emit({ type: "response", command: "steer", success: true });
 		return;
 	}
 	if (command.type === "extension_ui_response") {
@@ -218,6 +260,7 @@ function emitInterjectionEnd() {
 		result: { content: [{ type: "text", text: "slept" }] },
 		isError: false,
 	});
+	emit({ type: "queue_update", steering: [], followUp: [] });
 	emit({
 		type: "message_start",
 		message: { role: "assistant", content: [], usage: emptyUsage() },
@@ -236,6 +279,58 @@ function emitInterjectionEnd() {
 			role: "assistant",
 			content: [{ type: "text", text: "STEERED" }],
 			usage: usage(2, 1, 0),
+			stopReason: "stop",
+		},
+	});
+	emit({ type: "turn_end" });
+	emit({ type: "agent_end" });
+}
+
+function emitSteerWait() {
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call_1",
+					name: "bash",
+					arguments: { command: "echo wait" },
+				},
+			],
+			usage: usage(1, 1, 0),
+			stopReason: "toolUse",
+		},
+	});
+	emit({
+		type: "tool_execution_start",
+		toolCallId: "call_1",
+		toolName: "bash",
+		args: { command: "echo wait" },
+	});
+}
+
+function emitSteerAnswer() {
+	emit({ type: "queue_update", steering: [], followUp: [] });
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: lastSteer }],
+			usage: usage(1, 1, 0),
 			stopReason: "stop",
 		},
 	});

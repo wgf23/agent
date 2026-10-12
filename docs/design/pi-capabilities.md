@@ -88,6 +88,30 @@ STEERED
 
 结论：第二条消息可以在回合进行中送入，pi 返回 `success:true`，并在工具结束后处理它，回答变成 `STEERED`。会话续接：`--session-dir <dir> --continue` 在 rpc 模式下跨进程续接（第一轮回答 `OK`，第二轮回答 `777`）。
 
+### 空闲时的 steer 会丢失（真实验证，R4.3 修复）
+
+真实验证：`pi --mode rpc --no-tools --no-session`，先发 prompt「Reply with exactly: FIRST」，等到 `agent_end` 之后再发 `{"type":"steer","message":"SECOND"}`：
+
+```text
+{"type":"response","command":"prompt","success":true}
+ASSISTANT "FIRST"
+{"type":"agent_end",...}
+SENDING IDLE STEER
+{"type":"queue_update","steering":["SECOND"],"followUp":[]}
+{"type":"response","command":"steer","success":true}
+CLOSING STDIN
+EXIT 0
+```
+
+结论：`agent_end` 之后 pi 已空闲。此时 steer 仍返回 `success:true`，消息进入 `queue_update.steering`，但不会开启新回合；进程退出时消息还留在队列里，永远不会投递。此前 cli 后端忽略 steer 响应，而轮询器已经从 rob 收件箱取走该消息，于是消息静默丢失。
+
+修复（`src/rob/cli-backend.ts`）：
+
+- 用 `turnActive` 跟踪回合：发送 `prompt` 后为真，收到 `agent_end` 后为假。轮询器只在 `turnActive` 为真时 drain 收件箱，空闲时不碰，交给 rob 自己的循环在下一轮取走。
+- 收到 `agent_end` 时，若最新的 `queue_update.steering` 非空，说明这些 steer 未投递：按原顺序用空行拼接成一条 `prompt`，在同一进程内重发，回合继续；仅在 steering 为空时才结束回合。
+- steer 响应 `success:false` 视为未投递，消息重新进入待投递列表，由同一路径重发。
+- 已取走却既未投递也未进入过 steering 队列的消息视为丢失：回合以 `ok:false` 结束，错误信息带上丢失条数，绝不静默报告成功。
+
 ## 扩展：拦截工具调用（G7，已用真实 pi 验证）
 
 扩展用 `-e <file>` 加载，默认导出 `(pi) => {...}`。安装包内的 API 定义在：
@@ -139,6 +163,6 @@ TOOL_END {"content":[{"type":"text","text":"{\"ok\":true,\"echoed\":\"HELLO\"}"}
 | G2 | `message_update.assistantMessageEvent.delta` | 已实现并验证 |
 | G3 | `message_end.stopReason` + `errorMessage`，退出码 0 | 已实现并验证 |
 | G4 | 子 agent 的 `usage` 事件累加到 rob | 已实现并验证 |
-| G5 | `--mode rpc` + `steer` | 已实现并验证 |
+| G5 | `--mode rpc` + `steer`，空闲 steer 补投递，未投递计数失败 | 已实现并验证 |
 | G6 | 扩展工具 + Unix socket 回调 | 机制已验证，未实现 |
 | G7 | `tool_call` 钩子 + `ctx.ui.confirm` 阻塞 | 已实现并验证 |

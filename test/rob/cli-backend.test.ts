@@ -287,6 +287,49 @@ describe("cli backend", () => {
 		);
 	});
 
+	it("re-sends a steer still queued at agent_end as a prompt", async () => {
+		process.env.FAKE_PI_SCENARIO = "steer-late";
+		const steerFile = path.join(workspace, "steers.txt");
+		process.env.FAKE_PI_STEER_FILE = steerFile;
+
+		const { result } = await runSteeredTurn("do the thing");
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.text).toBe("[from user] do the thing");
+		expect(await readFile(steerFile, "utf8")).toBe(
+			"[from user] do the thing\n",
+		);
+	});
+
+	it("re-sends a steer whose response reports success false", async () => {
+		process.env.FAKE_PI_SCENARIO = "steer-fail";
+		const steerFile = path.join(workspace, "steers.txt");
+		process.env.FAKE_PI_STEER_FILE = steerFile;
+
+		const { result } = await runSteeredTurn("retry me");
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.text).toBe("[from user] retry me");
+		expect(await readFile(steerFile, "utf8")).toBe("[from user] retry me\n");
+	});
+
+	it("fails with the lost count when a steered message is never accounted for", async () => {
+		process.env.FAKE_PI_SCENARIO = "steer-lost";
+
+		const { result, events } = await runSteeredTurn("lost message");
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe("1 interjection was not delivered by pi.");
+		expect(events.at(-1)).toEqual({
+			type: "done",
+			reason: "error",
+			steps: 1,
+		});
+	});
+
 	it("routes a pi tool call through the approval bridge and allows it", async () => {
 		process.env.FAKE_PI_SCENARIO = "approval";
 		const argvFile = path.join(workspace, "argv.json");
@@ -378,6 +421,41 @@ describe("cli backend", () => {
 });
 
 const allowAuthorize: Authorize = async () => ({ allowed: true });
+
+async function runSteeredTurn(
+	text: string,
+): Promise<{ result: TurnResult; events: AgentEvent[] }> {
+	const events: AgentEvent[] = [];
+	let queued: Inbound[] = [];
+	let injected = false;
+	const backend = createCliBackend({
+		rob: "reviewer",
+		role: "review code",
+		command: FIXTURE,
+		provider: "deepseek",
+		model: "deepseek-v4-flash",
+		drain: () => {
+			const items = queued;
+			queued = [];
+			return items;
+		},
+	});
+	const result = await backend.run({
+		history: [],
+		inbound: [{ kind: "user", from: "user", text: "long task", at: 0 }],
+		workspaceRoot: workspace,
+		rules: {},
+		signal: new AbortController().signal,
+		onEvent: (event) => {
+			events.push(event);
+			if (!injected && event.type === "tool_started") {
+				injected = true;
+				queued = [{ kind: "user", from: "user", text, at: 1 }];
+			}
+		},
+	});
+	return { result, events };
+}
 
 async function runTurn(options: {
 	rules?: PermissionRules;

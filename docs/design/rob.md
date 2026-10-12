@@ -8,6 +8,7 @@
 - R4：pi 的 CLI 后端（`RobBackend`、`--tools` 白名单、按 rob 的 pi 会话目录、`--mode json` 事件映射）。提交 `d69d4c6`。
 - R4.1：关闭 G1 到 G4（角色提示、流式回答、模型错误结果、子 agent 用量）。提交 `c2ea6d8`。
 - R4.2：关闭 G5 和 G7（`--mode rpc` 的中途插话、`tool_call` 扩展审批桥）。提交信息为 `feat: pi interjection, approvals, or peer tools, as verified`。
+- R4.3：修复 pi CLI 后端的空闲 steer 丢失（`turnActive` 回合状态、`queue_update.steering` 补投递、`success:false` 重发、未投递计数失败）。提交信息为 `fix: pi steer delivery, no silent message loss`。
 
 claude、codex、kimi 的 CLI 后端仍未实现。R4 只支持 pi。
 
@@ -20,7 +21,7 @@ claude、codex、kimi 的 CLI 后端仍未实现。R4 只支持 pi。
 - **R4.2 的子进程协议**：cli rob 改用 `--mode rpc`。命令（prompt、steer、extension_ui_response）写成 JSONL 到 stdin，事件从 stdout 读回；回合在 `agent_end` 结束，之后关闭 stdin 让 pi 自行退出并保存会话。R4 第一版用 `-p --mode json` + `stdin: ignore`，因为 pi 要等 stdin EOF 才继续；RPC 模式要的就是打开的 stdin。
 - **R4 的会话续接**：只传 `--session-dir` 时 pi 每次都会新建会话；必须再传 `--continue` 才能在同一目录里续接上一轮，所以 cli rob 每轮都带 `--continue`。rpc 模式下同样成立。
 - **R4 的事件映射**：现有 `tool_started` 没有 summary 字段，工具摘要只放在 `tool_finished`；cli 的回答用 `message_update.assistantMessageEvent.delta` 逐段发 `text_delta`，`message_end` 里若还有未发出的剩余文本才补发一次。
-- **R4.2 的插话**：cli 后端每 50ms 调一次 rob 收件箱的 drain，把新消息作为 `steer` 发给正在运行的 pi。回合刚开始或刚结束时 drain 到的消息可能来不及投递；这是已知边界，未做补偿。
+- **R4.2 的插话**：cli 后端每 50ms 调一次 rob 收件箱的 drain，把新消息作为 `steer` 发给正在运行的 pi。R4.3 修正了投递语义：轮询器只在 `turnActive` 为真时 drain，空闲时不碰收件箱（交给 rob 的下一轮）；`agent_end` 时若 `queue_update.steering` 仍非空，说明这些 steer 没投递，cli 后端把它们按顺序拼成一条 `prompt` 在同一进程重发；`success:false` 的 steer 也重发；已取走却既未投递也未入队的消息让回合以 `ok:false` 结束并报出丢失条数。
 - **R4.2 的审批桥**：cli 后端把自己的 authorizer 传给 pi 扩展。扩展在 `tool_call` 钩子里对每次工具调用发起 `ctx.ui.confirm`，我们的进程用 authorizer 判断后回复；因此解析为 `ask` 的工具也能进入 `--tools` 白名单。`ask`/`allow` 的暴露只在桥存在（即 rob 传了 authorizer）时发生。
 - **R4 的权限（R4 第一版）**：R4 第一版 pi 没有审批通道，解析为 `ask` 的工具不会进入 `--tools` 白名单，只有 `allow` 才暴露。R4.2 由审批桥关闭。
 
@@ -32,7 +33,7 @@ claude、codex、kimi 的 CLI 后端仍未实现。R4 只支持 pi。
 - G2（已关闭）：pi 现在按 `message_update` 的 `text_delta` 流式产出，组装后的文本等于 `message_end` 的文本。
 - G3（已关闭）：`message_end` 的 `stopReason` 为 `"error"` 或 `"aborted"` 时返回错误结果并带上该消息的 `errorMessage`，不再退化成空回答。
 - G4（已关闭）：子 agent 的 `usage` 事件现在累加到发起 rob 的用量统计。
-- G5（已关闭）：cli rob 现在能在回合中途插话。cli 后端使用 `--mode rpc`，把收件箱的新消息作为 `steer` 发给正在运行的 pi。真实 pi 验证：工具执行期间发送 steer，回答变成 `STEERED`。
+- G5（已关闭）：cli rob 现在能在回合中途插话，且不在空闲 pi 上丢消息。cli 后端使用 `--mode rpc`，用 `turnActive` 跟踪回合：进行中才把收件箱的新消息作为 `steer` 发出，空闲时留给 rob 的下一轮。真实 pi 验证：工具执行期间发送 steer，回答变成 `STEERED`；`agent_end` 之后空闲时投递的消息由 rob 的下一轮回答。真实验证并修复了空闲 steer 的丢失：`agent_end` 后发送的 steer 返回 `success:true` 但只进 `queue_update.steering`、不会再开回合；后端现在把 `agent_end` 时仍在 steering 的消息（以及 `success:false` 的 steer）作为新 prompt 在同一进程补投递，未投递且未入队的消息让回合以 `ok:false` 结束并报出条数。
 - G6（未关闭）：cli rob 仍不能使用 `send_message` 和 `delegate`。扩展工具可以通过 Unix socket 回调我们的进程（机制已用真实 pi 验证），但这需要常驻监听通道和自定协议，本次未实现。
 - G7（已关闭）：cli rob 现在有审批通道。pi 扩展在 `tool_call` 钩子里发 `ctx.ui.confirm` 并阻塞，我们的进程用该 rob 的 authorizer 判断后回复；允许和拒绝两条路径都已用真实 pi 验证。因此 `ask` 工具可以进入白名单（仅在桥存在时）。
 
