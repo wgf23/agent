@@ -159,6 +159,26 @@ RobBackend
 
 结论：cli 后端会破坏「权限独立、可以审批、子 agent 只读可见」这几条要求。如果要保留，就必须做 MCP 桥接，或者接受这些 rob 没有审批。
 
+### 已验证：pi（@mariozechner/pi-coding-agent 0.73.0）
+
+安装方式：`npm install -g @mariozechner/pi-coding-agent`，命令为 `pi`。本机已安装。
+
+| 验证项 | 命令与结果 |
+|---|---|
+| 支持 DeepSeek | `pi --list-models deepseek` 列出 `deepseek-v4-flash`、`deepseek-v4-pro`，读取环境变量 `DEEPSEEK_API_KEY` |
+| 非交互文本 | `pi -p --provider deepseek --model deepseek-v4-flash --no-session "Reply with exactly: PI_OK"` 输出 `PI_OK`，退出码 0 |
+| 工具调用 + 结构化输出 | `--mode json` 输出 JSON 行事件，含 `tool_execution_start`（`toolName: "read"`，参数 `path`）、`tool_execution_end`、`agent_end`。最终回答 `0.1.0` 正确 |
+| 用量与费用 | 每条 `message_end` 带 `usage`（input、output、cacheRead）和 `cost` |
+| **无审批直接写文件** | 允许全部工具时，`pi -p` 直接创建了 `write-check.txt`，没有任何确认。**这说明 CLI 后端默认绕过我们的权限** |
+| **`--tools` 白名单可以约束** | `--tools read` 时，模型明确回答自己无法写文件，`allow-check.txt` 没有被创建 |
+
+由此得到的设计结论：
+
+1. 外部 CLI 的 rob 必须用 `--tools` 把工具集限制在该 rob 的权限范围内。例如只读 rob 只给 `read`。
+2. 「需要审批的写入」在 pi 下无法做到逐次审批。只能是「允许」或「不给这个工具」两种状态。这要写进用户文档。
+3. pi 的 `--mode json` 可以作为 R4 的事件来源，用来在 TUI 里显示过程。
+4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。是否能通过 pi 的扩展（`-e`）或 MCP 接入，还没有验证。
+
 ### 建议
 
 1. 先确认是含义 A 还是 B。如果是 A，不需要改设计，只需要配置 `native` 的 `preset`。
