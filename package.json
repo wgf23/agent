@@ -22,7 +22,7 @@
 		"build": "tsup && node scripts/postbuild.mjs && pnpm --filter my-agent-web build",
 		"web:dev": "pnpm --filter my-agent-web dev",
 		"web:build": "pnpm --filter my-agent-web build",
-		"serve": "tsx src/index.ts serve --open",
+		"serve": "tsx src/index.ts serve",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",

@@ -26,6 +26,7 @@ my-agent            # interactive TUI
 ## Modes
 
 - `my-agent` opens the TUI.
+- `my-agent serve` starts the local web UI in a browser (see [Web UI](#web-ui)).
 - `my-agent run "list the ts files and summarize package.json"` runs headlessly and streams the answer to stdout.
 - `my-agent "..."` does the same as `run`.
 - `--yes` auto-approves every tool call. Without it, headless mode denies any tool that needs approval and keeps going.
@@ -56,6 +57,25 @@ Keys:
 Typing `@` completes workspace file names, and accepting one inserts it into the sentence. Sending the message expands each `@path` into a `Referenced files` block so the model sees the contents without reading the file again.
 
 `/compact` summarizes the older messages into a `[compacted summary]` and keeps the recent ones. Automatic compaction runs before a turn when the context estimate exceeds `compaction.thresholdTokens` (default 100000) and `compaction.auto` is true. The summary is saved with the session, so `--continue` keeps it. `/clear` ends the current session and starts a new one, and the `· session <id>` line tells you which session you are in.
+
+## Web UI
+
+If you would rather not use the terminal, `my-agent serve` starts a local web client and prints its URL:
+
+```bash
+my-agent serve            # http://127.0.0.1:4317
+my-agent serve --open     # also open the browser
+```
+
+```bash
+my-agent serve [--port <port>] [--host <host>] [--open] [-m <model>] [--max-steps <n>]
+```
+
+The server binds `127.0.0.1` by default and has no authentication, so keep it on the loopback interface. The client streams answers token by token, renders Markdown and tool cards, folds reasoning, and shows the same permission dialog (`Allow once` / `Always allow` / `Deny`) and allow-all switch as the TUI. `Stop` cancels the running turn without ending the session, and a message sent mid-turn is queued and injected at the next step.
+
+Without any `robs`, the client shows one bot and your saved sessions, which you can list, open, and create from the sidebar. When `my-agent.json` defines `robs`, the client switches to a Bot 广场: every rob appears with its status, `dispatch` sends to one, and the panel shows rob-to-rob DMs and notices. Team transcripts are in memory only for now.
+
+Build both the CLI and the web client with `pnpm build`. For hot-reload development, run `pnpm dev serve` in one terminal and `pnpm web:dev` in another, then open the Vite URL (`http://localhost:5173`), which proxies `/api` to the server on 4317.
 
 ## Configuration
 

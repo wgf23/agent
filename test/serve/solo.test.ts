@@ -138,6 +138,42 @@ describe("SoloHub", () => {
 		expect(userTexts).toEqual(["one", "two"]);
 	});
 
+	it("creates a new session and reopens a saved one", async () => {
+		const provider = createMockProvider([
+			[{ type: "text_delta", text: "hello" }],
+		]);
+		const session = newSession(workspaceRoot, settings.model);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+		const events = collect(hub);
+
+		hub.dispatch("assistant", "remember me");
+		await waitFor(
+			() =>
+				events.some(
+					(event) =>
+						event.type === "bot_status" &&
+						event.state.status === "idle" &&
+						event.state.messageCount >= 2,
+				),
+			"turn to finish",
+		);
+
+		await hub.newSession("assistant");
+		expect(hub.hello().activeSessionId).not.toBe(session.id);
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: "session_opened", messages: [] }),
+		);
+
+		await hub.openSession("assistant", session.id);
+		const opened = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(opened).toMatchObject({ sessionId: session.id });
+		const messages = opened?.type === "session_opened" ? opened.messages : [];
+		expect(messages.some((message) => message.role === "user")).toBe(true);
+		await hub.dispose();
+	});
+
 	it("asks for approval and blocks the tool on deny", async () => {
 		const provider = createMockProvider([
 			[
