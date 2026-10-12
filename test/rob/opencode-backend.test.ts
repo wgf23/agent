@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 describe("opencodePermissions", () => {
-	it("denies everything and opens only the tools resolved to allow", () => {
+	it("opens every shared action when all its tools allow", () => {
 		expect(
 			opencodePermissions({
 				read_file: "allow",
@@ -48,7 +48,64 @@ describe("opencodePermissions", () => {
 		]);
 	});
 
-	it("keeps write and edit behind a single edit allow", () => {
+	it("asks for a scalar ask tool and leaves denied tools absent", () => {
+		expect(
+			opencodePermissions({
+				read_file: "allow",
+				glob: "deny",
+				grep: "deny",
+				write_file: "deny",
+				edit_file: "deny",
+				bash: "ask",
+			}),
+		).toEqual([
+			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "read", resource: "*", effect: "allow" },
+			{ action: "shell", resource: "*", effect: "ask" },
+		]);
+	});
+
+	it("gates a bash allow that carries a pattern-specific deny", () => {
+		expect(
+			opencodePermissions({
+				read_file: "allow",
+				glob: "allow",
+				grep: "allow",
+				write_file: "deny",
+				edit_file: "deny",
+				// resolveAction(rules, "bash", "*") is "allow", so a plain allow
+				// here would let "rm -rf x" through and skip the rm deny.
+				bash: [
+					{ pattern: "rm *", action: "deny" },
+					{ pattern: "*", action: "allow" },
+				],
+			}),
+		).toEqual([
+			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "read", resource: "*", effect: "allow" },
+			{ action: "glob", resource: "*", effect: "allow" },
+			{ action: "grep", resource: "*", effect: "allow" },
+			{ action: "shell", resource: "*", effect: "ask" },
+		]);
+	});
+
+	it("gates the shared edit action when either tool asks", () => {
+		expect(
+			opencodePermissions({
+				read_file: "deny",
+				glob: "deny",
+				grep: "deny",
+				write_file: "deny",
+				edit_file: "ask",
+				bash: "deny",
+			}),
+		).toEqual([
+			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "edit", resource: "*", effect: "ask" },
+		]);
+	});
+
+	it("drops the shared edit action when its tools disagree without an ask", () => {
 		expect(
 			opencodePermissions({
 				read_file: "allow",
@@ -61,21 +118,39 @@ describe("opencodePermissions", () => {
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
 			{ action: "read", resource: "*", effect: "allow" },
-			{ action: "edit", resource: "*", effect: "allow" },
 		]);
 	});
 
-	it("stays a total deny when nothing is allowed", () => {
+	it("stays a total deny when everything is denied", () => {
 		expect(
 			opencodePermissions({
-				read_file: "ask",
+				read_file: "deny",
 				glob: "deny",
 				grep: "deny",
-				write_file: "ask",
-				edit_file: "ask",
+				write_file: "deny",
+				edit_file: "deny",
 				bash: "deny",
 			}),
 		).toEqual([{ action: "*", resource: "*", effect: "deny" }]);
+	});
+
+	it("gates an empty rule list instead of allowing it", () => {
+		// resolveAction falls back to the tool default for an empty list, so an
+		// empty bash list must gate, not vacuously satisfy "every entry allows".
+		expect(
+			opencodePermissions({
+				read_file: "allow",
+				glob: "deny",
+				grep: "deny",
+				write_file: "deny",
+				edit_file: "deny",
+				bash: [],
+			}),
+		).toEqual([
+			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "read", resource: "*", effect: "allow" },
+			{ action: "shell", resource: "*", effect: "ask" },
+		]);
 	});
 });
 

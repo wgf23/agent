@@ -52,21 +52,52 @@ export interface OpencodePermissionRule {
 	effect: "allow" | "deny" | "ask";
 }
 
+type Effect = OpencodePermissionRule["effect"];
+
 // opencode's default policy is allow-everything, so the ruleset starts from a
-// total deny and only opens the tools this rob resolved to "allow". An "ask"
-// tool has no approval channel in v1, so it stays denied and unavailable.
+// total deny and only opens or gates the tools this rob resolved. A plain allow
+// is safe only when the tool's rules cannot match any subject differently.
+function toolEffect(rules: PermissionRules, tool: string): Effect {
+	const rule = rules[tool];
+	if (rule === undefined) return resolveAction(rules, tool, "*");
+	if (typeof rule === "string") return rule;
+	if (
+		rule.length > 0 &&
+		rule.every((entry) => entry.action === "allow" && entry.pattern === "*")
+	) {
+		return "allow";
+	}
+	// A pattern-specific, deny, or ask entry could resolve a subject to
+	// something other than allow, so the whole action is gated instead.
+	return resolveAction(rules, tool, "*") === "deny" ? "deny" : "ask";
+}
+
+// write_file and edit_file share opencode's "edit" action, so the action is only
+// as open as its most restricted tool: all allows stay allow, any ask gates it,
+// and a mix with a deny but no ask leaves the action out.
+function mergeEffects(effects: readonly Effect[]): Effect | null {
+	if (effects.every((effect) => effect === "allow")) return "allow";
+	if (effects.includes("ask")) return "ask";
+	return null;
+}
+
 export function opencodePermissions(
 	rules: PermissionRules,
 ): OpencodePermissionRule[] {
 	const result: OpencodePermissionRule[] = [
 		{ action: "*", resource: "*", effect: "deny" },
 	];
-	const allowed = new Set<string>();
+	// Later rules win, so the allows and asks are appended onto the base deny.
+	const byAction = new Map<string, Effect[]>();
 	for (const [tool, action] of TOOL_PERMISSION_ACTIONS) {
-		if (allowed.has(action)) continue;
-		if (resolveAction(rules, tool, "*") === "allow") {
-			result.push({ action, resource: "*", effect: "allow" });
-			allowed.add(action);
+		const effects = byAction.get(action) ?? [];
+		effects.push(toolEffect(rules, tool));
+		byAction.set(action, effects);
+	}
+	for (const [action, effects] of byAction) {
+		const effect = mergeEffects(effects);
+		if (effect !== null) {
+			result.push({ action, resource: "*", effect });
 		}
 	}
 	return result;
