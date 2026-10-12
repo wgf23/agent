@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import type { UsageTotals } from "../agent/agent.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
@@ -120,6 +122,11 @@ export interface OpencodeBackendOptions {
 	model?: string;
 	rules: PermissionRules;
 	drain: () => Inbound[];
+	// Isolates the child's opencode data and state from the user's own opencode.
+	dataDir?: string;
+	// Env the child needs beyond process.env, such as the provider API key
+	// stored by "my-agent setup". Never allowed to override OPENCODE_*.
+	extraEnv?: Record<string, string>;
 	spawn?: OpencodeSpawn;
 	fetch?: OpencodeFetch;
 	now?: () => number;
@@ -151,6 +158,11 @@ export function createOpencodeBackend(
 
 	const password = randomPassword();
 	const agentID = `myagent-${options.rob}`;
+	// Each rob gets its own XDG tree so its sessions stay out of the user's
+	// session list and never contend with the user's server for the SQLite DB.
+	const dataDir =
+		options.dataDir ??
+		path.join(os.homedir(), ".config", "my-agent", "opencode", options.rob);
 	const modelRef =
 		options.provider !== undefined && options.model !== undefined
 			? { providerID: options.provider, id: options.model }
@@ -217,6 +229,9 @@ export function createOpencodeBackend(
 				cwd: workspaceRoot,
 				env: {
 					...process.env,
+					...options.extraEnv,
+					XDG_DATA_HOME: dataDir,
+					XDG_STATE_HOME: path.join(dataDir, "state"),
 					OPENCODE_PASSWORD: password,
 					OPENCODE_CONFIG_CONTENT: configContent,
 				},

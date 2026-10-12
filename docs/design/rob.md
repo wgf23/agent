@@ -221,7 +221,7 @@ RobBackend
 
 ### 已验证：opencode（2.0.24）
 
-后端为每个 rob 起一个私有的 `opencode serve --port 0 --hostname 127.0.0.1` 进程，env 传 `OPENCODE_PASSWORD`（随机）与 `OPENCODE_CONFIG_CONTENT`（注入一个 primary agent，id 为 `myagent-<robname>`，`system` 为 rob 角色，`permissions` 为翻译后的规则集）。进程在 stdout 打印 `server listening on http://127.0.0.1:<port>` 后，轮询 `GET /api/info` 到 200 视为就绪。所有请求用 HTTP basic（用户名 `opencode`）。首个 run 才启动，之后复用同一进程与同一会话；会话 404 时重建。`dispose` 发 SIGTERM 并关闭 SSE。
+后端为每个 rob 起一个私有的 `opencode serve --port 0 --hostname 127.0.0.1` 进程，env 传 `OPENCODE_PASSWORD`（随机）与 `OPENCODE_CONFIG_CONTENT`（注入一个 primary agent，id 为 `myagent-<robname>`，`system` 为 rob 角色，`permissions` 为翻译后的规则集）。子进程用 `XDG_DATA_HOME`/`XDG_STATE_HOME` 指向 `~/.config/my-agent/opencode/<rob>/`，数据与状态和用户自己的 opencode 隔离，rob 会话不会出现在用户的会话列表里，也不与用户的 serve 争用同一个 SQLite 库；`XDG_CACHE_HOME` 保持继承。解析出的 provider key 以 `apiKeyEnv` 指定的环境变量名转发给子进程，且不能覆盖 `OPENCODE_PASSWORD` 或 `OPENCODE_CONFIG_CONTENT`，因此用 `my-agent setup` 存下的 key 无需导出即可认证。进程在 stdout 打印 `server listening on http://127.0.0.1:<port>` 后，轮询 `GET /api/info` 到 200 视为就绪。所有请求用 HTTP basic（用户名 `opencode`）。首个 run 才启动，之后复用同一进程与同一会话；会话 404 时重建。`dispose` 发 SIGTERM 并关闭 SSE。
 
 回合中途插话用 `POST /api/session/{id}/prompt`，body `{ "text": "...", "delivery": "steer" }`。真实验证：`sleep 8` 任务进行中收到 steer，最终回答变成 steer 文本（`OC_STEERED`）。abort 时 `POST /api/session/{id}/interrupt`。
 

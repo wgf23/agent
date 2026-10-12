@@ -40,6 +40,7 @@ export interface TeamOptions {
 	workspaceRoot: string;
 	authorizerFactory: AuthorizerFactory;
 	permissions?: PermissionRules;
+	providerEnv?: Record<string, string>;
 }
 
 export class Team implements TeamPort {
@@ -66,6 +67,7 @@ export class Team implements TeamPort {
 					authorizerFactory: options.authorizerFactory,
 					team: this,
 					backend: config.backend,
+					providerEnv: options.providerEnv,
 				}),
 			);
 		}

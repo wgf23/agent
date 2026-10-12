@@ -69,6 +69,7 @@ try {
 				providerFactory: () => provider,
 				workspaceRoot: workspace,
 				permissions,
+				providerEnv: { [settings.apiKeyEnv]: apiKey },
 				authorizerFactory: (rob) =>
 					createAuthorizer({
 						workspaceRoot: workspace,

@@ -96,6 +96,7 @@ export async function runTeamCommand(
 		providerFactory: options.providerFactory ?? (() => provider),
 		workspaceRoot,
 		permissions,
+		providerEnv: { [settings.apiKeyEnv]: apiKey },
 		authorizerFactory: (rob) =>
 			createAuthorizer({
 				workspaceRoot,

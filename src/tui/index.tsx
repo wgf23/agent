@@ -94,6 +94,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			providerFactory: () => provider,
 			workspaceRoot: options.workspaceRoot,
 			permissions,
+			providerEnv: { [settings.apiKeyEnv]: apiKey },
 			authorizerFactory: (rob) =>
 				createAuthorizer({
 					workspaceRoot: options.workspaceRoot,

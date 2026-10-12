@@ -405,6 +405,45 @@ describe("opencode backend", () => {
 		backend.dispose?.();
 	});
 
+	it("isolates the child under an injected data dir", async () => {
+		const dataDir = "/tmp/my-agent-opencode-isolated";
+		const { backend, probes } = createHarness({ dataDir });
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		expect(probes.spawned[0].env.XDG_DATA_HOME).toBe(dataDir);
+		expect(probes.spawned[0].env.XDG_STATE_HOME).toBe(`${dataDir}/state`);
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("merges extraEnv but keeps OPENCODE_PASSWORD and config authoritative", async () => {
+		const { backend, probes } = createHarness({
+			rules: { read_file: "allow" },
+			extraEnv: {
+				DEEPSEEK_API_KEY: "sk-forwarded",
+				OPENCODE_PASSWORD: "collided-password",
+				OPENCODE_CONFIG_CONTENT: "collided-config",
+			},
+		});
+		const running = backend.run(turnOptions().options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		const env = probes.spawned[0].env;
+		expect(env.DEEPSEEK_API_KEY).toBe("sk-forwarded");
+		expect(env.OPENCODE_PASSWORD).toMatch(/^[0-9a-f]{48}$/);
+		const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}");
+		expect(Object.keys(config.agents)).toEqual(["myagent-reviewer"]);
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
 	it("sends a model ref only when provider and model are both present", async () => {
 		const withModel = createHarness({
 			provider: "deepseek",

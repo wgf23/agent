@@ -42,6 +42,7 @@ export interface RobOptions {
 	authorizerFactory: AuthorizerFactory;
 	team: TeamPort;
 	backend?: RobBackendConfig;
+	providerEnv?: Record<string, string>;
 }
 
 export class Rob {
@@ -88,6 +89,7 @@ export class Rob {
 							model: options.backend.model,
 							rules: options.rules,
 							drain: () => this.inbox.drain(),
+							extraEnv: options.providerEnv,
 						})
 					: createCliBackend({
 							rob: options.name,
