@@ -5,7 +5,10 @@ import { Command } from "commander";
 import { DEFAULT_PORT } from "../shared/protocol.js";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
-import { runSessionsListCommand } from "./cli/sessions.js";
+import {
+	runSessionsForkCommand,
+	runSessionsListCommand,
+} from "./cli/sessions.js";
 import { runSetupCommand } from "./cli/setup.js";
 import { runSkillAdd, runSkillList, runSkillRemove } from "./cli/skill.js";
 import { runTeamCommand } from "./cli/team.js";
@@ -40,6 +43,10 @@ interface ServeOptions {
 	maxSteps?: string;
 }
 
+interface ForkOptions {
+	at?: number;
+}
+
 function parseMaxSteps(value: string | undefined): number | undefined {
 	return value === undefined ? undefined : Number.parseInt(value, 10);
 }
@@ -54,6 +61,14 @@ function parsePort(value: string | undefined): number | undefined {
 
 function parseWaitMs(value: string | undefined): number | undefined {
 	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function parseInteger(value: string): number {
+	const parsed = Number.parseInt(value, 10);
+	if (Number.isNaN(parsed)) {
+		throw new Error(`Expected an integer, got: ${value}`);
+	}
+	return parsed;
 }
 
 function collect(value: string, previous: string[]): string[] {
@@ -113,13 +128,27 @@ program
 		await run(prompt, options);
 	});
 
-program
+const sessions = program
 	.command("sessions")
-	.description("Inspect saved sessions")
+	.description("Inspect saved sessions");
+
+sessions
 	.command("list")
 	.description("List saved sessions for the current workspace")
 	.action(async () => {
 		process.exitCode = await runSessionsListCommand();
+	});
+
+sessions
+	.command("fork")
+	.description("Fork a saved session into a new one")
+	.argument("<id>", "session id to fork")
+	.option("--at <n>", "keep only the first n messages", parseInteger)
+	.action(async (id: string, options: ForkOptions) => {
+		process.exitCode = await runSessionsForkCommand({
+			id,
+			at: options.at,
+		});
 	});
 
 program

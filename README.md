@@ -33,6 +33,7 @@ my-agent            # interactive TUI
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
+- `my-agent sessions fork <id>` copies a saved session into a new one and prints the new id. `--at <n>` keeps only the first `n` messages of the fork.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
 - `my-agent setup` stores an API key and writes the provider, model, and endpoint to the global config file.
