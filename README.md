@@ -36,6 +36,7 @@ my-agent            # interactive TUI
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
 - `my-agent setup` stores an API key and writes the provider, model, and endpoint to the global config file.
+- `my-agent init` drafts an `AGENTS.md` for the current workspace from a scan of `package.json`, `README.md`, and the top-level files, then one model call. It writes `<workspace>/AGENTS.md` and prints the path. If the file already exists it refuses unless you pass `--force`.
 
 ## TUI
 
@@ -209,7 +210,7 @@ Servers run as your user with the same environment and are not sandboxed by the 
 
 ## AGENTS.md
 
-If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only.
+If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only. `my-agent init` drafts one for you from a scan of the workspace; it refuses to overwrite an existing file unless you pass `--force`.
 
 ## Skills
 

@@ -16,6 +16,7 @@
 - Session persistence. The TUI and headless runs save the transcript after every turn under `~/.local/share/my-agent/sessions/<project>/`, and `--continue` (newest) or `--session <id>` resumes one. `my-agent sessions list` prints them and `/clear` ends the current session to start a new one.
 - Context compaction. `/compact` summarizes the older messages into a `[compacted summary]` and keeps the recent ones; automatic compaction runs before a turn when the context estimate exceeds `compaction.thresholdTokens` (default 100000) with `compaction.auto` on. The summary is a persisted `user` message, so a resumed session keeps it, and the TUI shows a `compacted summary (N chars)` line instead of the raw text.
 - `@file` mentions. Typing `@` completes workspace files with an anchored accept that replaces only the token, and sending a message expands each resolvable `@path` into a bounded `Referenced files` block so the model does not need a separate read.
+- `my-agent init`. Drafts an `AGENTS.md` for the current workspace from a scan of `package.json`, `README.md`, and the top-level file listing, then one model call whose `text_delta` events are concatenated and written to `<workspace>/AGENTS.md`. It prints the path on success, refuses to overwrite an existing file unless `--force` is passed, and reports the existing missing-key message without calling the model when no API key is configured.
 
 ### Changed
 
