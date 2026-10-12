@@ -33,6 +33,32 @@ afterEach(async () => {
 	delete process.env.FAKE_PI_STEER_FILE;
 });
 
+describe("createCliBackend missing command", () => {
+	it("reports an actionable error instead of a raw spawn ENOENT", async () => {
+		const events: AgentEvent[] = [];
+		const backend = createCliBackend({
+			rob: "r",
+			role: "x",
+			command: "my-agent-no-such-cli",
+			provider: "p",
+			model: "m",
+			sessionDir: path.join(workspace, "sess"),
+		});
+		await backend.run({
+			history: [],
+			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
+			workspaceRoot: workspace,
+			rules: {},
+			signal: new AbortController().signal,
+			onEvent: (event) => events.push(event),
+		});
+		const error = events.find((event) => event.type === "error");
+		expect(error?.message).toMatch(/my-agent-no-such-cli/);
+		expect(error?.message).toMatch(/PATH/);
+		expect(error?.message).not.toMatch(/ENOENT/);
+	});
+});
+
 describe("piToolAllowlist", () => {
 	it("maps an allow for every mapped tool in pi's own order", () => {
 		expect(

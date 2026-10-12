@@ -137,4 +137,28 @@ describe("CompositeHub.createBot", () => {
 		).rejects.toThrow();
 		await hub.dispose();
 	});
+
+	it("rejects a cli backend whose command is not on PATH", async () => {
+		const hub = createHub();
+		const emptyDir = mkdtempSync(path.join(tmpdir(), "my-agent-empty-path-"));
+		const previous = process.env.PATH;
+		process.env.PATH = emptyDir;
+		try {
+			await expect(
+				hub.createBot({
+					name: "pibot",
+					role: "x",
+					backend: {
+						kind: "cli",
+						command: "pi",
+						provider: "deepseek",
+						model: "deepseek-chat",
+					},
+				}),
+			).rejects.toThrow(/PATH/);
+		} finally {
+			process.env.PATH = previous;
+		}
+		await hub.dispose();
+	});
 });
