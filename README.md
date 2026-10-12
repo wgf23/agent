@@ -126,6 +126,41 @@ Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 
+## Sandbox
+
+`bash` can run inside an OS sandbox. The resolved settings live in the same two files as the rest of the config:
+
+```json
+{
+  "sandbox": {
+    "mode": "auto",
+    "network": false,
+    "writablePaths": ["/some/extra/dir"]
+  }
+}
+```
+
+- `mode` is `"auto"` (default), `"require"`, or `"off"`. `auto` uses the best backend and warns on stderr and in the tool output when none exists. `require` refuses to run the command when no backend exists and tells you to install bubblewrap or switch mode. `off` runs the command with no sandbox at all.
+- `network` defaults to `false`; the sandbox denies TCP (and, under bubblewrap, the whole network namespace).
+- `writablePaths` defaults to `[]`. The workspace root and the system temp directory are always writable; add other absolute paths here.
+
+The project file overrides the global file field by field, and both override the built-in defaults. The global file accepts a `sandbox` block.
+
+Backend priority:
+
+1. **bubblewrap** (`bwrap`) when the binary is on `PATH`. It read-only binds `/`, binds the workspace root and each writable path over it, mounts a fresh `/tmp`, `/dev`, and `/proc`, drops the network namespace unless `network` is true, and runs `/bin/sh -c <command>` with `--chdir` at the workspace root.
+2. **Landlock** (Linux 5.13+) when `python3` is on `PATH` and its Landlock ABI probe succeeds. A helper script installs a ruleset that allows read and exec everywhere, write only in the writable roots, and denies TCP unless `network` is true. The helper is written once per process to `<tmp>/my-agent-sandbox-<uid>/landlock_helper.py` (directory `0700`, file `0600`).
+3. **none** when neither is available. `auto` runs unsandboxed with a warning; `require` refuses.
+
+The backend is detected once per process.
+
+### Sandbox limits
+
+- Landlock mediates file access and TCP only. UDP and every other protocol are not covered; bubblewrap covers the whole network namespace.
+- Only the `bash` tool is sandboxed. `read_file`, `write_file`, and `edit_file` are not.
+- `opencode` and `pi` rob backends run their own agent and are not sandboxed by this layer.
+- macOS and Windows fall back to no sandbox until a seatbelt backend exists.
+
 ## AGENTS.md
 
 If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only.
@@ -184,7 +219,7 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 
 ## Known limits
 
-- `bash` is not sandboxed. It runs with your user's permissions; that is why it asks first.
+- `bash` is sandboxed on Linux when a backend is available (see Sandbox). Without bubblewrap or a Landlock-capable `python3`, and on macOS and Windows, it falls back to no sandbox and warns; that is why it asks first.
 - `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
 - Context compaction summarizes the older messages with one extra model call when the estimate exceeds the threshold. Reasoning blocks are not part of the estimate because the provider drops them from outbound requests.
 - Sessions are saved so `--continue` resumes them. The compaction summary is a `user` message tagged `[compacted summary]`; it persists, but the model must keep the facts it needs in that summary.

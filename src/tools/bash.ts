@@ -1,5 +1,15 @@
 import { spawn } from "node:child_process";
+import os from "node:os";
 import { z } from "zod";
+import { resolveConfig } from "../config/resolve.js";
+import { detectBackends, systemProbes } from "../sandbox/detect.js";
+import {
+	type BashPlanFn,
+	DEFAULT_SANDBOX,
+	planSandboxedBash,
+	type SandboxPlan,
+	type SandboxSettings,
+} from "../sandbox/index.js";
 import { truncateOutput } from "../util/truncate.js";
 import type { Tool, ToolContext } from "./types.js";
 
@@ -26,6 +36,24 @@ interface CommandOutcome {
 	aborted: boolean;
 }
 
+// The tool reads the project and global config itself because the agent loop
+// does not thread settings into a tool context, matching how the run already
+// resolved them once. A bad config falls back to the default so bash still runs.
+const systemBashPlan: BashPlanFn = async ({ command, workspaceRoot }) => {
+	const settings = loadSandboxSettings(workspaceRoot);
+	const backend = await detectBackends(systemProbes);
+	return planSandboxedBash({ command, workspaceRoot, settings, plan: backend });
+};
+
+function loadSandboxSettings(workspaceRoot: string): SandboxSettings {
+	const resolved = resolveConfig({
+		workspaceRoot,
+		env: process.env,
+		homeDir: os.homedir(),
+	});
+	return resolved.ok ? resolved.config.sandbox : DEFAULT_SANDBOX;
+}
+
 export const bashTool: Tool<typeof schema> = {
 	name: "bash",
 	description:
@@ -37,8 +65,19 @@ export const bashTool: Tool<typeof schema> = {
 			return { ok: false, error: "bash: command aborted before it started" };
 		}
 
-		const outcome = await runCommand(args.command, args.timeout_ms, ctx);
-		const text = truncateOutput(outcome.output).text;
+		const plan = await (ctx.planBash ?? systemBashPlan)({
+			command: args.command,
+			workspaceRoot: ctx.workspaceRoot,
+		});
+		if (!plan.run) {
+			return { ok: false, error: plan.reason };
+		}
+
+		const outcome = await runCommand(plan, args.timeout_ms, ctx);
+		let text = truncateOutput(outcome.output).text;
+		if (plan.warning !== undefined) {
+			text = `warning: ${plan.warning}\n${text}`;
+		}
 
 		if (outcome.aborted) {
 			return { ok: false, error: `bash: command aborted\n${text}` };
@@ -60,16 +99,16 @@ export const bashTool: Tool<typeof schema> = {
 };
 
 function runCommand(
-	command: string,
+	plan: Extract<SandboxPlan, { run: true }>,
 	timeoutMs: number,
 	ctx: ToolContext,
 ): Promise<CommandOutcome> {
 	return new Promise((resolve) => {
 		// A shell wrapper means the real command is a grandchild. `detached` puts the
 		// shell and its descendants in one process group so the timeout can kill them all.
-		const child = spawn(command, {
-			shell: true,
+		const child = spawn(plan.argv[0], plan.argv.slice(1), {
 			cwd: ctx.workspaceRoot,
+			env: { ...process.env, ...plan.env },
 			detached: process.platform !== "win32",
 		});
 		let output = "";

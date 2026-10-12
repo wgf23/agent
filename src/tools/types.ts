@@ -1,8 +1,11 @@
 import type { z } from "zod";
+import type { BashPlanFn } from "../sandbox/index.js";
 
 export interface ToolContext {
 	workspaceRoot: string;
 	signal?: AbortSignal;
+	// Tests inject a plan so the bash tool never probes the host or reads config.
+	planBash?: BashPlanFn;
 }
 
 export type ToolResult =
