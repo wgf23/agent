@@ -1,6 +1,7 @@
 import { cleanup, render } from "ink-testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider, StreamEvent } from "../../src/providers/types.js";
 import { App } from "../../src/tui/App.js";
 import { createApprovalBridge } from "../../src/tui/approval.js";
@@ -29,6 +30,7 @@ function app(provider: Provider) {
 			provider={provider}
 			authorize={readOnlyAuthorize}
 			approval={createApprovalBridge()}
+			allowAll={createAllowAll()}
 			model="deepseek-flash"
 			workspaceRoot="/ws"
 		/>

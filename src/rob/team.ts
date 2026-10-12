@@ -179,6 +179,10 @@ export class Team implements TeamPort {
 		this.emit({ kind: "rob_status", rob, status });
 	}
 
+	emitNotice(rob: RobName, text: string): void {
+		this.emit({ kind: "notice", rob, text });
+	}
+
 	private emit(event: TeamEvent): void {
 		for (const listener of [...this.listeners]) listener(event);
 	}

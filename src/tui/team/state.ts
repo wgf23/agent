@@ -234,6 +234,10 @@ function applyTeamEvent(state: TeamState, event: TeamEvent): TeamState {
 				...rob,
 				robStatus: event.status,
 			}));
+		case "notice":
+			return updateRob(state, event.rob, (rob) =>
+				appendMessage(rob, { role: "system", text: event.text }),
+			);
 		case "dm":
 			return { ...state, dms: [...state.dms, { ...event.entry }] };
 		case "subagent":

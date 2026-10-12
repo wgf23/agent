@@ -23,6 +23,9 @@ export function PermissionDialog({
 			onChoice("deny");
 			return;
 		}
+		// Ctrl chords drive the app shell (ctrl+a toggles allow-all); the dialog
+		// answers only bare y/a/n.
+		if (key.ctrl || key.meta) return;
 		const choice = input.toLowerCase();
 		if (choice === "n") {
 			onChoice("deny");

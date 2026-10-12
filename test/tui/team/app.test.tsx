@@ -1,5 +1,6 @@
 import { cleanup, render } from "ink-testing-library";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createAllowAll } from "../../../src/permissions/allow-all.js";
 import { createAuthorizer } from "../../../src/permissions/authorizer.js";
 import type { StreamEvent } from "../../../src/providers/types.js";
 import { Team } from "../../../src/rob/team.js";
@@ -57,7 +58,14 @@ function makeTeam(providers: Record<string, MockProvider>): Team {
 }
 
 function renderTeam(team: TeamController) {
-	return render(<TeamApp team={team} robs={robs} model="deepseek-flash" />);
+	return render(
+		<TeamApp
+			team={team}
+			robs={robs}
+			model="deepseek-flash"
+			allowAll={createAllowAll()}
+		/>,
+	);
 }
 
 describe("TeamApp", () => {

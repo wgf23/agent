@@ -17,12 +17,17 @@ export interface ApprovalBridge {
 		listener: (pending: PendingPermission | null) => void,
 	) => () => void;
 	respond: (choice: ApprovalChoice) => void;
+	// A transcript line for an auto-approved call, kept separate from the pending
+	// dialog so allow-all never surfaces one.
+	notice: (line: string) => void;
+	subscribeNotice: (listener: (line: string) => void) => () => void;
 }
 
 export function createApprovalBridge(): ApprovalBridge {
 	let pending: PendingPermission | null = null;
 	let resolve: ((decision: ApprovalDecision) => void) | null = null;
 	const listeners = new Set<(pending: PendingPermission | null) => void>();
+	const noticeListeners = new Set<(line: string) => void>();
 
 	const publish = (): void => {
 		for (const listener of listeners) listener(pending);
@@ -54,6 +59,15 @@ export function createApprovalBridge(): ApprovalBridge {
 			resolve = null;
 			publish();
 			res(choice);
+		},
+		notice(line) {
+			for (const listener of noticeListeners) listener(line);
+		},
+		subscribeNotice(listener) {
+			noticeListeners.add(listener);
+			return () => {
+				noticeListeners.delete(listener);
+			};
 		},
 	};
 }

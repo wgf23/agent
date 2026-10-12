@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { cleanup, render } from "ink-testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import { createAuthorizer } from "../../src/permissions/authorizer.js";
 import { defaultRules } from "../../src/permissions/rules.js";
 import type { StreamEvent } from "../../src/providers/types.js";
@@ -78,6 +79,7 @@ function setup(turns: StreamEvent[][]) {
 			provider={provider}
 			authorize={authorize}
 			approval={bridge}
+			allowAll={createAllowAll()}
 			model="deepseek-flash"
 			workspaceRoot={workspace}
 		/>,

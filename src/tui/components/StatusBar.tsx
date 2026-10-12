@@ -31,6 +31,7 @@ export interface StatusBarProps {
 	runStartedAt: number | null;
 	thinking?: ThinkingSetting;
 	reasoningEffort?: ReasoningEffort;
+	allowAll?: boolean;
 }
 
 export function shortenCwd(cwd: string, home: string): string {
@@ -48,6 +49,7 @@ export function StatusBar({
 	runStartedAt,
 	thinking,
 	reasoningEffort,
+	allowAll,
 }: StatusBarProps): ReactElement {
 	const streaming = status === "streaming";
 	const awaiting = status === "awaiting_permission";
@@ -62,6 +64,7 @@ export function StatusBar({
 	return (
 		<StatusRow>
 			<Text color="cyan">{model}</Text>
+			{allowAll === true ? <Text color="green">{"  allow-all"}</Text> : null}
 			{thinking !== undefined ? (
 				<Text dimColor>{`  thinking ${thinking}`}</Text>
 			) : null}

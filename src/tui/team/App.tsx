@@ -1,6 +1,10 @@
 import { Box, useApp, useInput } from "ink";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useReducer } from "react";
+import {
+	type AllowAll,
+	parseAllowAllArg,
+} from "../../permissions/allow-all.js";
 import type { ApprovalChoice } from "../../permissions/authorizer.js";
 import type { TeamListener } from "../../rob/events.js";
 import { MessageList } from "../components/MessageList.js";
@@ -8,6 +12,7 @@ import { PermissionDialog } from "../components/PermissionDialog.js";
 import { PromptInput } from "../components/PromptInput.js";
 import type { TuiStatus } from "../state.js";
 import { isMenuOpen, teamSuggestions } from "../suggestions.js";
+import { useAllowAllState } from "../use-allow-all.js";
 import { DmView } from "./components/DmView.js";
 import { RobList } from "./components/RobList.js";
 import { SubagentView } from "./components/SubagentView.js";
@@ -33,6 +38,7 @@ export interface TeamAppProps {
 	team: TeamController;
 	robs: readonly { name: string }[];
 	model: string;
+	allowAll: AllowAll;
 	onExit?: () => void;
 }
 
@@ -40,6 +46,7 @@ export function TeamApp({
 	team,
 	robs,
 	model,
+	allowAll,
 	onExit,
 }: TeamAppProps): ReactElement {
 	const app = useApp();
@@ -49,6 +56,7 @@ export function TeamApp({
 		{ robs, model },
 		initialTeamState,
 	);
+	const allowAllOn = useAllowAllState(allowAll);
 
 	useEffect(
 		() => team.subscribe((event) => dispatch({ type: "team_event", event })),
@@ -62,6 +70,38 @@ export function TeamApp({
 		};
 	}, [team]);
 
+	const setAllowAll = useCallback(
+		(arg: string) => {
+			const next = parseAllowAllArg(allowAll, arg);
+			const rob = selectedRob(state);
+			if (next === null) {
+				if (rob !== undefined) {
+					dispatch({
+						type: "system",
+						rob: rob.name,
+						text: "allow-all: use /allow-all, /allow-all on, or /allow-all off",
+					});
+				}
+				return;
+			}
+			allowAll.set(next);
+			if (rob !== undefined) {
+				dispatch({
+					type: "system",
+					rob: rob.name,
+					text: `allow-all ${next ? "on" : "off"}`,
+				});
+			}
+			// One switch covers every rob, so answer everything already queued.
+			if (next) {
+				for (const approval of state.approvals) {
+					team.resolveApproval(approval.id, "allow_once");
+				}
+			}
+		},
+		[allowAll, state, team],
+	);
+
 	useInput((input, key) => {
 		const dialogOpen = state.approvals.length > 0;
 		const robNames = state.robs.map((rob) => rob.name);
@@ -69,6 +109,10 @@ export function TeamApp({
 			state.menu,
 			teamSuggestions(state.input, robNames),
 		);
+		if (key.ctrl && input === "a") {
+			setAllowAll("");
+			return;
+		}
 		if (key.ctrl && input === "c") {
 			if (state.view !== "transcript" || dialogOpen) exit();
 			return;
@@ -105,6 +149,7 @@ export function TeamApp({
 							dispatch({ type: "system", rob: rob.name, text: line });
 						}
 					},
+					allowAll: setAllowAll,
 				});
 				return;
 			}
@@ -132,7 +177,7 @@ export function TeamApp({
 			if (interjection) team.interject(rob.name, target.text);
 			else team.dispatch(rob.name, target.text);
 		},
-		[team, state, exit],
+		[team, state, exit, setAllowAll],
 	);
 
 	const selected = selectedRob(state);
@@ -147,7 +192,7 @@ export function TeamApp({
 
 	return (
 		<Box flexDirection="column">
-			<TeamStatusBar state={state} />
+			<TeamStatusBar state={state} allowAll={allowAllOn} />
 			<Box flexDirection="row">
 				<RobList robs={state.robs} selected={state.selected} />
 				<Box flexDirection="column" flexGrow={1}>
@@ -212,6 +257,7 @@ interface CommandContext {
 	exit: () => void;
 	view: (view: TeamView) => void;
 	system: (line: string) => void;
+	allowAll: (arg: string) => void;
 }
 
 function runCommand(text: string, context: CommandContext): void {
@@ -226,9 +272,12 @@ function runCommand(text: string, context: CommandContext): void {
 		case "/sub":
 			context.view("subagents");
 			return;
+		case "/allow-all":
+			context.allowAll(text.slice(command.length).trim());
+			return;
 		case "/help":
 			context.system(
-				"Commands: /help, /dm, /sub, /quit. Keys: tab cycles robs, ctrl+d DMs, ctrl+s sub-agents, ctrl+o tools, ctrl+t reasoning.",
+				"Commands: /help, /allow-all, /dm, /sub, /quit. Keys: tab cycles robs, ctrl+a allow-all, ctrl+d DMs, ctrl+s sub-agents, ctrl+o tools, ctrl+t reasoning.",
 			);
 			return;
 		default:

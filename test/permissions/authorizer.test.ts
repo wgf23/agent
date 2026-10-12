@@ -1,7 +1,9 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import {
+	autoApprovedLine,
 	createAuthorizer,
 	headlessApproval,
 } from "../../src/permissions/authorizer.js";
@@ -219,6 +221,137 @@ describe("createAuthorizer", () => {
 		await authorize(writeCall, writeFileTool);
 
 		await expect(access(join(workspace, "my-agent.json"))).rejects.toThrow();
+	});
+
+	it("allows an ask without calling approval when the switch is on", async () => {
+		const approval = vi.fn(async () => "deny" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval,
+			yesAll: false,
+			allowAll: createAllowAll(true),
+		});
+
+		const decision = await authorize(writeCall, writeFileTool);
+
+		expect(decision).toEqual({ allowed: true });
+		expect(approval).not.toHaveBeenCalled();
+	});
+
+	it("reads the switch on every call so a flip takes effect at once", async () => {
+		const allowAll = createAllowAll(false);
+		const approval = vi.fn(async () => "allow_once" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval,
+			yesAll: false,
+			allowAll,
+		});
+
+		await authorize(writeCall, writeFileTool);
+		expect(approval).toHaveBeenCalledTimes(1);
+
+		allowAll.set(true);
+		const second = await authorize(writeCall, writeFileTool);
+
+		expect(second).toEqual({ allowed: true });
+		expect(approval).toHaveBeenCalledTimes(1);
+	});
+
+	it("still denies a deny rule when the switch is on", async () => {
+		const rules: PermissionRules = {
+			...defaultRules(),
+			write_file: [{ pattern: "docs/*", action: "deny" }],
+		};
+		const approval = vi.fn(async () => "allow_once" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules,
+			approval,
+			yesAll: false,
+			allowAll: createAllowAll(true),
+		});
+
+		const decision = await authorize(writeCall, writeFileTool);
+
+		expect(decision).toEqual({
+			allowed: false,
+			reason: "Denied by rule for write_file docs/x.md.",
+		});
+		expect(approval).not.toHaveBeenCalled();
+	});
+
+	it("approves a dangerous command and reports it instead of asking when the switch is on", async () => {
+		const autoApproved = vi.fn();
+		const approval = vi.fn(async () => "deny" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval,
+			yesAll: false,
+			allowAll: createAllowAll(true),
+			onAutoApproved: autoApproved,
+		});
+
+		const decision = await authorize(bashCall("rm -rf dist"), bashTool);
+
+		expect(decision).toEqual({ allowed: true });
+		expect(approval).not.toHaveBeenCalled();
+		expect(autoApproved).toHaveBeenCalledWith({
+			toolName: "bash",
+			subject: "rm -rf dist",
+			dangerous: true,
+			rule: null,
+		});
+		expect(
+			autoApprovedLine({
+				toolName: "bash",
+				subject: "rm -rf dist",
+				dangerous: true,
+				rule: null,
+			}),
+		).toBe("allow-all: auto-approved dangerous bash rm -rf dist");
+	});
+
+	it("never writes a project file when the switch approves", async () => {
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval: vi.fn(async () => "allow_once" as const),
+			yesAll: false,
+			allowAll: createAllowAll(true),
+		});
+
+		await authorize(writeCall, writeFileTool);
+
+		await expect(access(join(workspace, "my-agent.json"))).rejects.toThrow();
+	});
+
+	it("cannot be turned on by a tool call's arguments", async () => {
+		const allowAll = createAllowAll(false);
+		const approval = vi.fn(async () => "allow_once" as const);
+		const authorize = createAuthorizer({
+			workspaceRoot: workspace,
+			rules: defaultRules(),
+			approval,
+			yesAll: false,
+			allowAll,
+		});
+
+		const decision = await authorize(
+			{
+				id: "call_9",
+				name: "write_file",
+				args: { path: "docs/x.md", content: "x", allowAll: true },
+			},
+			writeFileTool,
+		);
+
+		expect(decision).toEqual({ allowed: true });
+		expect(approval).toHaveBeenCalledTimes(1);
+		expect(allowAll.get()).toBe(false);
 	});
 });
 

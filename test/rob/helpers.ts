@@ -42,6 +42,8 @@ export class FakeTeam implements TeamPort {
 	emitRobEvent(_rob: RobName, _event: AgentEvent): void {}
 
 	emitStatus(_rob: RobName, _status: RobStatus): void {}
+
+	emitNotice(_rob: RobName, _text: string): void {}
 }
 
 export async function waitFor(

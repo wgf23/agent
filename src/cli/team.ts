@@ -1,6 +1,8 @@
 import os from "node:os";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { createAllowAll } from "../permissions/allow-all.js";
 import {
+	autoApprovedLine,
 	createAuthorizer,
 	headlessApproval,
 } from "../permissions/authorizer.js";
@@ -86,6 +88,7 @@ export async function runTeamCommand(
 	});
 
 	const yesAll = options.yesAll ?? false;
+	const allowAll = createAllowAll(yesAll);
 	const approve = headlessApproval({
 		yesAll,
 		log: (line) => process.stderr.write(line),
@@ -103,6 +106,9 @@ export async function runTeamCommand(
 				rules: rob.rules,
 				approval: rob.approval,
 				yesAll,
+				allowAll,
+				onAutoApproved: (request) =>
+					process.stderr.write(`${autoApprovedLine(request)}\n`),
 			}),
 	});
 

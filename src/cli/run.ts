@@ -2,7 +2,9 @@ import os from "node:os";
 import { runAgent } from "../agent/agent.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { createAllowAll } from "../permissions/allow-all.js";
 import {
+	autoApprovedLine,
 	createAuthorizer,
 	headlessApproval,
 } from "../permissions/authorizer.js";
@@ -63,6 +65,9 @@ export async function runHeadless(
 			log: (line) => process.stderr.write(line),
 		}),
 		yesAll,
+		allowAll: createAllowAll(yesAll),
+		onAutoApproved: (request) =>
+			process.stderr.write(`${autoApprovedLine(request)}\n`),
 	});
 
 	const controller = new AbortController();

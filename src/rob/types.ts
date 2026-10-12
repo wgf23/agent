@@ -136,6 +136,7 @@ export interface TeamPort {
 	): Promise<ApprovalDecision>;
 	emitRobEvent(rob: RobName, event: AgentEvent): void;
 	emitStatus(rob: RobName, status: RobStatus): void;
+	emitNotice(rob: RobName, text: string): void;
 }
 
 export function duplicateRobName(

@@ -1,8 +1,9 @@
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
+import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
 import { friendlyProviderError } from "../providers/errors.js";
 import type {
 	Message,
@@ -17,11 +18,13 @@ import { PromptInput } from "./components/PromptInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { initialTuiState, tuiReducer } from "./state.js";
 import { COMMANDS, commandSuggestions } from "./suggestions.js";
+import { useAllowAllState } from "./use-allow-all.js";
 
 export interface AppProps {
 	provider: Provider;
 	authorize: Authorize;
 	approval: ApprovalBridge;
+	allowAll: AllowAll;
 	model: string;
 	workspaceRoot: string;
 	maxSteps?: number;
@@ -37,12 +40,14 @@ interface CommandContext {
 	exit: () => void;
 	clear: () => void;
 	system: (line: string) => void;
+	allowAll: (arg: string) => void;
 }
 
 export function App({
 	provider,
 	authorize,
 	approval,
+	allowAll,
 	model,
 	workspaceRoot,
 	maxSteps,
@@ -61,6 +66,7 @@ export function App({
 	);
 	const historyRef = useRef<Message[]>([]);
 	const controllerRef = useRef<AbortController | null>(null);
+	const allowAllOn = useAllowAllState(allowAll);
 
 	useEffect(() => {
 		return () => controllerRef.current?.abort();
@@ -71,6 +77,37 @@ export function App({
 			dispatch({ type: "permission", request });
 		});
 	}, [approval]);
+
+	useEffect(() => {
+		return approval.subscribeNotice((line) => {
+			dispatch({ type: "append_system", text: line });
+		});
+	}, [approval]);
+
+	const setAllowAll = useCallback(
+		(arg: string) => {
+			const next = parseAllowAllArg(allowAll, arg);
+			if (next === null) {
+				dispatch({
+					type: "append_system",
+					text: "allow-all: use /allow-all, /allow-all on, or /allow-all off",
+				});
+				return;
+			}
+			allowAll.set(next);
+			dispatch({
+				type: "append_system",
+				text: `allow-all ${next ? "on" : "off"}`,
+			});
+			// An open dialog was asked before the switch flipped; answer it once.
+			if (next) approval.respond("allow_once");
+		},
+		[allowAll, approval],
+	);
+
+	useInput((input, key) => {
+		if (key.ctrl && input === "a") setAllowAll("");
+	});
 
 	const send = useCallback(
 		async (text: string) => {
@@ -138,6 +175,7 @@ export function App({
 					exit,
 					clear,
 					system: (line) => dispatch({ type: "append_system", text: line }),
+					allowAll: setAllowAll,
 				});
 				dispatch({ type: "set_input", text: "" });
 				return;
@@ -145,7 +183,7 @@ export function App({
 			if (controllerRef.current !== null) return;
 			void send(text);
 		},
-		[model, exit, clear, send],
+		[model, exit, clear, send, setAllowAll],
 	);
 
 	const cancel = useCallback(() => {
@@ -203,6 +241,7 @@ export function App({
 				runStartedAt={state.runStartedAt}
 				thinking={thinking}
 				reasoningEffort={reasoningEffort}
+				allowAll={allowAllOn}
 			/>
 		</Box>
 	);
@@ -224,6 +263,9 @@ function runCommand(text: string, context: CommandContext): void {
 			return;
 		case "/model":
 			context.system(`Model: ${context.model}`);
+			return;
+		case "/allow-all":
+			context.allowAll(text.slice(command.length).trim());
 			return;
 		default:
 			context.system(`Unknown command: ${command}. Type /help.`);

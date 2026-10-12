@@ -1,5 +1,6 @@
 import type { Authorize } from "../agent/authorize.js";
 import { addPermissionRule } from "../config/project-file.js";
+import type { AllowAll } from "./allow-all.js";
 import { isDangerousCommand } from "./dangerous.js";
 import {
 	mergeRule,
@@ -29,6 +30,8 @@ export interface AuthorizerOptions {
 	rules: PermissionRules;
 	approval: Approval;
 	yesAll: boolean;
+	allowAll?: AllowAll;
+	onAutoApproved?: (request: ApprovalRequest) => void;
 }
 
 export function createAuthorizer(options: AuthorizerOptions): Authorize {
@@ -65,6 +68,11 @@ export function createAuthorizer(options: AuthorizerOptions): Authorize {
 
 		if (options.yesAll) {
 			await options.approval(request);
+			return { allowed: true };
+		}
+
+		if (options.allowAll?.get() === true) {
+			if (dangerous) options.onAutoApproved?.(request);
 			return { allowed: true };
 		}
 
@@ -116,6 +124,10 @@ export function headlessApproval(options: HeadlessApprovalOptions): Approval {
 		);
 		return "allow_once";
 	};
+}
+
+export function autoApprovedLine(request: ApprovalRequest): string {
+	return `allow-all: auto-approved dangerous ${request.toolName} ${request.subject}`;
 }
 
 function rulePattern(toolName: string, subject: string): string {

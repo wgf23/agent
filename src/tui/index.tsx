@@ -7,7 +7,11 @@ import {
 	verifyApiKey,
 } from "../cli/setup.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
-import { createAuthorizer } from "../permissions/authorizer.js";
+import { createAllowAll } from "../permissions/allow-all.js";
+import {
+	autoApprovedLine,
+	createAuthorizer,
+} from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import { Team } from "../rob/team.js";
@@ -88,6 +92,10 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	});
 
 	if (robs.length > 0) {
+		const allowAll = createAllowAll();
+		// Authorizers are built during Team construction, so the notice routes
+		// through a ref that points at the team once it exists.
+		const ref: { team?: Team } = {};
 		const team = new Team({
 			robs,
 			defaultModel: settings.model,
@@ -101,10 +109,19 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 					rules: rob.rules,
 					approval: rob.approval,
 					yesAll: false,
+					allowAll,
+					onAutoApproved: (request) =>
+						ref.team?.emitNotice(rob.name, autoApprovedLine(request)),
 				}),
 		});
+		ref.team = team;
 		const instance = render(
-			<TeamApp team={team} robs={robs} model={settings.model} />,
+			<TeamApp
+				team={team}
+				robs={robs}
+				model={settings.model}
+				allowAll={allowAll}
+			/>,
 		);
 		await instance.waitUntilExit();
 		return;
@@ -115,11 +132,14 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		...permissions,
 	};
 	const approval = createApprovalBridge();
+	const allowAll = createAllowAll();
 	const authorize = createAuthorizer({
 		workspaceRoot: options.workspaceRoot,
 		rules,
 		approval: approval.request,
 		yesAll: false,
+		allowAll,
+		onAutoApproved: (request) => approval.notice(autoApprovedLine(request)),
 	});
 
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
@@ -131,6 +151,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			provider={provider}
 			authorize={authorize}
 			approval={approval}
+			allowAll={allowAll}
 			model={settings.model}
 			workspaceRoot={options.workspaceRoot}
 			maxSteps={settings.maxSteps}

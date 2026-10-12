@@ -11,6 +11,7 @@ import {
 	vi,
 } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import {
 	createAuthorizer,
 	headlessApproval,
@@ -45,6 +46,7 @@ function app(provider: Provider, extra: Partial<AppProps> = {}) {
 			provider={provider}
 			authorize={readOnlyAuthorize}
 			approval={createApprovalBridge()}
+			allowAll={createAllowAll()}
 			model="deepseek-flash"
 			workspaceRoot="/ws"
 			{...extra}
