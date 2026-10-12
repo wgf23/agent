@@ -58,6 +58,62 @@ export const sandboxOptionsSchema = z.object({
 });
 export type SandboxOptions = z.infer<typeof sandboxOptionsSchema>;
 
+export const mcpServerSchema = z.object({
+	command: z.array(z.string().min(1)).min(1),
+	env: z.record(z.string(), z.string()).optional(),
+});
+export type McpServerConfig = z.infer<typeof mcpServerSchema>;
+export type McpServers = Record<string, McpServerConfig>;
+
+const MCP_SERVER_NAME = /^[A-Za-z0-9_-]+$/;
+
+// Accepts only the stdio shape. A remote config (url/transport/type) is a
+// friendly error rather than a schema rejection so the message names the limit.
+export function parseMcpServers(
+	value: unknown,
+	filePath: string,
+): { ok: true; servers: McpServers } | { ok: false; error: string } {
+	const invalid = (detail: string): { ok: false; error: string } => ({
+		ok: false,
+		error: `Invalid mcp in ${filePath}: ${detail}`,
+	});
+	if (value === undefined) return { ok: true, servers: {} };
+	if (!isRecord(value))
+		return invalid("expected an object with a servers map.");
+	if (value.servers === undefined) return { ok: true, servers: {} };
+	if (!isRecord(value.servers)) return invalid('"servers" must be an object.');
+	const servers: McpServers = {};
+	for (const [name, entry] of Object.entries(value.servers)) {
+		if (!MCP_SERVER_NAME.test(name)) {
+			return invalid(
+				`server name "${name}" is invalid. Use letters, digits, "_" and "-".`,
+			);
+		}
+		if (!isRecord(entry)) return invalid(`server "${name}" must be an object.`);
+		if ("url" in entry || "transport" in entry || "type" in entry) {
+			return invalid(
+				`only stdio command servers are supported for now (server "${name}").`,
+			);
+		}
+		const command = entry.command;
+		if (
+			!Array.isArray(command) ||
+			command.length === 0 ||
+			!command.every((part) => typeof part === "string" && part.length > 0)
+		) {
+			return invalid(
+				`server "${name}": "command" must be a non-empty array of strings.`,
+			);
+		}
+		const parsed = mcpServerSchema.safeParse(entry);
+		if (!parsed.success) {
+			return invalid(`server "${name}": ${z.prettifyError(parsed.error)}`);
+		}
+		servers[name] = parsed.data;
+	}
+	return { ok: true, servers };
+}
+
 export interface ProviderSettings {
 	preset: BuiltinPresetName;
 	model: string;
@@ -87,6 +143,7 @@ export interface ResolvedConfig {
 	robs: RobConfig[];
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
+	mcpServers: McpServers;
 }
 
 export type ResolveConfigResult =
@@ -218,6 +275,12 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		global.layer.compaction,
 	);
 	const sandbox = resolveSandbox(project.layer.sandbox, global.layer.sandbox);
+	// Project servers win over global servers of the same name; other names from
+	// both layers stay.
+	const mcpServers: McpServers = {
+		...(global.layer.mcp ?? {}),
+		...(project.layer.mcp ?? {}),
+	};
 
 	return {
 		ok: true,
@@ -249,6 +312,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			})),
 			compaction,
 			sandbox,
+			mcpServers,
 		},
 	};
 }
@@ -259,6 +323,7 @@ interface Layer {
 	robs?: RobConfig[];
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
+	mcp?: McpServers;
 }
 
 function loadLayer(
@@ -361,9 +426,23 @@ function loadLayer(
 		sandbox = parsed.data;
 	}
 
+	let mcp: McpServers | undefined;
+	if (raw.mcp !== undefined) {
+		const parsed = parseMcpServers(raw.mcp, filePath);
+		if (!parsed.ok) return parsed;
+		mcp = parsed.servers;
+	}
+
 	return {
 		ok: true,
-		layer: { provider: provider.data, permissions, robs, compaction, sandbox },
+		layer: {
+			provider: provider.data,
+			permissions,
+			robs,
+			compaction,
+			sandbox,
+			mcp,
+		},
 	};
 }
 

@@ -283,6 +283,89 @@ describe("resolveConfig sandbox", () => {
 	});
 });
 
+describe("resolveConfig mcp", () => {
+	it("defaults to no servers", async () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.mcpServers).toEqual({});
+	});
+
+	it("merges project servers over global servers by name", async () => {
+		await writeGlobal({
+			mcp: {
+				servers: {
+					memory: { command: ["global-memory"] },
+					files: { command: ["global-files"], env: { ROOT: "/global" } },
+				},
+			},
+		});
+		await writeProject({
+			mcp: {
+				servers: {
+					memory: {
+						command: ["project-memory", "--flag"],
+						env: { ROOT: "/w" },
+					},
+				},
+			},
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.mcpServers).toEqual({
+			memory: {
+				command: ["project-memory", "--flag"],
+				env: { ROOT: "/w" },
+			},
+			files: { command: ["global-files"], env: { ROOT: "/global" } },
+		});
+	});
+
+	it("rejects a bad server name with the literal error", async () => {
+		await writeProject({
+			mcp: { servers: { "bad name": { command: ["memory"] } } },
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe(
+			`Invalid mcp in ${path.join(workspaceRoot, "my-agent.json")}: server name "bad name" is invalid. Use letters, digits, "_" and "-".`,
+		);
+	});
+
+	it("rejects an empty command with the literal error", async () => {
+		await writeProject({ mcp: { servers: { memory: { command: [] } } } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe(
+			`Invalid mcp in ${path.join(workspaceRoot, "my-agent.json")}: server "memory": "command" must be a non-empty array of strings.`,
+		);
+	});
+
+	it("rejects an http server with the literal error", async () => {
+		await writeProject({
+			mcp: { servers: { memory: { url: "https://example.com/mcp" } } },
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe(
+			`Invalid mcp in ${path.join(workspaceRoot, "my-agent.json")}: only stdio command servers are supported for now (server "memory").`,
+		);
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({
