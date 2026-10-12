@@ -16,8 +16,13 @@ import { MessageList } from "./components/MessageList.js";
 import { PermissionDialog } from "./components/PermissionDialog.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { StatusBar } from "./components/StatusBar.js";
+import {
+	agentSuggestions,
+	expandFileMentions,
+	loadWorkspaceFiles,
+} from "./file-mentions.js";
 import { initialTuiState, tuiReducer } from "./state.js";
-import { COMMANDS, commandSuggestions } from "./suggestions.js";
+import { COMMANDS } from "./suggestions.js";
 import { useAllowAllState } from "./use-allow-all.js";
 
 export interface AppProps {
@@ -84,6 +89,16 @@ export function App({
 		});
 	}, [approval]);
 
+	useEffect(() => {
+		let cancelled = false;
+		void loadWorkspaceFiles(workspaceRoot).then((files) => {
+			if (!cancelled) dispatch({ type: "files_loaded", files });
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [workspaceRoot]);
+
 	const setAllowAll = useCallback(
 		(arg: string) => {
 			const next = parseAllowAllArg(allowAll, arg);
@@ -121,11 +136,12 @@ export function App({
 			controllerRef.current = controller;
 			dispatch({ type: "submit", text, at: Date.now() });
 			try {
+				const expanded = await expandFileMentions(text, workspaceRoot);
 				const result = await runAgent({
 					provider,
 					model,
 					workspaceRoot,
-					prompt: text,
+					prompt: expanded.text,
 					history: historyRef.current,
 					maxSteps,
 					thinking,
@@ -224,7 +240,7 @@ export function App({
 				active={state.permission === null}
 				status={state.status}
 				menu={state.menu}
-				suggestionsFor={commandSuggestions}
+				suggestionsFor={(text) => agentSuggestions(text, state.files)}
 				onChange={(text) => dispatch({ type: "set_input", text })}
 				onSubmit={submit}
 				onHistoryPrev={() => dispatch({ type: "history_prev" })}

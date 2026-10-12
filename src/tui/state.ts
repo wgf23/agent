@@ -1,8 +1,8 @@
 import type { AgentEvent } from "../agent/events.js";
 import type { PendingPermission } from "./approval.js";
+import { agentSuggestions } from "./file-mentions.js";
 import {
 	acceptMenu,
-	commandSuggestions,
 	MENU_CLOSED,
 	MENU_NEUTRAL,
 	type MenuState,
@@ -74,6 +74,7 @@ export interface TuiState {
 	expandReasoning: boolean;
 	permission: PendingPermission | null;
 	menu: MenuState;
+	files: string[];
 }
 
 export interface TuiInit {
@@ -102,7 +103,8 @@ export type TuiAction =
 	| { type: "menu_move"; text: string; delta: 1 | -1 }
 	| { type: "menu_accept"; text: string }
 	| { type: "menu_close" }
-	| { type: "permission"; request: PendingPermission | null };
+	| { type: "permission"; request: PendingPermission | null }
+	| { type: "files_loaded"; files: string[] };
 
 export const CANCEL_MESSAGE = "[cancelled]";
 
@@ -123,6 +125,7 @@ export function initialTuiState(init: TuiInit): TuiState {
 		expandReasoning: false,
 		permission: null,
 		menu: MENU_NEUTRAL,
+		files: [],
 	};
 }
 
@@ -227,7 +230,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				...state,
 				menu: moveMenu(
 					state.menu,
-					commandSuggestions(action.text),
+					agentSuggestions(action.text, state.files),
 					action.delta,
 				),
 			};
@@ -236,7 +239,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 			// Accept reads the live text the component passes, so the line fills
 			// from the same matches the keystroke produced even before React has
 			// committed that keystroke.
-			const accepted = acceptMenu(state.menu, commandSuggestions(action.text));
+			const accepted = acceptMenu(
+				action.text,
+				state.menu,
+				agentSuggestions(action.text, state.files),
+			);
 			if (accepted === null) return state;
 			return {
 				...state,
@@ -248,6 +255,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
 		case "menu_close":
 			return { ...state, menu: MENU_CLOSED };
+
+		case "files_loaded":
+			return { ...state, files: action.files };
 
 		case "permission": {
 			if (action.request === null) {

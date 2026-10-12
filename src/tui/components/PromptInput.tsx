@@ -82,7 +82,7 @@ export function PromptInput({
 	// an Enter in the same tick already sees the completed line and submits.
 	const acceptLive = (): void => {
 		const text = latest.current;
-		const accepted = acceptMenu(menu, suggestionsFor(text));
+		const accepted = acceptMenu(text, menu, suggestionsFor(text));
 		onMenuAccept(text);
 		if (accepted === null) return;
 		latest.current = accepted;

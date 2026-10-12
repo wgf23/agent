@@ -4,6 +4,9 @@ export interface Suggestion {
 	value: string;
 	label: string;
 	hint?: string;
+	// Start index in the input of the token this suggestion replaces. Command
+	// and rob-name completion own the whole line, so their anchor is 0.
+	anchor: number;
 }
 
 export interface CommandSpec {
@@ -61,6 +64,7 @@ export function commandSuggestions(
 			value: command.name,
 			label: command.name,
 			hint: command.hint,
+			anchor: 0,
 		}));
 }
 
@@ -73,7 +77,7 @@ export function robSuggestions(
 	return names
 		.filter((name) => name.toLowerCase().startsWith(query))
 		.slice(0, MAX_SUGGESTIONS)
-		.map((name) => ({ value: `@${name}`, label: `@${name}` }));
+		.map((name) => ({ value: `@${name}`, label: `@${name}`, anchor: 0 }));
 }
 
 export function isMenuOpen(
@@ -95,14 +99,26 @@ export function teamSuggestions(
 
 // The reducers own committed accept, and the input component mirrors this same
 // value into its local ref so an Enter in the next tick already sees the line.
+// Accept replaces the token at the suggestion's anchor, not the whole line, so a
+// mention typed mid-sentence survives.
 export function acceptMenu(
+	text: string,
 	menu: MenuState,
 	suggestions: readonly Suggestion[],
 ): string | null {
 	if (!isMenuOpen(menu, suggestions)) return null;
 	const index = Math.max(0, Math.min(menu.index, suggestions.length - 1));
 	const choice = suggestions[index];
-	return choice === undefined ? null : `${choice.value} `;
+	if (choice === undefined) return null;
+	const end = tokenEnd(text, choice.anchor);
+	return `${text.slice(0, choice.anchor)}${choice.value} ${text.slice(end)}`;
+}
+
+// The completed token runs from its anchor to the next whitespace or line end.
+// A command token has no whitespace, so anchor 0 still replaces the whole line.
+function tokenEnd(text: string, anchor: number): number {
+	const boundary = /[ \t\n]/.exec(text.slice(anchor));
+	return boundary === null ? text.length : anchor + boundary.index;
 }
 
 export function moveMenu(

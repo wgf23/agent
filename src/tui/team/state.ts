@@ -173,6 +173,7 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 
 		case "menu_accept": {
 			const accepted = acceptMenu(
+				action.text,
 				state.menu,
 				teamSuggestions(action.text, robNames(state)),
 			);
