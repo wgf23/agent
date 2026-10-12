@@ -85,6 +85,8 @@ export class Rob {
 						provider: options.backend.provider,
 						model: options.backend.model,
 						sessionDir: options.backend.sessionDir,
+						authorize: this.authorize,
+						drain: () => this.inbox.drain(),
 					})
 				: createNativeBackend({
 						name: options.name,

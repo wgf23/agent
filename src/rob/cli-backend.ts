@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { UsageTotals } from "../agent/agent.js";
+import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
 import type { Message } from "../providers/types.js";
+import { getTool } from "../tools/registry.js";
 import {
 	emptyUsage,
 	promptFor,
@@ -17,9 +19,27 @@ import type { Inbound, RobName } from "./types.js";
 const SUMMARY_MAX_CHARS = 200;
 const UI_OUTPUT_MAX_CHARS = 4000;
 const STDERR_MAX_CHARS = 1000;
+const INTERJECT_POLL_MS = 50;
+const EXIT_GRACE_MS = 1000;
 
 const PI_SESSIONS_DIR = ".my-agent";
 const PI_SESSIONS_SUBDIR = "pi-sessions";
+const APPROVAL_EXTENSION_FILE = "approval-extension.mjs";
+
+// The approval bridge lives inside pi: on every tool call it asks our process
+// over pi's RPC extension-UI channel and blocks until the answer arrives.
+const APPROVAL_EXTENSION = `export default function (pi) {
+	pi.on("tool_call", async (event, ctx) => {
+		const allowed = await ctx.ui.confirm(
+			"my-agent approval",
+			JSON.stringify({ toolName: event.toolName, input: event.input }),
+		);
+		if (!allowed) {
+			return { block: true, reason: "Denied by the my-agent approval bridge." };
+		}
+	});
+}
+`;
 
 // Our tool name to pi's. Only these four have a pi counterpart.
 const PI_TOOLS: ReadonlyArray<readonly [string, string]> = [
@@ -31,13 +51,20 @@ const PI_TOOLS: ReadonlyArray<readonly [string, string]> = [
 
 const PI_TO_OURS = new Map(PI_TOOLS.map(([ours, pi]) => [pi, ours]));
 
-// pi has no channel to ask for approval, so a tool that resolves to "ask" is
-// left out entirely: only an outright "allow" for the tool's default subject
-// ("*") exposes it.
-export function piToolAllowlist(rules: PermissionRules): string[] {
+// Without a bridge, pi has no channel to ask for approval, so a tool that
+// resolves to "ask" is left out entirely: only an outright "allow" for the
+// tool's default subject ("*") exposes it. With the bridge, "ask" tools are
+// exposed because the extension gates each call on our authorizer.
+export function piToolAllowlist(
+	rules: PermissionRules,
+	includeAsk = false,
+): string[] {
 	const allowed: string[] = [];
 	for (const [tool, piTool] of PI_TOOLS) {
-		if (resolveAction(rules, tool, "*") === "allow") allowed.push(piTool);
+		const action = resolveAction(rules, tool, "*");
+		if (action === "allow" || (includeAsk && action === "ask")) {
+			allowed.push(piTool);
+		}
 	}
 	return allowed;
 }
@@ -53,6 +80,10 @@ export interface CliBackendOptions {
 	provider: string;
 	model: string;
 	sessionDir?: string;
+	// When set, the approval extension is loaded and "ask" tools are exposed.
+	authorize?: Authorize;
+	// Returns queued interjections to steer into a running turn.
+	drain?: () => Inbound[];
 }
 
 export function createCliBackend(options: CliBackendOptions): RobBackend {
@@ -63,11 +94,17 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				defaultSessionDir(turn.workspaceRoot, options.rob);
 			await mkdir(sessionDir, { recursive: true });
 
-			const allowed = piToolAllowlist(turn.rules);
+			const bridged = options.authorize !== undefined;
+			const allowed = piToolAllowlist(turn.rules, bridged);
+			let extensionFile: string | undefined;
+			if (bridged) {
+				extensionFile = path.join(sessionDir, APPROVAL_EXTENSION_FILE);
+				await writeFile(extensionFile, APPROVAL_EXTENSION, "utf8");
+			}
+
 			const args = [
-				"-p",
 				"--mode",
-				"json",
+				"rpc",
 				"--provider",
 				options.provider,
 				"--model",
@@ -82,7 +119,7 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				...(allowed.length > 0
 					? ["--tools", allowed.join(",")]
 					: ["--no-tools"]),
-				turn.inbound.map(promptFor).join("\n\n"),
+				...(extensionFile !== undefined ? ["--extension", extensionFile] : []),
 			];
 
 			return runPi({
@@ -93,6 +130,8 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				onEvent: turn.onEvent,
 				history: turn.history,
 				inbound: turn.inbound,
+				authorize: options.authorize,
+				drain: options.drain,
 			});
 		},
 	};
@@ -106,6 +145,8 @@ interface RunPiOptions {
 	onEvent: (event: AgentEvent) => void;
 	history: readonly Message[];
 	inbound: readonly Inbound[];
+	authorize?: Authorize;
+	drain?: () => Inbound[];
 }
 
 function runPi(options: RunPiOptions): Promise<TurnResult> {
@@ -118,21 +159,32 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 	let lastText = "";
 	let currentText = "";
 	let failure: string | null = null;
+	let promptFailure: string | null = null;
 	let steps = 0;
 	let stderr = "";
+	let ended = false;
+	let buffer = "";
 
-	// pi blocks waiting for stdin EOF, so stdin is ignored rather than left as an
-	// open pipe the parent never closes.
 	const child = spawn(options.command, options.args, {
 		cwd: options.cwd,
-		stdio: ["ignore", "pipe", "pipe"],
+		stdio: ["pipe", "pipe", "pipe"],
 	});
 
 	return new Promise<TurnResult>((resolve) => {
 		let settled = false;
+		let exitTimer: NodeJS.Timeout | undefined;
+
+		const send = (command: Record<string, unknown>): void => {
+			if (!child.stdin.writable) return;
+			child.stdin.write(`${JSON.stringify(command)}\n`);
+		};
+
 		const finish = (result: TurnResult): void => {
 			if (settled) return;
 			settled = true;
+			clearInterval(poller);
+			if (exitTimer !== undefined) clearTimeout(exitTimer);
+			options.signal.removeEventListener("abort", abort);
 			resolve(result);
 		};
 
@@ -142,10 +194,76 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 		if (options.signal.aborted) abort();
 		else options.signal.addEventListener("abort", abort, { once: true });
 
+		const conclude = (): void => {
+			if (options.signal.aborted) {
+				emit({ type: "done", reason: "aborted", steps });
+				finish({ ok: false, error: "Turn aborted.", usage, messages });
+				return;
+			}
+			if (promptFailure !== null) {
+				emit({ type: "error", message: promptFailure });
+				emit({ type: "done", reason: "error", steps });
+				finish({ ok: false, error: promptFailure, usage, messages });
+				return;
+			}
+			if (failure !== null) {
+				emit({ type: "error", message: failure });
+				emit({ type: "done", reason: "error", steps });
+				finish({ ok: false, error: failure, usage, messages });
+				return;
+			}
+			if (lastText !== "") {
+				messages.push({
+					role: "assistant",
+					content: [{ type: "text", text: lastText }],
+				});
+			}
+			emit({ type: "done", reason: "finished", steps });
+			finish({ ok: true, text: lastText, usage, messages });
+		};
+
+		const poller = setInterval(() => {
+			if (settled || options.drain === undefined) return;
+			for (const item of options.drain()) {
+				send({ type: "steer", message: promptFor(item) });
+			}
+		}, INTERJECT_POLL_MS);
+
+		const handleApproval = async (
+			record: Record<string, unknown>,
+		): Promise<void> => {
+			const id = stringField(record.id);
+			const method = stringField(record.method);
+			if (method === "confirm") {
+				send({
+					type: "extension_ui_response",
+					id,
+					confirmed: await decideApproval(record, options.authorize),
+				});
+				return;
+			}
+			if (method === "select" || method === "input" || method === "editor") {
+				send({ type: "extension_ui_response", id, cancelled: true });
+			}
+		};
+
 		const handleEvent = (event: unknown): void => {
 			if (event === null || typeof event !== "object") return;
 			const record = event as Record<string, unknown>;
 			switch (record.type) {
+				case "response": {
+					if (record.command === "prompt" && record.success === false) {
+						promptFailure =
+							stringField(record.error) || "pi rejected the prompt.";
+						conclude();
+						if (child.stdin.writable) child.stdin.end();
+					}
+					return;
+				}
+				case "extension_ui_request": {
+					void handleApproval(record);
+					return;
+				}
 				case "tool_execution_start": {
 					emit({
 						type: "tool_started",
@@ -211,6 +329,15 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 					currentText = "";
 					return;
 				}
+				case "agent_end": {
+					ended = true;
+					conclude();
+					// Let pi drain and exit on its own so the session is saved.
+					if (child.stdin.writable) child.stdin.end();
+					exitTimer = setTimeout(() => child.kill("SIGKILL"), EXIT_GRACE_MS);
+					exitTimer.unref();
+					return;
+				}
 				default:
 					return;
 			}
@@ -229,7 +356,6 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 			handleEvent(parsed);
 		};
 
-		let buffer = "";
 		child.stdout.setEncoding("utf8");
 		child.stdout.on("data", (chunk: string) => {
 			buffer += chunk;
@@ -246,7 +372,6 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 		});
 
 		child.on("error", (error) => {
-			options.signal.removeEventListener("abort", abort);
 			if (options.signal.aborted) {
 				emit({ type: "done", reason: "aborted", steps });
 				finish({ ok: false, error: "Turn aborted.", usage, messages });
@@ -258,37 +383,53 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 		});
 
 		child.on("close", (code) => {
-			options.signal.removeEventListener("abort", abort);
+			if (settled) return;
+			if (exitTimer !== undefined) clearTimeout(exitTimer);
 			if (buffer !== "") handleLine(buffer);
-
-			if (options.signal.aborted) {
-				emit({ type: "done", reason: "aborted", steps });
-				finish({ ok: false, error: "Turn aborted.", usage, messages });
-				return;
-			}
-			if (code !== 0) {
+			if (!ended && options.signal.aborted !== true && code !== 0) {
 				const detail = capStderr(stderr) || `pi exited with code ${code}.`;
-				emit({ type: "error", message: detail });
-				emit({ type: "done", reason: "error", steps });
-				finish({ ok: false, error: detail, usage, messages });
-				return;
+				promptFailure = detail;
+			} else if (!ended && stderr.trim() !== "" && failure === null) {
+				failure = capStderr(stderr);
 			}
-			if (failure !== null) {
-				emit({ type: "error", message: failure });
-				emit({ type: "done", reason: "error", steps });
-				finish({ ok: false, error: failure, usage, messages });
-				return;
-			}
-			if (lastText !== "") {
-				messages.push({
-					role: "assistant",
-					content: [{ type: "text", text: lastText }],
-				});
-			}
-			emit({ type: "done", reason: "finished", steps });
-			finish({ ok: true, text: lastText, usage, messages });
+			conclude();
+		});
+
+		send({
+			type: "prompt",
+			message: options.inbound.map(promptFor).join("\n\n"),
 		});
 	});
+}
+
+async function decideApproval(
+	record: Record<string, unknown>,
+	authorize: Authorize | undefined,
+): Promise<boolean> {
+	if (authorize === undefined) return false;
+	const info = parseApprovalInfo(stringField(record.message));
+	if (info === undefined) return false;
+	const mapped = mapToolName(info.toolName);
+	const tool = getTool(mapped);
+	if (tool === undefined) return false;
+	const decision = await authorize(
+		{ id: stringField(record.id), name: mapped, args: info.input },
+		tool,
+	);
+	return decision.allowed;
+}
+
+function parseApprovalInfo(
+	message: string,
+): { toolName: string; input: unknown } | undefined {
+	try {
+		const parsed: unknown = JSON.parse(message);
+		if (parsed === null || typeof parsed !== "object") return undefined;
+		const record = parsed as Record<string, unknown>;
+		return { toolName: stringField(record.toolName), input: record.input };
+	} catch {
+		return undefined;
+	}
 }
 
 function emitUsage(

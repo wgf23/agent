@@ -5,9 +5,11 @@
 - R1：核心（`Rob` actor、收件箱、`drainInput` 钩子、`send_message` 和 `delegate` 工具、`Team` 的无界面运行）。提交 `b0f21dc`。
 - R2：TUI（rob 列表、`@name` 派发、只读的私聊和子 agent 视图、审批队列、插话）。提交 `5cc9821`。
 - R3：加固（按解析后绝对路径的文件路径锁、私聊和深度上限验证、团队 token 统计、端到端测试）。提交 `6ba83a1`。
-- R4：pi 的 CLI 后端（`RobBackend`、`--tools` 白名单、按 rob 的 pi 会话目录、`--mode json` 事件映射）。本次提交，信息为 `feat: pi CLI backend for rob with tool allowlist and sessions`。
+- R4：pi 的 CLI 后端（`RobBackend`、`--tools` 白名单、按 rob 的 pi 会话目录、`--mode json` 事件映射）。提交 `d69d4c6`。
+- R4.1：关闭 G1 到 G4（角色提示、流式回答、模型错误结果、子 agent 用量）。提交 `c2ea6d8`。
+- R4.2：关闭 G5 和 G7（`--mode rpc` 的中途插话、`tool_call` 扩展审批桥）。提交信息为 `feat: pi interjection, approvals, or peer tools, as verified`。
 
-claude、codex、kimi 的 CLI 后端仍未实现。R4 第一版只支持 pi。
+claude、codex、kimi 的 CLI 后端仍未实现。R4 只支持 pi。
 
 ### 与设计的偏差
 
@@ -15,10 +17,12 @@ claude、codex、kimi 的 CLI 后端仍未实现。R4 第一版只支持 pi。
 - **写串行化的位置**：`allow_always` 对 `my-agent.json` 的读-改-写由 `addPermissionRule` 里的模块级 `writeChain` 串行化，authorizer 等待它；没有走本阶段新增的按路径文件锁。设计只要求「串行化写入」，没有指定位置。
 - **团队停止的拒绝理由**：`stop()` 用固定理由 `TEAM_STOPPED_REASON`（"The team stopped before this approval was answered."）拒绝所有待审批请求；停止开始后再来的审批也直接拒绝，避免入队后永远等待而卡住 `stop()`。设计没有规定该行为。
 - **R1 的审批缺口（R2 修复）**：R1 给每个 rob 直接传各自的 `headlessApproval`，绕过了 `Team`；R2 新增共享的 FIFO `ApprovalQueue`，审批经 `rob.approval` -> `Team.requestApproval` 入队，队列项带发起 rob 的名字并驱动 `waiting_approval` 状态。
-- **R4 的子进程 stdin**：pi 在非交互模式下要等到 stdin EOF 才继续，所以 `spawn` 的 stdin 设为 `ignore`；留成打开的管道会让每一轮都挂住。
-- **R4 的会话续接**：只传 `--session-dir` 时 pi 每次都会新建会话；必须再传 `--continue` 才能在同一目录里续接上一轮，所以 cli rob 每轮都带 `--continue`。
+- **R4.2 的子进程协议**：cli rob 改用 `--mode rpc`。命令（prompt、steer、extension_ui_response）写成 JSONL 到 stdin，事件从 stdout 读回；回合在 `agent_end` 结束，之后关闭 stdin 让 pi 自行退出并保存会话。R4 第一版用 `-p --mode json` + `stdin: ignore`，因为 pi 要等 stdin EOF 才继续；RPC 模式要的就是打开的 stdin。
+- **R4 的会话续接**：只传 `--session-dir` 时 pi 每次都会新建会话；必须再传 `--continue` 才能在同一目录里续接上一轮，所以 cli rob 每轮都带 `--continue`。rpc 模式下同样成立。
 - **R4 的事件映射**：现有 `tool_started` 没有 summary 字段，工具摘要只放在 `tool_finished`；cli 的回答用 `message_update.assistantMessageEvent.delta` 逐段发 `text_delta`，`message_end` 里若还有未发出的剩余文本才补发一次。
-- **R4 的权限**：pi 没有审批通道，解析为 `ask` 的工具不会进入 `--tools` 白名单，只有 `allow` 才暴露；cli rob 因此没有 `waiting_approval` 状态。
+- **R4.2 的插话**：cli 后端每 50ms 调一次 rob 收件箱的 drain，把新消息作为 `steer` 发给正在运行的 pi。回合刚开始或刚结束时 drain 到的消息可能来不及投递；这是已知边界，未做补偿。
+- **R4.2 的审批桥**：cli 后端把自己的 authorizer 传给 pi 扩展。扩展在 `tool_call` 钩子里对每次工具调用发起 `ctx.ui.confirm`，我们的进程用 authorizer 判断后回复；因此解析为 `ask` 的工具也能进入 `--tools` 白名单。`ask`/`allow` 的暴露只在桥存在（即 rob 传了 authorizer）时发生。
+- **R4 的权限（R4 第一版）**：R4 第一版 pi 没有审批通道，解析为 `ask` 的工具不会进入 `--tools` 白名单，只有 `allow` 才暴露。R4.2 由审批桥关闭。
 
 ### R4 的已知缺口
 
@@ -28,9 +32,9 @@ claude、codex、kimi 的 CLI 后端仍未实现。R4 第一版只支持 pi。
 - G2（已关闭）：pi 现在按 `message_update` 的 `text_delta` 流式产出，组装后的文本等于 `message_end` 的文本。
 - G3（已关闭）：`message_end` 的 `stopReason` 为 `"error"` 或 `"aborted"` 时返回错误结果并带上该消息的 `errorMessage`，不再退化成空回答。
 - G4（已关闭）：子 agent 的 `usage` 事件现在累加到发起 rob 的用量统计。
-- G5（未关闭）：cli rob 不能在回合中途插话，插话要等下一回合。
-- G6（未关闭）：cli rob 不能使用 `send_message` 和 `delegate`。
-- G7（未关闭）：cli rob 没有审批通道，解析为 `ask` 的工具不会暴露。
+- G5（已关闭）：cli rob 现在能在回合中途插话。cli 后端使用 `--mode rpc`，把收件箱的新消息作为 `steer` 发给正在运行的 pi。真实 pi 验证：工具执行期间发送 steer，回答变成 `STEERED`。
+- G6（未关闭）：cli rob 仍不能使用 `send_message` 和 `delegate`。扩展工具可以通过 Unix socket 回调我们的进程（机制已用真实 pi 验证），但这需要常驻监听通道和自定协议，本次未实现。
+- G7（已关闭）：cli rob 现在有审批通道。pi 扩展在 `tool_call` 钩子里发 `ctx.ui.confirm` 并阻塞，我们的进程用该 rob 的 authorizer 判断后回复；允许和拒绝两条路径都已用真实 pi 验证。因此 `ask` 工具可以进入白名单（仅在桥存在时）。
 
 ## 问题
 
@@ -189,7 +193,7 @@ RobBackend
 | 事件流（工具过程） | 完整 | 取决于外部程序的输出格式，可能只有文本 |
 | 历史 | 我们持有 | 外部程序各自持有，我们只能每次把历史拼进 prompt |
 
-结论：cli 后端会破坏「权限独立、可以审批、子 agent 只读可见」这几条要求。如果要保留，就必须做 MCP 桥接，或者接受这些 rob 没有审批。
+结论：cli 后端会破坏「权限独立、可以审批、子 agent 只读可见」这几条要求。如果要保留，就必须做 MCP 桥接，或者接受这些 rob 没有审批。R4.2 用 pi 的 rpc 模式和扩展关闭了 pi 的审批和中途插话缺口；其他 CLI 仍未解决。
 
 ### 已验证：pi（@mariozechner/pi-coding-agent 0.73.0）
 
@@ -207,9 +211,9 @@ RobBackend
 由此得到的设计结论：
 
 1. 外部 CLI 的 rob 必须用 `--tools` 把工具集限制在该 rob 的权限范围内。例如只读 rob 只给 `read`。
-2. 「需要审批的写入」在 pi 下无法做到逐次审批。只能是「允许」或「不给这个工具」两种状态。这要写进用户文档。
-3. pi 的 `--mode json` 可以作为 R4 的事件来源，用来在 TUI 里显示过程。
-4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。是否能通过 pi 的扩展（`-e`）或 MCP 接入，还没有验证。
+2. R4 第一版认为「需要审批的写入」在 pi 下无法逐次审批，只能是「允许」或「不给这个工具」。R4.2 推翻了这一点：pi 扩展的 `tool_call` 钩子可以发 `ctx.ui.confirm` 并阻塞，配合 `--mode rpc` 做到逐次审批。
+3. pi 的 `--mode rpc` 是 R4.2 的事件来源，`--mode json` 的事件形状相同但无法中途送命令。
+4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。R4.2 验证了扩展工具可以用 Unix socket 回调我们的进程，机制可行但未实现；见 `docs/design/pi-capabilities.md`。
 
 ### 建议
 

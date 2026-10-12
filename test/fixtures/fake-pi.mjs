@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 if (process.env.FAKE_PI_ARGV_FILE) {
@@ -14,134 +14,306 @@ if (scenario === "sleep") {
 	}
 	setInterval(() => {}, 1000);
 } else {
-	// pi waits for stdin EOF before it answers, so the fake must too; a backend
-	// that leaves stdin open would hang here instead of finishing the turn.
+	// RPC mode stays alive and reads commands as JSONL from stdin; it exits when
+	// our backend closes stdin after agent_end.
 	process.stdin.resume();
-	process.stdin.on("end", () => {
-		process.stdin.pause();
+	process.stdin.setEncoding("utf8");
+	let buffer = "";
+	process.stdin.on("data", (chunk) => {
+		buffer += chunk;
+		let newline = buffer.indexOf("\n");
+		while (newline !== -1) {
+			handleLine(buffer.slice(0, newline));
+			buffer = buffer.slice(newline + 1);
+			newline = buffer.indexOf("\n");
+		}
+	});
+	process.stdin.on("end", () => process.exit(0));
+}
+
+function handleLine(line) {
+	if (line.trim() === "") return;
+	let command;
+	try {
+		command = JSON.parse(line);
+	} catch {
+		return;
+	}
+	if (command.type === "prompt") {
+		emit({ type: "response", command: "prompt", success: true });
 		if (scenario === "error") {
 			process.stderr.write("boom: fake pi failed\n");
 			process.exit(3);
 		}
 		if (scenario === "model-error") {
-			printModelError();
+			emitModelError();
 			return;
 		}
-		printEvents();
+		if (scenario === "interjection") {
+			emitInterjectionStart();
+			return;
+		}
+		if (scenario === "approval") {
+			emitApprovalStart();
+			return;
+		}
+		emitScript();
+		return;
+	}
+	if (command.type === "steer") {
+		emit({ type: "response", command: "steer", success: true });
+		if (process.env.FAKE_PI_STEER_FILE) {
+			appendFileSync(process.env.FAKE_PI_STEER_FILE, `${command.message}\n`);
+		}
+		if (scenario === "interjection") emitInterjectionEnd();
+		return;
+	}
+	if (command.type === "extension_ui_response") {
+		emitApprovalEnd(command.confirmed === true);
+	}
+}
+
+function emit(event) {
+	process.stdout.write(`${JSON.stringify(event)}\n`);
+}
+
+function emitScript() {
+	const streaming = scenario === "stream";
+	emit({ type: "session", version: 3, id: "fake-session" });
+	process.stdout.write("not json, should be ignored\n");
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "user", content: [{ type: "text", text: "hello" }] },
+	});
+	emit({
+		type: "message_end",
+		message: { role: "user", content: [{ type: "text", text: "hello" }] },
+	});
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call_1",
+					name: "read",
+					arguments: { path: "a.txt" },
+				},
+			],
+			usage: usage(100, 20, 5),
+			stopReason: "toolUse",
+		},
+	});
+	emit({
+		type: "tool_execution_start",
+		toolCallId: "call_1",
+		toolName: "read",
+		args: { path: "a.txt" },
+	});
+	emit({
+		type: "tool_execution_end",
+		toolCallId: "call_1",
+		toolName: "read",
+		result: { content: [{ type: "text", text: "A".repeat(5000) }] },
+		isError: false,
+	});
+	emit({
+		type: "message_start",
+		message: { role: "toolResult", toolCallId: "call_1" },
+	});
+	emit({
+		type: "message_end",
+		message: { role: "toolResult", toolCallId: "call_1" },
+	});
+	emit({ type: "turn_end" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	if (streaming) {
+		for (const delta of ["The ", "final ", "answer."]) {
+			emit({
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+			});
+		}
+	}
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "The final answer." }],
+			usage: usage(50, 10, 2),
+			stopReason: "stop",
+		},
+	});
+	emit({ type: "turn_end" });
+	emit({ type: "agent_end" });
+}
+
+function emitModelError() {
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [],
+			usage: emptyUsage(),
+			stopReason: "error",
+			errorMessage: "model exploded",
+		},
+	});
+	emit({ type: "agent_end" });
+}
+
+function emitInterjectionStart() {
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call_1",
+					name: "bash",
+					arguments: { command: "sleep 5" },
+				},
+			],
+			usage: usage(1, 1, 0),
+			stopReason: "toolUse",
+		},
+	});
+	emit({
+		type: "tool_execution_start",
+		toolCallId: "call_1",
+		toolName: "bash",
+		args: { command: "sleep 5" },
 	});
 }
 
-function printEvents() {
-	const lines = [
-		{ type: "session", version: 3, id: "fake-session" },
-		"not json, should be ignored",
-		{ type: "agent_start" },
-		{ type: "turn_start" },
-		{
-			type: "message_start",
-			message: { role: "user", content: [{ type: "text", text: "hello" }] },
+function emitInterjectionEnd() {
+	emit({
+		type: "tool_execution_end",
+		toolCallId: "call_1",
+		toolName: "bash",
+		result: { content: [{ type: "text", text: "slept" }] },
+		isError: false,
+	});
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: "STEERED",
 		},
-		{
-			type: "message_end",
-			message: { role: "user", content: [{ type: "text", text: "hello" }] },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "STEERED" }],
+			usage: usage(2, 1, 0),
+			stopReason: "stop",
 		},
-		{
-			type: "message_start",
-			message: { role: "assistant", content: [], usage: emptyUsage() },
-		},
-		{
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [
-					{
-						type: "toolCall",
-						id: "call_1",
-						name: "read",
-						arguments: { path: "a.txt" },
-					},
-				],
-				usage: usage(100, 20, 5),
-				stopReason: "toolUse",
-			},
-		},
-		{
-			type: "tool_execution_start",
-			toolCallId: "call_1",
-			toolName: "read",
-			args: { path: "a.txt" },
-		},
-		{
-			type: "tool_execution_end",
-			toolCallId: "call_1",
-			toolName: "read",
-			result: { content: [{ type: "text", text: "A".repeat(5000) }] },
-			isError: false,
-		},
-		{
-			type: "message_start",
-			message: { role: "toolResult", toolCallId: "call_1" },
-		},
-		{
-			type: "message_end",
-			message: { role: "toolResult", toolCallId: "call_1" },
-		},
-		{ type: "turn_end" },
-		{ type: "turn_start" },
-		{
-			type: "message_start",
-			message: { role: "assistant", content: [], usage: emptyUsage() },
-		},
-		...(scenario === "stream"
-			? ["The ", "final ", "answer."].map((delta) => ({
-					type: "message_update",
-					assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
-				}))
-			: []),
-		{
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [{ type: "text", text: "The final answer." }],
-				usage: usage(50, 10, 2),
-				stopReason: "stop",
-			},
-		},
-		{ type: "turn_end" },
-		{ type: "agent_end" },
-	];
-
-	for (const line of lines) {
-		process.stdout.write(
-			`${typeof line === "string" ? line : JSON.stringify(line)}\n`,
-		);
-	}
+	});
+	emit({ type: "turn_end" });
+	emit({ type: "agent_end" });
 }
 
-function printModelError() {
-	const lines = [
-		{ type: "agent_start" },
-		{ type: "turn_start" },
-		{
-			type: "message_start",
-			message: { role: "assistant", content: [], usage: emptyUsage() },
+function emitApprovalStart() {
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: "call_1",
+					name: "bash",
+					arguments: { command: "echo hi" },
+				},
+			],
+			usage: usage(1, 1, 0),
+			stopReason: "toolUse",
 		},
-		{
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [],
-				usage: emptyUsage(),
-				stopReason: "error",
-				errorMessage: "model exploded",
-			},
-		},
-		{ type: "agent_end" },
-	];
+	});
+	emit({
+		type: "tool_execution_start",
+		toolCallId: "call_1",
+		toolName: "bash",
+		args: { command: "echo hi" },
+	});
+	emit({
+		type: "extension_ui_request",
+		id: "ui_1",
+		method: "confirm",
+		title: "my-agent approval",
+		message: JSON.stringify({
+			toolName: "bash",
+			input: { command: "echo hi" },
+		}),
+	});
+}
 
-	for (const line of lines) {
-		process.stdout.write(`${JSON.stringify(line)}\n`);
-	}
+function emitApprovalEnd(allowed) {
+	emit({
+		type: "tool_execution_end",
+		toolCallId: "call_1",
+		toolName: "bash",
+		result: {
+			content: [
+				{
+					type: "text",
+					text: allowed ? "hi\n" : "Denied by the my-agent approval bridge.",
+				},
+			],
+		},
+		isError: !allowed,
+	});
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: allowed ? "done" : "blocked" }],
+			usage: usage(3, 1, 0),
+			stopReason: "stop",
+		},
+	});
+	emit({ type: "turn_end" });
+	emit({ type: "agent_end" });
 }
 
 function usage(input, output, cacheRead) {

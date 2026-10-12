@@ -2,6 +2,7 @@ import { chmod, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Authorize } from "../../src/agent/authorize.js";
 import type { AgentEvent } from "../../src/agent/events.js";
 import type { PermissionRules } from "../../src/permissions/rules.js";
 import type { TurnResult } from "../../src/rob/backend.js";
@@ -29,6 +30,7 @@ afterEach(async () => {
 	delete process.env.FAKE_PI_SCENARIO;
 	delete process.env.FAKE_PI_ARGV_FILE;
 	delete process.env.FAKE_PI_PID_FILE;
+	delete process.env.FAKE_PI_STEER_FILE;
 });
 
 describe("piToolAllowlist", () => {
@@ -54,6 +56,17 @@ describe("piToolAllowlist", () => {
 		).toEqual(["read"]);
 	});
 
+	it("adds ask tools only when the approval bridge is enabled", () => {
+		const rules: PermissionRules = {
+			read_file: "allow",
+			write_file: "ask",
+			edit_file: "deny",
+			bash: "ask",
+		};
+		expect(piToolAllowlist(rules)).toEqual(["read"]);
+		expect(piToolAllowlist(rules, true)).toEqual(["read", "write", "bash"]);
+	});
+
 	it("returns nothing when every mapped tool is denied", () => {
 		expect(
 			piToolAllowlist({
@@ -67,7 +80,7 @@ describe("piToolAllowlist", () => {
 });
 
 describe("cli backend", () => {
-	it("parses a pi json stream into ordered agent events and a final answer", async () => {
+	it("parses a pi rpc stream into ordered agent events and a final answer", async () => {
 		const argvFile = path.join(workspace, "argv.json");
 		process.env.FAKE_PI_ARGV_FILE = argvFile;
 
@@ -133,9 +146,8 @@ describe("cli backend", () => {
 		expect(await stat(sessionDir)).toBeDefined();
 		const argv = JSON.parse(await readFile(argvFile, "utf8"));
 		expect(argv).toEqual([
-			"-p",
 			"--mode",
-			"json",
+			"rpc",
 			"--provider",
 			"deepseek",
 			"--model",
@@ -147,11 +159,10 @@ describe("cli backend", () => {
 			"--continue",
 			"--tools",
 			"read,write",
-			"[from user] hello",
 		]);
 	});
 
-	it("passes the prompt as a single argv entry and --no-tools when nothing is allowed", async () => {
+	it("passes --no-tools when nothing is allowed and keeps the prompt off argv", async () => {
 		const argvFile = path.join(workspace, "argv.json");
 		process.env.FAKE_PI_ARGV_FILE = argvFile;
 
@@ -168,7 +179,7 @@ describe("cli backend", () => {
 		const argv = JSON.parse(await readFile(argvFile, "utf8"));
 		expect(argv).toContain("--no-tools");
 		expect(argv).not.toContain("--tools");
-		expect(argv[argv.length - 1]).toBe("[from user] hello; rm -rf /");
+		expect(argv).not.toContain("[from user] hello; rm -rf /");
 	});
 
 	it("returns an error result with the captured stderr on a non-zero exit", async () => {
@@ -227,6 +238,101 @@ describe("cli backend", () => {
 		expect(result.error).toBe("model exploded");
 	});
 
+	it("steers a queued interjection into the running turn", async () => {
+		process.env.FAKE_PI_SCENARIO = "interjection";
+		const steerFile = path.join(workspace, "steers.txt");
+		process.env.FAKE_PI_STEER_FILE = steerFile;
+
+		let queued: Inbound[] = [];
+		let steered = false;
+		const events: AgentEvent[] = [];
+		const backend = createCliBackend({
+			rob: "reviewer",
+			role: "review code",
+			command: FIXTURE,
+			provider: "deepseek",
+			model: "deepseek-v4-flash",
+			drain: () => {
+				const items = queued;
+				queued = [];
+				return items;
+			},
+		});
+		const running = backend.run({
+			history: [],
+			inbound: [{ kind: "user", from: "user", text: "long task", at: 0 }],
+			workspaceRoot: workspace,
+			rules: {},
+			signal: new AbortController().signal,
+			onEvent: (event) => {
+				events.push(event);
+				if (!steered && event.type === "tool_started") {
+					steered = true;
+					queued = [
+						{ kind: "user", from: "user", text: "actually stop", at: 1 },
+					];
+				}
+			},
+		});
+
+		const result = await running;
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.text).toBe("STEERED");
+		expect(events.filter((event) => event.type === "text_delta")).toEqual([
+			{ type: "text_delta", text: "STEERED" },
+		]);
+		expect(await readFile(steerFile, "utf8")).toContain(
+			"[from user] actually stop",
+		);
+	});
+
+	it("routes a pi tool call through the approval bridge and allows it", async () => {
+		process.env.FAKE_PI_SCENARIO = "approval";
+		const argvFile = path.join(workspace, "argv.json");
+		process.env.FAKE_PI_ARGV_FILE = argvFile;
+
+		const { result, events } = await runTurn({
+			rules: { bash: "ask" },
+			authorize: allowAuthorize,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(
+			events.find((event) => event.type === "tool_finished"),
+		).toMatchObject({
+			name: "bash",
+			ok: true,
+			status: "ok",
+		});
+
+		const argv = JSON.parse(await readFile(argvFile, "utf8"));
+		expect(argv[argv.indexOf("--tools") + 1]).toBe("read,write,edit,bash");
+		expect(argv).toContain("--extension");
+		const extensionFile = argv[argv.indexOf("--extension") + 1];
+		expect(await stat(extensionFile)).toBeDefined();
+	});
+
+	it("blocks a pi tool call when the approval bridge denies it", async () => {
+		process.env.FAKE_PI_SCENARIO = "approval";
+
+		const { result, events } = await runTurn({
+			rules: { bash: "ask" },
+			authorize: async () => ({ allowed: false, reason: "nope" }),
+		});
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.text).toBe("blocked");
+		expect(
+			events.find((event) => event.type === "tool_finished"),
+		).toMatchObject({
+			name: "bash",
+			ok: false,
+			status: "error",
+		});
+	});
+
 	it("kills the child on abort and ends the turn as aborted", async () => {
 		const pidFile = path.join(workspace, "pid.txt");
 		process.env.FAKE_PI_SCENARIO = "sleep";
@@ -271,9 +377,13 @@ describe("cli backend", () => {
 	});
 });
 
+const allowAuthorize: Authorize = async () => ({ allowed: true });
+
 async function runTurn(options: {
 	rules?: PermissionRules;
 	inbound?: Inbound[];
+	authorize?: Authorize;
+	drain?: () => Inbound[];
 }): Promise<{ result: TurnResult; events: AgentEvent[] }> {
 	const events: AgentEvent[] = [];
 	const backend = createCliBackend({
@@ -282,6 +392,8 @@ async function runTurn(options: {
 		command: FIXTURE,
 		provider: "deepseek",
 		model: "deepseek-v4-flash",
+		authorize: options.authorize,
+		drain: options.drain,
 	});
 	const result = await backend.run({
 		history: [],
