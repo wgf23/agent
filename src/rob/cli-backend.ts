@@ -96,6 +96,8 @@ export interface CliBackendOptions {
 	authorize?: Authorize;
 	// Returns queued interjections to steer into a running turn.
 	drain?: () => Inbound[];
+	// Environment for the child, e.g. the provider key pi reads to authenticate.
+	extraEnv?: Record<string, string>;
 }
 
 export function createCliBackend(options: CliBackendOptions): RobBackend {
@@ -144,6 +146,7 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				inbound: turn.inbound,
 				authorize: options.authorize,
 				drain: options.drain,
+				extraEnv: options.extraEnv,
 			});
 		},
 	};
@@ -159,6 +162,7 @@ interface RunPiOptions {
 	inbound: readonly Inbound[];
 	authorize?: Authorize;
 	drain?: () => Inbound[];
+	extraEnv?: Record<string, string>;
 }
 
 interface InFlightSteer {
@@ -191,6 +195,7 @@ function runPi(options: RunPiOptions): Promise<TurnResult> {
 	const child = spawn(options.command, options.args, {
 		cwd: options.cwd,
 		stdio: ["pipe", "pipe", "pipe"],
+		env: { ...process.env, ...options.extraEnv },
 	});
 
 	return new Promise<TurnResult>((resolve) => {

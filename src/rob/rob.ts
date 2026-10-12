@@ -104,6 +104,7 @@ export class Rob {
 							sessionDir: options.backend.sessionDir,
 							authorize: this.authorize,
 							drain: () => this.inbox.drain(),
+							extraEnv: options.providerEnv,
 						})
 				: createNativeBackend({
 						name: options.name,
