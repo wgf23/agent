@@ -1,5 +1,12 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { type DetectProbes, detectBackends } from "../../src/sandbox/detect.js";
+import {
+	type DetectProbes,
+	detectBackends,
+	findExecutable,
+} from "../../src/sandbox/detect.js";
 
 function probes(overrides: Partial<DetectProbes> = {}): DetectProbes {
 	return {
@@ -58,7 +65,7 @@ describe("detectBackends", () => {
 		expect(plan.backend).toBe("none");
 	});
 
-	it("caches per probe object so a probe runs once", async () => {
+	it("caches per probe object so a probe runs once and returns the same plan", async () => {
 		let calls = 0;
 		const shared = probes({
 			bwrap: async () => {
@@ -67,9 +74,11 @@ describe("detectBackends", () => {
 			},
 		});
 
-		await detectBackends(shared);
-		await detectBackends(shared);
+		const first = await detectBackends(shared);
+		const second = await detectBackends(shared);
 
+		expect(first).toEqual({ backend: "bwrap" });
+		expect(second).toEqual({ backend: "bwrap" });
 		expect(calls).toBe(1);
 	});
 
@@ -124,5 +133,25 @@ describe("detectBackends", () => {
 			backend: "none",
 			reason: "could not write the Windows sandbox helper",
 		});
+	});
+});
+
+describe("findExecutable", () => {
+	it("rejects a directory and accepts a real file", () => {
+		const dir = mkdtempSync(path.join(tmpdir(), "my-agent-path-"));
+		try {
+			const dirOnly = path.join(dir, "dironly");
+			mkdirSync(path.join(dirOnly, "pwsh"), { recursive: true });
+			const fileDir = path.join(dir, "filedir");
+			mkdirSync(fileDir, { recursive: true });
+			const pwshFile = path.join(fileDir, "pwsh");
+			writeFileSync(pwshFile, "#!/bin/sh\n", { mode: 0o755 });
+
+			expect(
+				findExecutable("pwsh", `${dirOnly}${path.delimiter}${fileDir}`),
+			).toBe(pwshFile);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

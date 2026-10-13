@@ -1,6 +1,8 @@
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Command } from "../commands/commands.js";
+import { BUILTIN_COMMAND_NAMES, type Command } from "../commands/commands.js";
+import { loadCommands } from "../commands/load.js";
 import { tools as builtinTools } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
@@ -9,29 +11,39 @@ import type { MyAgentPlugin } from "./types.js";
 export interface LoadedPlugins {
 	tools: Tool[];
 	commands: Command[];
-	systemPrompt: string;
+	extraInstructions: string;
 	errors: string[];
 	dispose: () => Promise<void>;
 }
 
-// Loads every spec in order. A spec starting with "." or "/" is a path resolved
-// against the workspace root; anything else is a bare module specifier left to
-// the runtime. One plugin's failure becomes an error entry and never stops the
-// others.
+// Loads every spec in order. A spec starting with "." or "/" (or a Windows
+// drive letter) is a path resolved against the workspace root; anything else is
+// a bare package name resolved from the workspace's node_modules. A spec listed
+// more than once loads once. One plugin's failure becomes an error entry and
+// never stops the others.
 export async function loadPlugins(
 	specs: string[],
 	workspaceRoot: string,
+	extraInstructions?: string,
 ): Promise<LoadedPlugins> {
 	const tools: Tool[] = [];
 	const commands: Command[] = [];
 	const prompts: string[] = [];
 	const errors: string[] = [];
-	const disposers: Array<() => Promise<void> | void> = [];
+	const disposers: Array<{
+		name: string;
+		dispose: () => Promise<void> | void;
+	}> = [];
 
 	const builtinNames = new Set(builtinTools.map((tool) => tool.name));
 	const toolOwners = new Map<string, string>();
+	const builtinCommandNames = new Set(BUILTIN_COMMAND_NAMES);
+	const fileCommandNames = new Set(
+		(await loadCommands(workspaceRoot)).map((command) => command.name),
+	);
+	const commandOwners = new Map<string, string>();
 
-	for (const spec of specs) {
+	for (const spec of new Set(specs)) {
 		const imported = await importPlugin(spec, workspaceRoot);
 		if (!imported.ok) {
 			errors.push(`plugin ${spec}: ${imported.error}`);
@@ -50,28 +62,58 @@ export async function loadPlugins(
 			errors.push(`plugin ${spec}: ${collision}`);
 			continue;
 		}
+		const commandCollision = collidingCommand(
+			plugin,
+			builtinCommandNames,
+			fileCommandNames,
+			commandOwners,
+		);
+		if (commandCollision !== undefined) {
+			errors.push(`plugin ${spec}: ${commandCollision}`);
+			continue;
+		}
 
 		for (const tool of plugin.tools ?? []) {
 			tools.push(tool);
 			toolOwners.set(tool.name, plugin.name);
 		}
-		if (plugin.commands !== undefined) commands.push(...plugin.commands);
+		for (const command of plugin.commands ?? []) {
+			commands.push(command);
+			commandOwners.set(command.name, plugin.name);
+		}
 		if (
 			plugin.systemPrompt !== undefined &&
 			plugin.systemPrompt.trim() !== ""
 		) {
 			prompts.push(plugin.systemPrompt.trim());
 		}
-		if (plugin.dispose !== undefined) disposers.push(plugin.dispose);
+		if (plugin.dispose !== undefined) {
+			disposers.push({ name: plugin.name, dispose: plugin.dispose });
+		}
 	}
+
+	const sections: string[] = [];
+	if (extraInstructions !== undefined && extraInstructions.trim() !== "") {
+		sections.push(extraInstructions.trim());
+	}
+	sections.push(...prompts);
 
 	return {
 		tools,
 		commands,
-		systemPrompt: prompts.join("\n\n"),
+		extraInstructions: sections.join("\n\n"),
 		errors,
 		dispose: async () => {
-			await Promise.all(disposers.map((dispose) => Promise.resolve(dispose())));
+			const results = await Promise.allSettled(
+				disposers.map((entry) => Promise.resolve().then(() => entry.dispose())),
+			);
+			for (const [index, result] of results.entries()) {
+				if (result.status === "rejected") {
+					errors.push(
+						`plugin ${disposers[index].name}: dispose failed: ${errorMessage(result.reason)}`,
+					);
+				}
+			}
 		},
 	};
 }
@@ -80,16 +122,52 @@ async function importPlugin(
 	spec: string,
 	workspaceRoot: string,
 ): Promise<{ ok: true; plugin: MyAgentPlugin } | { ok: false; error: string }> {
-	const target =
-		spec.startsWith(".") || spec.startsWith("/")
-			? pathToFileURL(path.resolve(workspaceRoot, spec)).href
-			: spec;
+	const target = resolvePluginTarget(spec, workspaceRoot);
+	if (!target.ok) return target;
 	try {
-		const namespace = (await import(target)) as Record<string, unknown>;
+		const namespace = (await import(target.url)) as Record<string, unknown>;
 		return { ok: true, plugin: extractPlugin(namespace) };
 	} catch (error) {
 		return { ok: false, error: errorMessage(error) };
 	}
+}
+
+function resolvePluginTarget(
+	spec: string,
+	workspaceRoot: string,
+): { ok: true; url: string } | { ok: false; error: string } {
+	if (isAbsoluteSpecifier(spec)) {
+		return { ok: true, url: pathToFileURL(spec).href };
+	}
+	if (spec.startsWith(".")) {
+		const resolved = path.resolve(workspaceRoot, spec);
+		if (escapesWorkspace(workspaceRoot, resolved)) {
+			return { ok: false, error: "spec escapes the workspace root." };
+		}
+		return { ok: true, url: pathToFileURL(resolved).href };
+	}
+	// A bare package name resolves from the workspace's own node_modules so a
+	// plugin installed in the workspace loads even from a global install.
+	try {
+		const require = createRequire(path.join(workspaceRoot, "package.json"));
+		return { ok: true, url: pathToFileURL(require.resolve(spec)).href };
+	} catch (error) {
+		return {
+			ok: false,
+			error: `could not resolve from the workspace: ${errorMessage(error)}`,
+		};
+	}
+}
+
+function isAbsoluteSpecifier(spec: string): boolean {
+	return path.isAbsolute(spec) || /^[a-zA-Z]:[\\/]/.test(spec);
+}
+
+function escapesWorkspace(workspaceRoot: string, target: string): boolean {
+	const rel = path.relative(path.resolve(workspaceRoot), target);
+	return (
+		rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)
+	);
 }
 
 // A plugin module exports either the plugin object directly or as its default.
@@ -126,6 +204,22 @@ function validatePlugin(
 					error: `tool at index ${index} must be an object with a "name" and an "execute".`,
 				};
 			}
+			if (
+				typeof tool.description !== "string" ||
+				tool.description.trim() === ""
+			) {
+				return {
+					ok: false,
+					error: `tool at index ${index} must have a string "description".`,
+				};
+			}
+			if (tool.readOnly !== undefined && typeof tool.readOnly !== "boolean") {
+				return {
+					ok: false,
+					error: `tool at index ${index} "readOnly" must be a boolean.`,
+				};
+			}
+			if (tool.readOnly === undefined) tool.readOnly = false;
 		}
 	}
 
@@ -144,6 +238,15 @@ function validatePlugin(
 				return {
 					ok: false,
 					error: `command at index ${index} must have a "name" and a "body".`,
+				};
+			}
+			if (
+				typeof command.description !== "string" ||
+				command.description.trim() === ""
+			) {
+				return {
+					ok: false,
+					error: `command at index ${index} must have a string "description".`,
 				};
 			}
 		}
@@ -174,6 +277,27 @@ function collidingTool(
 		const owner = toolOwners.get(tool.name);
 		if (owner !== undefined) {
 			return `tool "${tool.name}" collides with the tool "${tool.name}" from plugin "${owner}".`;
+		}
+	}
+	return undefined;
+}
+
+function collidingCommand(
+	plugin: MyAgentPlugin,
+	builtinNames: ReadonlySet<string>,
+	fileNames: ReadonlySet<string>,
+	owners: ReadonlyMap<string, string>,
+): string | undefined {
+	for (const command of plugin.commands ?? []) {
+		if (builtinNames.has(command.name)) {
+			return `command "${command.name}" collides with the built-in command "${command.name}".`;
+		}
+		if (fileNames.has(command.name)) {
+			return `command "${command.name}" collides with the file-based command "${command.name}".`;
+		}
+		const owner = owners.get(command.name);
+		if (owner !== undefined) {
+			return `command "${command.name}" collides with the command "${command.name}" from plugin "${owner}".`;
 		}
 	}
 	return undefined;

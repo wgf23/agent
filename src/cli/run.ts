@@ -217,7 +217,7 @@ export async function runHeadless(
 				...(semanticTool === undefined ? [] : [semanticTool]),
 			],
 			hooks: resolved.config.hooks,
-			extraInstructions: plugins.systemPrompt || undefined,
+			extraInstructions: plugins.extraInstructions || undefined,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {

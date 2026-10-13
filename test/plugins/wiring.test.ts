@@ -75,6 +75,51 @@ describe("runHeadless with plugins", () => {
 		});
 	});
 
+	it("delivers a tool error when a plugin tool throws at execute time", async () => {
+		const plugin = path.join(workspaceRoot, "thrower.mjs");
+		await writeFile(
+			plugin,
+			'export default { name: "thrower", tools: [{ name: "boom", description: "Boom", readOnly: true, execute() { throw new Error("boom"); } }] };\n',
+			"utf8",
+		);
+		await writeFile(
+			path.join(workspaceRoot, "my-agent.json"),
+			JSON.stringify({ plugins: [plugin] }),
+			"utf8",
+		);
+
+		const provider = createMockProvider([
+			[
+				{ type: "tool_call", id: "call_1", name: "boom", args: {} },
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "handled" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		const code = await runHeadless({
+			prompt: "boom",
+			provider,
+			workspaceRoot,
+			env: { DEEPSEEK_API_KEY: "test-key" },
+			homeDir: workspaceRoot,
+			yesAll: true,
+		});
+
+		expect(code).toBe(0);
+		const toolMessage = provider.requests[1].messages.find(
+			(message) => message.role === "tool",
+		);
+		expect(toolMessage).toEqual({
+			role: "tool",
+			toolCallId: "call_1",
+			content: "boom failed: boom",
+			isError: true,
+		});
+	});
+
 	it("leaves the tool list unchanged with no plugins configured", async () => {
 		const provider = createMockProvider([
 			[

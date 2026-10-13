@@ -278,7 +278,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 				taskTool,
 				...(semanticTool === undefined ? [] : [semanticTool]),
 			]}
-			extraInstructions={plugins.systemPrompt || undefined}
+			extraInstructions={plugins.extraInstructions || undefined}
 			pluginCommands={plugins.commands}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}

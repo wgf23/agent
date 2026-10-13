@@ -234,13 +234,13 @@ The backend is detected once per process.
 
 ### Windows
 
-On Windows the backend is a PowerShell helper that runs the command inside a Windows Job Object. It writes itself once per process to `<tmp>/my-agent-sandbox-<uid>/windows-helper.ps1` and then:
+On Windows the backend is a PowerShell helper that runs the command inside a Windows Job Object. This backend has never been run on a real Windows host; it is unverified, so test it before relying on it. The helper writes itself once per process to `<tmp>/my-agent-sandbox-<uid>/windows-helper.ps1` and is intended to:
 
-- Creates a job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so every process in the tree is killed when the job handle closes. A descendant that outlives `cmd.exe` is torn down when the helper exits.
-- Caps the job at 64 active processes.
-- Runs `cmd.exe /d /s /c <command>` from the workspace root via `pwsh` (or `powershell.exe`), assigns it to the job, and exits with its code.
+- Create a job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so every process in the tree is killed when the job handle closes.
+- Cap the job at 64 active processes.
+- Write the command to a temporary `.cmd` file and run it through `cmd.exe` from the workspace root via `pwsh` (or `powershell.exe`), exiting with the command's code and killing the job if the command does not exit within a bounded timeout.
 
-It enforces process-tree lifecycle and the process cap only. It does **not** isolate the filesystem or block the network, so `sandbox.mode = "require"` refuses to run on Windows rather than pretend otherwise, and `auto` attaches a warning to the tool output. This backend is unverified on a real Windows host; test it before relying on it.
+It is intended to enforce process-tree lifecycle and the process cap only. It does **not** isolate the filesystem and does **not** block the network, so `sandbox.mode = "require"` refuses to run on Windows rather than pretend otherwise, and `auto` attaches a warning to the tool output.
 
 ### Sandbox limits
 

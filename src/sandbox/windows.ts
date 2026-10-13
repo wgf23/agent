@@ -74,13 +74,14 @@ public static class SandboxJob
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr hObject);
 
-    private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+    private const uint JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008;
+    private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
 
     public static uint SetLimits(IntPtr hJob, uint activeProcessLimit)
     {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
         info.BasicLimitInformation.ActiveProcessLimit = activeProcessLimit;
         uint length = (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
         if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, ref info, length))
@@ -99,6 +100,7 @@ function Fail {
 }
 
 $ActiveProcessLimit = 64
+$TimeoutMs = 60000
 
 $job = [SandboxJob]::CreateJobObject([IntPtr]::Zero, $null)
 if ($job -eq [IntPtr]::Zero) {
@@ -114,9 +116,16 @@ if ($err -ne 0) {
 $comSpec = $env:ComSpec
 if ([string]::IsNullOrEmpty($comSpec)) { $comSpec = "cmd.exe" }
 
+# cmd.exe corrupts a command that contains quotes or a trailing backslash when
+# passed inline, so write the command to a temp .cmd file and run that instead.
+$cmdFile = [System.IO.Path]::Combine(
+    [System.IO.Path]::GetTempPath(),
+    ("my-agent-" + [System.Guid]::NewGuid().ToString("N") + ".cmd"))
+[System.IO.File]::WriteAllText($cmdFile, $Command + [Environment]::NewLine)
+
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $comSpec
-$psi.Arguments = '/d /s /c "' + $Command + '"'
+$psi.Arguments = '/d /s /c ""' + $cmdFile + '""'
 $psi.WorkingDirectory = $Cwd
 $psi.UseShellExecute = $false
 
@@ -128,13 +137,23 @@ if (-not [SandboxJob]::AssignProcessToJobObject($job, $process.Handle)) {
     $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
     try { $process.Kill() } catch { }
     [SandboxJob]::CloseHandle($job) | Out-Null
+    Remove-Item -LiteralPath $cmdFile -ErrorAction SilentlyContinue
     Fail ("AssignProcessToJobObject failed, win32 error {0}" -f $err)
 }
 
-$process.WaitForExit()
+if (-not $process.WaitForExit($TimeoutMs)) {
+    # Closing the job handle kills every process in the tree; kill the root too
+    # in case it has not been assigned to the job yet.
+    [SandboxJob]::CloseHandle($job) | Out-Null
+    try { $process.Kill() } catch { }
+    Remove-Item -LiteralPath $cmdFile -ErrorAction SilentlyContinue
+    Fail ("command did not exit within $TimeoutMs ms")
+}
+
 $code = $process.ExitCode
 
 [SandboxJob]::CloseHandle($job) | Out-Null
+Remove-Item -LiteralPath $cmdFile -ErrorAction SilentlyContinue
 exit $code
 `;
 

@@ -139,7 +139,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		],
 		compaction: resolved.config.compaction,
 		hooks: resolved.config.hooks,
-		extraInstructions: plugins.systemPrompt || undefined,
+		extraInstructions: plugins.extraInstructions || undefined,
 		allowAll,
 		runtime,
 	} satisfies HubOptions;

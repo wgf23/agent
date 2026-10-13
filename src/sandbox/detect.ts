@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import path from "node:path";
 import { ensureHelperFile, helperFilePath } from "./landlock.js";
 import { ensureWindowsHelperFile } from "./windows.js";
@@ -86,18 +86,42 @@ export const systemProbes: DetectProbes = {
 	},
 };
 
-function findExecutable(name: string): string | null {
-	const pathValue = process.env.PATH;
+// Finds a runnable file on PATH. A directory named like the executable must be
+// skipped, and on Windows a name without an extension also matches the PATHEXT
+// extensions (e.g. "pwsh" finds "pwsh.exe").
+export function findExecutable(
+	name: string,
+	pathValue = process.env.PATH,
+): string | null {
 	if (pathValue === undefined) return null;
+	const names = [name];
+	if (process.platform === "win32" && path.extname(name) === "") {
+		for (const extension of pathextExtensions()) names.push(name + extension);
+	}
 	for (const dir of pathValue.split(path.delimiter)) {
 		if (dir === "") continue;
-		const candidate = path.join(dir, name);
-		try {
-			accessSync(candidate, constants.X_OK);
-			return candidate;
-		} catch {
-			// Not here; keep looking.
+		for (const entry of names) {
+			const candidate = path.join(dir, entry);
+			try {
+				if (statSync(candidate).isFile()) {
+					accessSync(candidate, constants.X_OK);
+					return candidate;
+				}
+			} catch {
+				// Not here or not runnable; keep looking.
+			}
 		}
 	}
 	return null;
+}
+
+const WINDOWS_PATHEXT = [".exe", ".cmd", ".bat", ".com"];
+
+function pathextExtensions(): string[] {
+	const value = process.env.PATHEXT;
+	if (value === undefined) return WINDOWS_PATHEXT;
+	return value
+		.split(";")
+		.map((extension) => extension.trim().toLowerCase())
+		.filter((extension) => extension.startsWith(".") && extension.length > 1);
 }
