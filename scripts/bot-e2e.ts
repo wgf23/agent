@@ -5,7 +5,11 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ServerEvent } from "../shared/protocol.js";
+import type {
+	BotTranscriptResponse,
+	MemoryListResponse,
+	ServerEvent,
+} from "../shared/protocol.js";
 import {
 	type BotRecord,
 	botRecordSchema,
@@ -32,11 +36,16 @@ const PHASE3_TEXT = "What is my name?";
 // The wake interval is fixed by the brief; a turn must finish inside it for the
 // scheduler to ever hand the loop back an idle moment.
 const WAKE_EVERY_MS = 3000;
+// Phase 8 re-arms the live timer to this interval and prompt, both fixed by the
+// brief, so the turn it eventually commits proves the route reached the timer.
+const WAKE_SET_EVERY_MS = 2500;
+const WAKE_SET_PROMPT = "Say the single word: tock";
 const POLL_MS = 200;
 const MEMORY_TIMEOUT_MS = 45_000;
 const ANSWER_TIMEOUT_MS = 45_000;
 const READY_TIMEOUT_MS = 30_000;
 const SWITCH_TIMEOUT_MS = 60_000;
+const WAKE_SET_TIMEOUT_MS = 30_000;
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxBin = resolveTsx();
@@ -218,6 +227,177 @@ try {
 		);
 	} finally {
 		events.abort();
+	}
+
+	// Phase 6: the transcript route reloads a bot's session from the ledger. The
+	// workspace switch in phase 5 threw away the in-memory channel, so the ask is
+	// re-opened by its ledger session id first: the route then replays exactly
+	// that session's turns, which is the reload the web panel does on selection.
+	phase = 6;
+	const listed = await getTranscript(server.port, BOT);
+	assert(
+		listed.sessions.length >= 1,
+		`GET /api/bots/${BOT}/transcript listed ${listed.sessions.length} sessions`,
+	);
+	const askTurn = parseLedger(await readFile(ledgerPath, "utf8")).turns.find(
+		(turn) => turnHasText(turn, PHASE3_TEXT),
+	);
+	assert(
+		askTurn !== undefined,
+		`no committed turn recorded ${JSON.stringify(PHASE3_TEXT)}`,
+	);
+	const askSessionId = askTurn.sessionId;
+	const openedAsk = await postJson(server.port, "/api/sessions/open", {
+		bot: BOT,
+		id: askSessionId,
+	});
+	assert(
+		openedAsk.status === 200,
+		`POST /api/sessions/open returned ${openedAsk.status}`,
+	);
+	const transcript = await getTranscript(server.port, BOT);
+	assert(
+		transcript.sessionId === askSessionId,
+		`the replayed session is ${transcript.sessionId}, expected ${askSessionId}`,
+	);
+	assert(
+		transcript.messages.some(
+			(message) =>
+				message.role === "user" &&
+				message.text.toLowerCase().includes(PHASE3_TEXT.toLowerCase()),
+		),
+		`the replayed transcript is missing the ask ${JSON.stringify(PHASE3_TEXT)}`,
+	);
+	console.log(
+		`PASS phase 6 transcript: session ${transcript.sessionId} replayed from the ledger, ${transcript.messages.length} messages including the ask, ${transcript.sessions.length} session summary(ies)`,
+	);
+
+	// Phase 7: read the memory over the route, forget one fact by id, and prove
+	// the ledger on disk dropped it too, not just the API view.
+	phase = 7;
+	const memoryBefore = await getMemory(server.port, BOT);
+	const fact = memoryBefore.entries.find(
+		(entry) => entry.kind === "fact" && entry.text.includes(MEMORY_NEEDLE),
+	);
+	assert(
+		fact !== undefined,
+		`GET /api/bots/${BOT}/memory has no fact containing ${JSON.stringify(MEMORY_NEEDLE)}`,
+	);
+	const forgotten = await postJson(
+		server.port,
+		`/api/bots/${BOT}/memory/forget`,
+		{ id: fact.id },
+	);
+	assert(
+		forgotten.status === 200,
+		`POST /api/bots/${BOT}/memory/forget returned ${forgotten.status}`,
+	);
+	const memoryAfter = await getMemory(server.port, BOT);
+	assert(
+		!memoryAfter.entries.some((entry) => entry.id === fact.id),
+		`the memory list still contains ${fact.id} after forget`,
+	);
+	// The ledger's turns keep the phase-1 remember tool output ("Remembered as
+	// <id>."), so the id can never vanish from the raw bytes; what must vanish is
+	// the memory entry, both as a standalone entry and as a supersedes target.
+	const diskRecord = parseLedger(await readFile(ledgerPath, "utf8"));
+	assert(
+		!diskRecord.memory.some((entry) => entry.id === fact.id),
+		`the ledger on disk still lists ${fact.id} as a memory entry after forget`,
+	);
+	assert(
+		!diskRecord.memory.some((entry) => entry.supersedes.includes(fact.id)),
+		`the ledger on disk still references ${fact.id} in a supersedes list after forget`,
+	);
+	console.log(
+		`PASS phase 7 memory forget: ${memoryBefore.entries.length} -> ${memoryAfter.entries.length} entries, dropped fact ${fact.id} ${JSON.stringify(fact.text)} from the API and the on-disk memory`,
+	);
+
+	// Phase 8: setting the wake writes the project file and re-arms the live
+	// timer. Only a turn committed after the POST proves the timer, not just the
+	// file, was reached.
+	phase = 8;
+	const wakeBaseline = new Set(
+		parseLedger(await readFile(ledgerPath, "utf8")).turns.map(
+			(turn) => turn.id,
+		),
+	);
+	const setWake = await postJson(server.port, `/api/bots/${BOT}/wake`, {
+		everyMs: WAKE_SET_EVERY_MS,
+		prompt: WAKE_SET_PROMPT,
+	});
+	assert(
+		setWake.status === 200,
+		`POST /api/bots/${BOT}/wake returned ${setWake.status}`,
+	);
+	const reWoken = await waitForWakeTurn(
+		ledgerPath,
+		wakeBaseline,
+		WAKE_SET_PROMPT,
+		WAKE_SET_TIMEOUT_MS,
+	);
+	const project = JSON.parse(
+		await readFile(path.join(workspace, "my-agent.json"), "utf8"),
+	) as {
+		robs?: Array<{
+			name?: string;
+			wake?: { everyMs?: number; prompt?: string };
+		}>;
+	};
+	const savedRob = project.robs?.find((entry) => entry.name === BOT);
+	assert(
+		savedRob?.wake?.everyMs === WAKE_SET_EVERY_MS,
+		`my-agent.json wake everyMs is ${savedRob?.wake?.everyMs}, expected ${WAKE_SET_EVERY_MS}`,
+	);
+	assert(
+		savedRob?.wake?.prompt === WAKE_SET_PROMPT,
+		`my-agent.json wake prompt is ${JSON.stringify(savedRob?.wake?.prompt)}, expected ${JSON.stringify(WAKE_SET_PROMPT)}`,
+	);
+	console.log(
+		`PASS phase 8 wake set live: project file re-armed to everyMs=${savedRob?.wake?.everyMs} prompt=${JSON.stringify(savedRob?.wake?.prompt)}, and a later turn carries ${JSON.stringify(`[wake:interval] ${WAKE_SET_PROMPT}`)} after ${reWoken.ms} ms`,
+	);
+
+	// Phase 9: the collision fix. A bot's session list has its own event; the
+	// timer must keep running without a chat `sessions` event, or the sidebar
+	// would replace the workspace chat's list with the bot's. The window closes
+	// on a real interval tick, so timer activity is inside it.
+	phase = 9;
+	const collisionEvents = openEvents(server.port);
+	try {
+		await collisionEvents.next((event) => event.type === "hello");
+		const created = await postJson(server.port, "/api/sessions/new", {
+			bot: BOT,
+		});
+		assert(
+			created.status === 200,
+			`POST /api/sessions/new returned ${created.status}`,
+		);
+		const firstSession = await collisionEvents.next(
+			(event) => event.type === "sessions" || event.type === "bot_sessions",
+		);
+		assert(
+			firstSession.type === "bot_sessions" && firstSession.bot === BOT,
+			`the first session event after creating a bot session was ${JSON.stringify(firstSession)}, expected bot_sessions for ${BOT}`,
+		);
+		const seen: ServerEvent[] = [];
+		await collisionEvents.next((event) => {
+			seen.push(event);
+			return (
+				event.type === "notice" &&
+				event.bot === BOT &&
+				event.text === "woke on interval"
+			);
+		});
+		const clobber = seen.filter((event) => event.type === "sessions");
+		assert(
+			clobber.length === 0,
+			`${clobber.length} chat sessions event(s) arrived while the timer ran`,
+		);
+		console.log(
+			`PASS phase 9 collision guard: first session event is bot_sessions for ${BOT} (${firstSession.sessions.length} summary(ies)), and ${seen.length} events through the next interval tick carried no chat sessions event`,
+		);
+	} finally {
+		collisionEvents.abort();
 	}
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);
@@ -535,6 +715,57 @@ async function waitForIntervalTurn(
 	throw new Error(
 		`no turn was committed with wake "interval" within ${timeoutMs} ms`,
 	);
+}
+
+// Polls the ledger for an interval turn committed after the wake was set whose
+// recorded user text carries the new prompt, so only a re-armed live timer can
+// satisfy it: the old prompt's turns are all in the baseline.
+async function waitForWakeTurn(
+	filePath: string,
+	baseline: ReadonlySet<string>,
+	prompt: string,
+	timeoutMs: number,
+): Promise<{ ms: number }> {
+	const start = Date.now();
+	const deadline = start + timeoutMs;
+	const needle = `[wake:interval] ${prompt}`;
+	while (Date.now() < deadline) {
+		const record = await readRecord(filePath);
+		if (record !== undefined) {
+			for (const turn of record.turns) {
+				if (baseline.has(turn.id) || turn.wake !== "interval") continue;
+				if (turnHasText(turn, needle)) return { ms: Date.now() - start };
+			}
+		}
+		await delay(POLL_MS);
+	}
+	throw new Error(
+		`no interval turn committed after the wake carried ${JSON.stringify(needle)} within ${timeoutMs} ms`,
+	);
+}
+
+async function getTranscript(
+	port: number,
+	bot: string,
+): Promise<BotTranscriptResponse> {
+	const response = await fetch(`${baseUrl(port)}/api/bots/${bot}/transcript`);
+	assert(
+		response.status === 200,
+		`GET /api/bots/${bot}/transcript returned ${response.status}`,
+	);
+	return (await response.json()) as BotTranscriptResponse;
+}
+
+async function getMemory(
+	port: number,
+	bot: string,
+): Promise<MemoryListResponse> {
+	const response = await fetch(`${baseUrl(port)}/api/bots/${bot}/memory`);
+	assert(
+		response.status === 200,
+		`GET /api/bots/${bot}/memory returned ${response.status}`,
+	);
+	return (await response.json()) as MemoryListResponse;
 }
 
 function assistantText(turn: Turn): string {
