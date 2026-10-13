@@ -1,0 +1,399 @@
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { UsageTotals } from "../agent/agent.js";
+import type { AgentEvent } from "../agent/events.js";
+import { type PermissionRules, resolveAction } from "../permissions/rules.js";
+import type { Message } from "../providers/types.js";
+import {
+	emptyUsage,
+	promptFor,
+	type RobBackend,
+	type TurnResult,
+	toUserMessage,
+} from "./backend.js";
+import type { Inbound, RobName } from "./types.js";
+
+const CLAUDE_COMMAND = "claude";
+const SUMMARY_MAX_CHARS = 200;
+const UI_OUTPUT_MAX_CHARS = 4000;
+
+export const CLAUDE_CONFIG_DIR_ENV = "MY_AGENT_CLAUDE_CONFIG_DIR";
+
+// Our tool name to Claude Code's built-in tool name.
+const CLAUDE_TOOLS: ReadonlyArray<readonly [string, string]> = [
+	["read_file", "Read"],
+	["write_file", "Write"],
+	["edit_file", "Edit"],
+	["glob", "Glob"],
+	["grep", "Grep"],
+	["bash", "Bash"],
+	["web_fetch", "WebFetch"],
+];
+
+const CLAUDE_TO_OURS = new Map(
+	CLAUDE_TOOLS.map(([ours, claude]) => [claude, ours]),
+);
+
+export interface ClaudeBackendOptions {
+	rob: RobName;
+	role: string;
+	// Defaults to "claude"; tests point it at the fake binary.
+	command?: string;
+	model?: string;
+	// Isolates the child's CLAUDE_CONFIG_DIR; tests inject a temp dir.
+	configDir?: string;
+	// Env the child needs beyond process.env, such as the provider key.
+	extraEnv?: Record<string, string>;
+}
+
+// The one place that resolves the claude config dir, mirroring skillsRoot so a
+// test or a user can redirect the whole prefix with one env var. Each rob still
+// gets its own subdirectory under it.
+export function defaultClaudeConfigDir(
+	rob: RobName,
+	env: Record<string, string | undefined> = process.env,
+	homeDir: string = os.homedir(),
+): string {
+	const override = env[CLAUDE_CONFIG_DIR_ENV];
+	const base =
+		override !== undefined && override.trim() !== ""
+			? path.resolve(override)
+			: path.join(homeDir, ".config", "my-agent", "claude");
+	return path.join(base, rob);
+}
+
+// A tool that resolves to allow is exposed via --allowedTools; ask and deny
+// tools are denied via --disallowedTools. Interactive approval is not bridged,
+// so an ask tool is treated as denied instead of left to prompt.
+export function claudeToolAllowlist(rules: PermissionRules): {
+	allowed: string[];
+	disallowed: string[];
+} {
+	const allowed: string[] = [];
+	const disallowed: string[] = [];
+	for (const [tool, claudeTool] of CLAUDE_TOOLS) {
+		const action = resolveAction(rules, tool, "*");
+		if (action === "allow") allowed.push(claudeTool);
+		else disallowed.push(claudeTool);
+	}
+	return { allowed, disallowed };
+}
+
+export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
+	const command = options.command ?? CLAUDE_COMMAND;
+	const configDir = options.configDir ?? defaultClaudeConfigDir(options.rob);
+	// One session per rob, kept across turns so the rob remembers its history.
+	let sessionID: string | null = null;
+
+	return {
+		async run(turn) {
+			await mkdir(configDir, { recursive: true });
+
+			const { allowed, disallowed } = claudeToolAllowlist(turn.rules);
+			const prompt = turn.inbound.map(promptFor).join("\n\n");
+
+			const args = [
+				"-p",
+				prompt,
+				"--output-format",
+				"stream-json",
+				"--verbose",
+				"--append-system-prompt",
+				options.role,
+				...(allowed.length > 0 ? ["--allowedTools", allowed.join(",")] : []),
+				...(disallowed.length > 0
+					? ["--disallowedTools", disallowed.join(",")]
+					: []),
+				...(options.model !== undefined && options.model !== ""
+					? ["--model", options.model]
+					: []),
+			];
+			if (sessionID === null) {
+				sessionID = randomUUID();
+				args.push("--session-id", sessionID);
+			} else {
+				args.push("--resume", sessionID);
+			}
+
+			return runClaude({
+				command,
+				args,
+				cwd: turn.workspaceRoot,
+				env: {
+					...process.env,
+					...options.extraEnv,
+					CLAUDE_CONFIG_DIR: configDir,
+				},
+				signal: turn.signal,
+				onEvent: turn.onEvent,
+				history: turn.history,
+				inbound: turn.inbound,
+			});
+		},
+	};
+}
+
+interface RunClaudeOptions {
+	command: string;
+	args: string[];
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	signal: AbortSignal;
+	onEvent: (event: AgentEvent) => void;
+	history: readonly Message[];
+	inbound: readonly Inbound[];
+}
+
+function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
+	const usage = emptyUsage();
+	const messages: Message[] = [
+		...options.history,
+		...options.inbound.map(toUserMessage),
+	];
+	const emit = options.onEvent;
+	const toolNames = new Map<string, string>();
+	let lastText = "";
+	let failure: string | null = null;
+	let steps = 0;
+	let ended = false;
+	let buffer = "";
+
+	const child = spawn(options.command, options.args, {
+		cwd: options.cwd,
+		stdio: ["ignore", "pipe", "pipe"],
+		env: options.env,
+	});
+
+	return new Promise<TurnResult>((resolve) => {
+		let settled = false;
+
+		const finish = (result: TurnResult): void => {
+			if (settled) return;
+			settled = true;
+			options.signal.removeEventListener("abort", abort);
+			resolve(result);
+		};
+
+		const abort = (): void => {
+			child.kill("SIGKILL");
+		};
+		if (options.signal.aborted) abort();
+		else options.signal.addEventListener("abort", abort, { once: true });
+
+		const conclude = (): void => {
+			if (options.signal.aborted) {
+				emit({ type: "done", reason: "aborted", steps });
+				finish({ ok: false, error: "Turn aborted.", usage, messages });
+				return;
+			}
+			if (failure !== null) {
+				emit({ type: "error", message: failure });
+				emit({ type: "done", reason: "error", steps });
+				finish({ ok: false, error: failure, usage, messages });
+				return;
+			}
+			if (lastText !== "") {
+				messages.push({
+					role: "assistant",
+					content: [{ type: "text", text: lastText }],
+				});
+			}
+			emit({ type: "done", reason: "finished", steps });
+			finish({ ok: true, text: lastText, usage, messages });
+		};
+
+		const handleEvent = (event: unknown): void => {
+			if (event === null || typeof event !== "object") return;
+			const record = event as Record<string, unknown>;
+			switch (record.type) {
+				case "assistant": {
+					const message = record.message;
+					if (!isRecord(message) || !Array.isArray(message.content)) return;
+					steps += 1;
+					for (const block of message.content) {
+						if (!isRecord(block)) continue;
+						if (block.type === "text") {
+							const text = stringField(block.text);
+							if (text !== "") emit({ type: "text_delta", text });
+						} else if (block.type === "tool_use") {
+							const id = stringField(block.id);
+							const name = stringField(block.name);
+							if (id !== "") toolNames.set(id, name);
+							emit({
+								type: "tool_started",
+								id,
+								name: mapToolName(name),
+								args: block.input,
+							});
+						}
+					}
+					return;
+				}
+				case "user": {
+					const message = record.message;
+					if (!isRecord(message) || !Array.isArray(message.content)) return;
+					for (const block of message.content) {
+						if (!isRecord(block) || block.type !== "tool_result") continue;
+						const id = stringField(block.tool_use_id);
+						const text = toolResultText(block.content);
+						const isError = block.is_error === true;
+						emit({
+							type: "tool_finished",
+							id,
+							name: mapToolName(toolNames.get(id) ?? ""),
+							ok: !isError,
+							status: isError ? "error" : "ok",
+							summary: summarize(text),
+							output: capOutput(text),
+						});
+					}
+					return;
+				}
+				case "result": {
+					recordUsage(usage, record.usage, emit);
+					const text = stringField(record.result);
+					if (record.is_error === true) {
+						failure = text !== "" ? text : "claude reported an error.";
+					} else {
+						lastText = text;
+					}
+					ended = true;
+					return;
+				}
+				default:
+					return;
+			}
+		};
+
+		const handleLine = (line: string): void => {
+			const trimmed = line.trim();
+			if (trimmed === "") return;
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(trimmed);
+			} catch {
+				// claude can print non-JSON diagnostics on stdout; they carry no events.
+				return;
+			}
+			handleEvent(parsed);
+		};
+
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			buffer += chunk;
+			let newline = buffer.indexOf("\n");
+			while (newline !== -1) {
+				handleLine(buffer.slice(0, newline));
+				buffer = buffer.slice(newline + 1);
+				newline = buffer.indexOf("\n");
+			}
+		});
+
+		child.on("error", (error) => {
+			if (options.signal.aborted) {
+				emit({ type: "done", reason: "aborted", steps });
+				finish({ ok: false, error: "Turn aborted.", usage, messages });
+				return;
+			}
+			const message = spawnFailureMessage(options.command, error);
+			emit({ type: "error", message });
+			emit({ type: "done", reason: "error", steps });
+			finish({ ok: false, error: message, usage, messages });
+		});
+
+		child.on("close", (code) => {
+			if (settled) return;
+			if (buffer !== "") handleLine(buffer);
+			if (!ended && code !== 0 && options.signal.aborted !== true) {
+				failure = `claude exited with code ${String(code)}.`;
+			}
+			conclude();
+		});
+	});
+}
+
+function recordUsage(
+	totals: UsageTotals,
+	raw: unknown,
+	emit: (event: AgentEvent) => void,
+): void {
+	if (!isRecord(raw)) return;
+	const inputTokens = numberField(raw.input_tokens);
+	const outputTokens = numberField(raw.output_tokens);
+	const cacheHitTokens = numberField(raw.cache_read_input_tokens);
+	const cacheMissTokens = numberField(raw.cache_creation_input_tokens);
+	totals.inputTokens += inputTokens;
+	totals.outputTokens += outputTokens;
+	totals.cacheHitTokens += cacheHitTokens;
+	totals.cacheMissTokens += cacheMissTokens;
+	// claude reports no reasoning tokens in the result usage, so it stays zero.
+	emit({
+		type: "usage",
+		inputTokens,
+		outputTokens,
+		cacheHitTokens,
+		cacheMissTokens,
+		reasoningTokens: 0,
+	});
+}
+
+function spawnFailureMessage(
+	command: string,
+	error: NodeJS.ErrnoException,
+): string {
+	if (error.code === "ENOENT") {
+		return `Cannot start "${command}": command not found on PATH. Install it, or set this bot's backend to native.`;
+	}
+	return `Failed to start "${command}": ${error.message}`;
+}
+
+function mapToolName(claudeName: string): string {
+	return CLAUDE_TO_OURS.get(claudeName) ?? claudeName;
+}
+
+function contentText(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter(
+			(block): block is { type: string; text: string } =>
+				isRecord(block) &&
+				block.type === "text" &&
+				typeof block.text === "string",
+		)
+		.map((block) => block.text)
+		.join("");
+}
+
+function toolResultText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) return contentText(content);
+	return "";
+}
+
+function summarize(text: string): string {
+	const firstLine = text.split("\n")[0] ?? "";
+	return firstLine.length > SUMMARY_MAX_CHARS
+		? `${firstLine.slice(0, SUMMARY_MAX_CHARS)}...`
+		: firstLine;
+}
+
+function capOutput(text: string): string {
+	return text.length > UI_OUTPUT_MAX_CHARS
+		? `${text.slice(0, UI_OUTPUT_MAX_CHARS)}[truncated]`
+		: text;
+}
+
+function stringField(value: unknown): string {
+	return typeof value === "string" ? value : "";
+}
+
+function numberField(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}

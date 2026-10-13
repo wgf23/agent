@@ -190,7 +190,7 @@ The backend is detected once per process.
 
 - Landlock mediates file access and TCP only. UDP and every other protocol are not covered; bubblewrap covers the whole network namespace.
 - Only the `bash` tool is sandboxed. `read_file`, `write_file`, and `edit_file` are not.
-- `opencode` and `pi` rob backends run their own agent and are not sandboxed by this layer.
+- `opencode`, `pi`, and `claude` rob backends run their own agent and are not sandboxed by this layer.
 - macOS and Windows fall back to no sandbox until a seatbelt backend exists.
 
 ## MCP
@@ -213,7 +213,7 @@ Every server tool is namespaced `mcp__<server>__<tool>`, with any character outs
 
 MCP tools default to `ask`, so the dialog approves them like `bash`, and "allow always" persists the exact `mcp__...` name to `my-agent.json`. A server that fails to start prints `mcp <server>: <error>` and does not stop the others. Headless runs print `[mcp] <server>: N tools` for each connected server; the TUI shows the same counts as transcript lines.
 
-Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode connects them once per run: every native rob receives the configured tools, and the connection set is disposed when the team stops. A `cli` rob (`pi` or `opencode`) runs its own tool registry and uses its own MCP configuration instead. A sub-agent a rob starts through `delegate` does not receive MCP tools.
+Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode connects them once per run: every native rob receives the configured tools, and the connection set is disposed when the team stops. A `cli` rob (`pi`, `opencode`, or `claude`) runs its own tool registry and uses its own MCP configuration instead. A sub-agent a rob starts through `delegate` does not receive MCP tools.
 
 ## Hooks
 
@@ -309,6 +309,7 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 
 - `command: "pi"` runs pi; `provider` and `model` are required. It keeps one pi session per rob under `.my-agent/pi-sessions/<name>` and bridges approvals through a pi extension.
 - `command: "opencode"` runs a private, long-lived `opencode serve` process with one persistent session per rob, on its own random local port and password. Its data and state live under `~/.config/my-agent/opencode/<name>/` (via `XDG_DATA_HOME` and `XDG_STATE_HOME`), so rob sessions never appear in your own opencode session list and never contend with your own server for the SQLite database. `provider` and `model` are optional; set both to pin an opencode model that exists in your own opencode setup. The configured provider key (the `apiKeyEnv` value) is forwarded to the child as its environment variable, so a key stored with `my-agent setup` works without exporting anything. Every turn reuses the same session, so the rob remembers earlier messages. Messages that arrive while a turn is running are delivered as `steer` prompts, so an interjection redirects the running turn instead of waiting for the next one. A tool that resolves to `ask` is exposed as an opencode `ask` rule, and every opencode permission request is answered through the rob's own authorizer and the shared approval queue, so you approve it in the same dialog as the rest of the team.
+- `command: "claude"` runs Claude Code, one `claude -p` process per turn. The first turn passes a fresh `--session-id` and later turns `--resume` it, so the rob remembers its history. Its config lives under `~/.config/my-agent/claude/<name>/` (via `CLAUDE_CONFIG_DIR`, overridable with `MY_AGENT_CLAUDE_CONFIG_DIR`) so rob sessions stay out of your own `~/.claude`. `model` is optional; set it to pin a Claude Code model alias. Tools that resolve to `allow` are exposed with `--allowedTools`, and `ask` and `deny` tools are denied with `--disallowedTools`. Interactive approval is not bridged, so an `ask` tool is treated as denied rather than surfaced in the approval dialog.
 
 `send_message` and `delegate` are native-only. Listing either in a `cli` rob's `permissions` is a config error.
 
@@ -318,8 +319,8 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 - `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
 - Context compaction summarizes the older messages with one extra model call when the estimate exceeds the threshold. Reasoning blocks are not part of the estimate because the provider drops them from outbound requests.
 - Sessions are saved so `--continue` resumes them. The compaction summary is a `user` message tagged `[compacted summary]`; it persists, but the model must keep the facts it needs in that summary.
-- Robs that use a `cli` backend (`pi` or `opencode`) cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing either tool in their `permissions` is a config error. Both `cli` backends route `ask`-level tools through the rob's authorizer and the shared approval queue. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook those tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask.
-- CLI backends are `pi` and `opencode`. `claude`, `codex`, and `kimi` are not implemented.
+- Robs that use a `cli` backend (`pi`, `opencode`, or `claude`) cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing either tool in their `permissions` is a config error. The `pi` and `opencode` backends route `ask`-level tools through the rob's authorizer and the shared approval queue; the `claude` backend has no approval bridge, so its `ask` tools are denied instead. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook those tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask.
+- CLI backends are `pi`, `opencode`, and `claude`. `codex` and `kimi` are not implemented.
 
 ## Development
 

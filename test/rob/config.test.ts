@@ -100,4 +100,54 @@ describe("rob config", () => {
 		if (!result.ok) return;
 		expect(result.config.robs).toEqual([]);
 	});
+
+	it("accepts a claude cli backend without a provider or model", async () => {
+		await writeProject({
+			robs: [
+				{
+					name: "reviewer",
+					role: "review",
+					backend: { kind: "cli", command: "claude" },
+				},
+			],
+		});
+
+		const result = resolve();
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.robs).toEqual([
+			{
+				name: "reviewer",
+				role: "review",
+				model: "deepseek-flash",
+				backend: { kind: "cli", command: "claude" },
+			},
+		]);
+	});
+
+	it("accepts a claude cli backend with an optional model", async () => {
+		await writeProject({
+			robs: [
+				{
+					name: "reviewer",
+					role: "review",
+					backend: { kind: "cli", command: "claude", model: "sonnet" },
+				},
+			],
+		});
+
+		const result = resolve();
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.robs).toEqual([
+			{
+				name: "reviewer",
+				role: "review",
+				model: "deepseek-flash",
+				backend: { kind: "cli", command: "claude", model: "sonnet" },
+			},
+		]);
+	});
 });

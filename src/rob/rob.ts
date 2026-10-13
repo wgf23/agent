@@ -12,6 +12,7 @@ import {
 	lastAssistantText,
 	type RobBackend,
 } from "./backend.js";
+import { createClaudeBackend } from "./claude-backend.js";
 import { createCliBackend } from "./cli-backend.js";
 import { AsyncQueue } from "./inbox.js";
 import { createOpencodeBackend } from "./opencode-backend.js";
@@ -24,7 +25,7 @@ import type {
 	RobUsage,
 	TeamPort,
 } from "./types.js";
-import { OPENCODE_CLI_COMMAND } from "./types.js";
+import { CLAUDE_CLI_COMMAND, OPENCODE_CLI_COMMAND } from "./types.js";
 
 export interface AuthorizerInput {
 	name: RobName;
@@ -99,17 +100,24 @@ export class Rob {
 							drain: () => this.inbox.drain(),
 							extraEnv: options.providerEnv,
 						})
-					: createCliBackend({
-							rob: options.name,
-							role: options.role,
-							command: options.backend.command,
-							provider: options.backend.provider ?? "",
-							model: options.backend.model ?? "",
-							sessionDir: options.backend.sessionDir,
-							authorize: this.authorize,
-							drain: () => this.inbox.drain(),
-							extraEnv: options.providerEnv,
-						})
+					: options.backend.command === CLAUDE_CLI_COMMAND
+						? createClaudeBackend({
+								rob: options.name,
+								role: options.role,
+								model: options.backend.model,
+								extraEnv: options.providerEnv,
+							})
+						: createCliBackend({
+								rob: options.name,
+								role: options.role,
+								command: options.backend.command,
+								provider: options.backend.provider ?? "",
+								model: options.backend.model ?? "",
+								sessionDir: options.backend.sessionDir,
+								authorize: this.authorize,
+								drain: () => this.inbox.drain(),
+								extraEnv: options.providerEnv,
+							})
 				: createNativeBackend({
 						name: options.name,
 						provider: options.provider,
