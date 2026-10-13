@@ -2,6 +2,7 @@ import os from "node:os";
 import { bwrapArgv } from "./bwrap.js";
 import type { BackendPlan } from "./detect.js";
 import { landlockArgv } from "./landlock.js";
+import { windowsArgv } from "./windows.js";
 
 export type SandboxMode = "auto" | "require" | "off";
 
@@ -43,6 +44,14 @@ export type BashPlanFn = (input: {
 export const NO_BACKEND_REASON =
 	'Sandboxing is required (sandbox.mode = "require") but no sandbox backend is available. Install bubblewrap, or set sandbox.mode to "auto" or "off".';
 
+// The Windows backend only owns process-tree lifecycle; it cannot isolate the
+// filesystem or the network, so it never pretends to.
+export const WINDOWS_WARNING =
+	"Windows sandbox only manages the process lifecycle; the filesystem and network are not isolated";
+
+export const WINDOWS_REQUIRE_REASON =
+	'Sandboxing is required (sandbox.mode = "require") but the Windows backend only manages the process lifecycle, not filesystem or network isolation. Set sandbox.mode to "auto" or "off".';
+
 export function planSandboxedBash(input: PlanSandboxedBashInput): SandboxPlan {
 	const { command, workspaceRoot, settings, plan } = input;
 
@@ -71,6 +80,20 @@ export function planSandboxedBash(input: PlanSandboxedBashInput): SandboxPlan {
 				writableRoots,
 				network: settings.network,
 			}),
+		};
+	}
+	if (plan.backend === "windows") {
+		if (settings.mode === "require") {
+			return { run: false, reason: WINDOWS_REQUIRE_REASON };
+		}
+		return {
+			run: true,
+			...windowsArgv({
+				command,
+				pwsh: plan.pwsh,
+				workspaceRoot,
+			}),
+			warning: WINDOWS_WARNING,
 		};
 	}
 	return {

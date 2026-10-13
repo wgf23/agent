@@ -3,9 +3,13 @@ import { type DetectProbes, detectBackends } from "../../src/sandbox/detect.js";
 
 function probes(overrides: Partial<DetectProbes> = {}): DetectProbes {
 	return {
+		platform: "linux",
 		bwrap: async () => false,
 		python: async () => null,
 		landlockAbi: async () => null,
+		pwsh: async () => null,
+		powershell: async () => null,
+		windowsHelper: async () => true,
 		...overrides,
 	};
 }
@@ -67,5 +71,58 @@ describe("detectBackends", () => {
 		await detectBackends(shared);
 
 		expect(calls).toBe(1);
+	});
+
+	it("picks windows on win32 when pwsh is on PATH", async () => {
+		const plan = await detectBackends(
+			probes({
+				platform: "win32",
+				pwsh: async () => "C:/Program Files/PowerShell/7/pwsh.exe",
+			}),
+		);
+
+		expect(plan).toEqual({
+			backend: "windows",
+			pwsh: "C:/Program Files/PowerShell/7/pwsh.exe",
+		});
+	});
+
+	it("falls back to powershell.exe on win32 when pwsh is absent", async () => {
+		const plan = await detectBackends(
+			probes({
+				platform: "win32",
+				powershell: async () =>
+					"C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+			}),
+		);
+
+		expect(plan).toEqual({
+			backend: "windows",
+			pwsh: "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+		});
+	});
+
+	it("picks none with the windows reason on win32 when no shell is on PATH", async () => {
+		const plan = await detectBackends(probes({ platform: "win32" }));
+
+		expect(plan).toEqual({
+			backend: "none",
+			reason: "no pwsh or powershell.exe on PATH",
+		});
+	});
+
+	it("picks none on win32 when the helper cannot be written", async () => {
+		const plan = await detectBackends(
+			probes({
+				platform: "win32",
+				pwsh: async () => "C:/pwsh.exe",
+				windowsHelper: async () => false,
+			}),
+		);
+
+		expect(plan).toEqual({
+			backend: "none",
+			reason: "could not write the Windows sandbox helper",
+		});
 	});
 });
