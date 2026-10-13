@@ -5,15 +5,10 @@ import Composer from "./components/Composer";
 import MessageList from "./components/MessageList";
 import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
-import SessionTabs from "./components/SessionTabs";
 import SettingsDialog from "./components/SettingsDialog";
-import Sidebar from "./components/Sidebar";
-import StatusBar from "./components/StatusBar";
-import TopBar from "./components/TopBar";
+import Sidebar, { type View } from "./components/Sidebar";
 import { robBots, workspaceBot } from "./state";
 import { useHub } from "./useHub";
-
-type View = "chat" | "plaza";
 
 export default function App() {
 	const hub = useHub();
@@ -48,69 +43,89 @@ export default function App() {
 		loadSettings().catch(() => {});
 	}, [loadSettings]);
 
+	const openBot = (name: string) => {
+		setSelectedBot(name);
+		setView("chat");
+	};
+
 	return (
 		<div className="app">
-			<TopBar
+			<Sidebar
 				view={view}
 				onViewChange={setView}
-				model={state.model}
-				connection={state.connection}
-				provider={state.provider}
+				workspace={workspace ?? null}
+				robs={robs}
+				botStates={state.botStates}
+				sessions={state.sessions}
+				activeSessionId={state.activeSessionId}
+				selectedBot={botName}
+				onSelectBot={openBot}
+				allowAll={state.allowAll}
+				onToggleAllowAll={hub.setAllowAll}
+				onNewSession={hub.newSession}
+				onOpenSession={hub.openSession}
+				onCreateBot={() => setDialogOpen(true)}
 				onOpenSettings={hub.openSettings}
+				usage={state.usage}
+				connection={state.connection}
 			/>
-			<div className="app-body">
-				<Sidebar
-					workspace={workspace ?? null}
-					robs={robs}
-					botStates={state.botStates}
-					sessions={state.sessions}
-					activeSessionId={state.activeSessionId}
-					selectedBot={botName}
-					onSelectBot={setSelectedBot}
-					allowAll={state.allowAll}
-					onToggleAllowAll={hub.setAllowAll}
-					onNewSession={hub.newSession}
-					onOpenSession={hub.openSession}
-					onCreateBot={() => setDialogOpen(true)}
-				/>
+
+			<div className="main">
+				{state.connection === "closed" && (
+					<div className="banner banner-warn" role="status">
+						连接已断开，正在尝试重连…
+					</div>
+				)}
+				{state.lastError !== null && (
+					<div className="banner banner-error" role="alert">
+						{state.lastError}
+					</div>
+				)}
+
 				{view === "plaza" ? (
 					<BotPlaza
 						bots={robs}
 						botStates={state.botStates}
 						dms={state.dms}
 						notices={state.notices}
+						onOpenBot={openBot}
 						onCreateBot={() => setDialogOpen(true)}
 					/>
 				) : currentBot === null ? (
-					<main className="chat">
-						<div className="empty-state">
+					<div className="empty-page">
+						<p className="empty-title">
 							{state.connection === "connecting"
 								? "正在连接…"
 								: configured
 									? "没有可用的 Bot"
-									: "尚未配置模型"}
-							{!configured && (
+									: "还没有配置模型"}
+						</p>
+						{!configured && state.connection !== "connecting" && (
+							<>
+								<p className="empty-desc">
+									Agent 需要提供方与 API Key 才能运行。
+								</p>
 								<button
 									type="button"
-									className="btn allow-once empty-state-action"
+									className="btn primary"
 									onClick={hub.openSettings}
 								>
 									配置模型
 								</button>
-							)}
-						</div>
-					</main>
+							</>
+						)}
+					</div>
 				) : (
-					<main className="chat">
+					<section className="chat">
 						{!configured && (
-							<div className="config-callout">
-								<div className="config-callout-text">
-									<strong>尚未配置模型</strong>
-									<span>Agent 需要提供方与 API Key 才能运行。</span>
-								</div>
+							<div className="banner banner-warn">
+								<span className="banner-text">
+									<strong>尚未配置模型。</strong>
+									配置提供方与 API Key 后即可开始对话。
+								</span>
 								<button
 									type="button"
-									className="btn allow-once"
+									className="btn primary small"
 									onClick={hub.openSettings}
 								>
 									配置模型
@@ -118,34 +133,31 @@ export default function App() {
 							</div>
 						)}
 						<BotHeader bot={currentBot} state={botState} />
-						{currentBot.kind === "workspace" && (
-							<SessionTabs
-								sessions={state.sessions}
-								activeSessionId={state.activeSessionId}
-								botName={currentBot.name}
-								onOpenSession={hub.openSession}
-							/>
-						)}
-						<MessageList messages={messages} />
+						<MessageList
+							key={currentBot.name}
+							botName={currentBot.name}
+							messages={messages}
+							workspaceRoot={state.workspaceRoot}
+							working={botState?.status === "working"}
+						/>
 						<Composer
-							model={state.model}
+							model={currentBot.model || state.model}
 							status={botState?.status ?? "idle"}
 							configured={configured}
 							onSend={(text) => hub.send(currentBot.name, text)}
 							onInterrupt={() => hub.interrupt(currentBot.name)}
 						/>
-					</main>
+					</section>
 				)}
 			</div>
-			<StatusBar
-				usage={state.usage}
-				activeSessionId={state.activeSessionId}
-				connection={state.connection}
-				botKind={currentBot?.kind ?? null}
-				lastError={state.lastError}
-			/>
+
 			{approval !== null && (
-				<PermissionModal request={approval} onRespond={hub.respondApproval} />
+				<PermissionModal
+					key={approval.id}
+					request={approval}
+					queued={state.approvals.length}
+					onRespond={hub.respondApproval}
+				/>
 			)}
 			{dialogOpen && (
 				<NewBotDialog

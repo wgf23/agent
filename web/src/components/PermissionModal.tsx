@@ -1,36 +1,62 @@
+import { useEffect, useRef } from "react";
 import type { ApprovalChoice, ApprovalRequestInfo } from "../protocol";
 
 interface Props {
 	request: ApprovalRequestInfo;
+	queued: number;
 	onRespond: (id: string, decision: ApprovalChoice) => void;
 }
 
-export default function PermissionModal({ request, onRespond }: Props) {
+export default function PermissionModal({ request, queued, onRespond }: Props) {
+	const allowOnceRef = useRef<HTMLButtonElement>(null);
+
+	useEffect(() => {
+		allowOnceRef.current?.focus();
+	}, []);
+
+	// Escape means "deny", the safe default; it never approves.
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				onRespond(request.id, "deny");
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [request.id, onRespond]);
+
 	return (
 		<div className="modal-backdrop">
-			<div className="modal" role="dialog" aria-modal="true">
+			<div className="modal approval" role="alertdialog" aria-modal="true">
 				<div className="modal-header">
-					<span className="modal-title">工具需要审批</span>
-					{request.dangerous && <span className="badge dangerous">危险</span>}
+					<div className="modal-heading">
+						<span className="modal-title">需要确认</span>
+						<span className="modal-subtitle">
+							{request.bot} 请求使用 <code>{request.toolName}</code>
+						</span>
+					</div>
+					<div className="modal-header-badges">
+						{request.dangerous && (
+							<span className="badge dangerous">危险操作</span>
+						)}
+						{queued > 1 && (
+							<span className="badge">另有 {queued - 1} 项待处理</span>
+						)}
+					</div>
 				</div>
 
 				<div className="modal-body">
-					<div className="modal-row">
-						<span className="modal-label">Bot</span>
-						<span className="modal-value">{request.bot}</span>
-					</div>
-					<div className="modal-row">
-						<span className="modal-label">工具</span>
-						<code className="modal-value">{request.toolName}</code>
-					</div>
-					<div className="modal-row subject">
+					<div className="modal-block">
 						<span className="modal-label">参数</span>
-						<code className="modal-value">{request.subject}</code>
+						<pre className="modal-code">
+							<code>{request.subject}</code>
+						</pre>
 					</div>
 					{request.rule !== null && (
-						<div className="modal-row">
-							<span className="modal-label">规则</span>
-							<code className="modal-value">{request.rule}</code>
+						<div className="modal-block">
+							<span className="modal-label">匹配规则</span>
+							<code className="modal-rule">{request.rule}</code>
 						</div>
 					)}
 				</div>
@@ -38,17 +64,19 @@ export default function PermissionModal({ request, onRespond }: Props) {
 				<div className="modal-actions">
 					<button
 						type="button"
-						className="btn allow-once"
-						onClick={() => onRespond(request.id, "allow_once")}
+						className="btn deny"
+						onClick={() => onRespond(request.id, "deny")}
 					>
-						允许一次
+						拒绝
 					</button>
 					<button
 						type="button"
-						className="btn allow-always"
+						className="btn"
 						disabled={request.dangerous}
 						title={
-							request.dangerous ? "危险命令不可永久放行" : "后续同规则不再询问"
+							request.dangerous
+								? "危险命令不可永久放行"
+								: "之后同规则的调用不再询问"
 						}
 						onClick={() => onRespond(request.id, "allow_always")}
 					>
@@ -56,12 +84,14 @@ export default function PermissionModal({ request, onRespond }: Props) {
 					</button>
 					<button
 						type="button"
-						className="btn deny"
-						onClick={() => onRespond(request.id, "deny")}
+						ref={allowOnceRef}
+						className="btn primary"
+						onClick={() => onRespond(request.id, "allow_once")}
 					>
-						拒绝
+						允许一次
 					</button>
 				</div>
+				<p className="modal-keyhint">按 Esc 拒绝</p>
 			</div>
 		</div>
 	);

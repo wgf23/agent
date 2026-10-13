@@ -78,7 +78,11 @@ export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 								// biome-ignore lint/a11y/noAutofocus: focusing the first field when the create dialog opens is intentional
 								autoFocus
 							/>
-							<span className={`field-hint ${!nameValid ? "field-error" : ""}`}>
+							<span
+								className={`field-hint ${
+									name !== "" && !nameValid ? "field-error" : ""
+								}`}
+							>
 								小写字母开头，仅含小写字母、数字与连字符，长度 1–32
 							</span>
 						</label>
