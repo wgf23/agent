@@ -41,13 +41,14 @@ Each entry names the smallest first step and the unblocking condition. Nothing h
 
 ## Smaller follow-ups
 
+Landed in this run (see the branch `feat/agent-capabilities`): **web auth token** on non-loopback
+binds, **`sessions fork <id> [--at n]`**, and **`my-agent init`** to draft `AGENTS.md`. The trail
+rows 11-15 record them. The rest below are still open.
+
 - **rob session persistence.** Persist rob history through `session/store.ts` keyed by rob name;
   web-client.md already lists the in-memory limit.
-- **web auth token.** Generate a token when `--host` is not loopback, require it on `POST`/SSE.
-- **session fork/branch.** Copy a stored session to a new id at a chosen message index.
 - **checkpoint / rewind.** Snapshot edited files to a session-scoped dir before each write; add
   `/rewind`. Git already covers the worst case, so this is convenience.
 - **diff preview before apply.** In the approval dialog, render the pending diff and add a
   "show diff" step for `write_file`/`edit_file`.
-- **`/init`** to generate `AGENTS.md` from a repo scan.
 - **jsdom component tests** for the web client.
