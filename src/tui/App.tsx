@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Box, Text, useApp, useInput } from "ink";
 import type { ReactElement } from "react";
 import {
@@ -29,6 +30,7 @@ import type {
 	ThinkingSetting,
 } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
+import { readImage } from "../util/image.js";
 import type { ApprovalBridge } from "./approval.js";
 import { MessageList } from "./components/MessageList.js";
 import { PermissionDialog } from "./components/PermissionDialog.js";
@@ -79,6 +81,7 @@ interface CommandContext {
 	compact: () => void;
 	system: (line: string) => void;
 	allowAll: (arg: string) => void;
+	attachImage: (path: string) => void;
 }
 
 export function App({
@@ -213,6 +216,7 @@ export function App({
 
 	const send = useCallback(
 		async (text: string) => {
+			const image = state.pendingImage;
 			const controller = new AbortController();
 			controllerRef.current = controller;
 			dispatch({ type: "submit", text, at: Date.now() });
@@ -223,6 +227,7 @@ export function App({
 					model,
 					workspaceRoot,
 					prompt: expanded.text,
+					images: image === null ? undefined : [image],
 					history: historyRef.current,
 					maxSteps,
 					maxCost,
@@ -277,7 +282,29 @@ export function App({
 			extraTools,
 			hooks,
 			onTurnEnd,
+			state.pendingImage,
 		],
+	);
+
+	const attachImage = useCallback(
+		(imagePath: string) => {
+			void (async () => {
+				const result = await readImage(path.resolve(workspaceRoot, imagePath));
+				if (!result.ok) {
+					dispatch({
+						type: "append_system",
+						text: `image: ${result.error}`,
+					});
+					return;
+				}
+				dispatch({ type: "set_image", image: result.image });
+				dispatch({
+					type: "append_system",
+					text: `image attached: ${imagePath}`,
+				});
+			})();
+		},
+		[workspaceRoot],
 	);
 
 	const clear = useCallback(() => {
@@ -344,6 +371,7 @@ export function App({
 					compact,
 					system: (line) => dispatch({ type: "append_system", text: line }),
 					allowAll: setAllowAll,
+					attachImage,
 				});
 				dispatch({ type: "set_input", text: "" });
 				return;
@@ -351,7 +379,7 @@ export function App({
 			if (controllerRef.current !== null) return;
 			void send(text);
 		},
-		[model, exit, clear, compact, send, setAllowAll, commands],
+		[model, exit, clear, compact, send, setAllowAll, attachImage, commands],
 	);
 
 	const cancel = useCallback(() => {
@@ -410,6 +438,7 @@ export function App({
 				thinking={thinking}
 				reasoningEffort={reasoningEffort}
 				allowAll={allowAllOn}
+				pendingImage={state.pendingImage}
 			/>
 		</Box>
 	);
@@ -438,6 +467,15 @@ function runCommand(text: string, context: CommandContext): void {
 		case "/allow-all":
 			context.allowAll(text.slice(command.length).trim());
 			return;
+		case "/image": {
+			const arg = text.slice(command.length).trim();
+			if (arg === "") {
+				context.system("usage: /image <path>");
+				return;
+			}
+			context.attachImage(arg);
+			return;
+		}
 		default:
 			context.system(`Unknown command: ${command}. Type /help.`);
 	}

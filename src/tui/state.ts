@@ -1,6 +1,7 @@
 import { COMPACTED_SUMMARY_PREFIX } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/events.js";
 import type {
+	ImagePart,
 	Message,
 	ReasoningBlock,
 	TextBlock,
@@ -83,6 +84,7 @@ export interface TuiState {
 	permission: PendingPermission | null;
 	menu: MenuState;
 	files: string[];
+	pendingImage: ImagePart | null;
 }
 
 export interface TuiInit {
@@ -114,7 +116,8 @@ export type TuiAction =
 	| { type: "menu_accept"; text: string }
 	| { type: "menu_close" }
 	| { type: "permission"; request: PendingPermission | null }
-	| { type: "files_loaded"; files: string[] };
+	| { type: "files_loaded"; files: string[] }
+	| { type: "set_image"; image: ImagePart };
 
 export const CANCEL_MESSAGE = "[cancelled]";
 
@@ -137,6 +140,7 @@ export function initialTuiState(init: TuiInit): TuiState {
 		permission: null,
 		menu: MENU_NEUTRAL,
 		files: [],
+		pendingImage: null,
 	};
 }
 
@@ -222,6 +226,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				history: [...state.history, text],
 				historyIndex: null,
 				menu: MENU_NEUTRAL,
+				pendingImage: null,
 			};
 		}
 
@@ -242,7 +247,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 		}
 
 		case "clear":
-			return { ...state, messages: [], lastError: null };
+			return { ...state, messages: [], lastError: null, pendingImage: null };
 
 		case "set_input":
 			return {
@@ -336,6 +341,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
 		case "files_loaded":
 			return { ...state, files: action.files };
+
+		case "set_image":
+			return { ...state, pendingImage: action.image };
 
 		case "permission": {
 			if (action.request === null) {
