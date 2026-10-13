@@ -7,7 +7,7 @@ interface Props {
 	onClose: () => void;
 }
 
-type BackendChoice = "native" | "pi" | "opencode";
+type BackendChoice = "native" | "pi" | "opencode" | "claude";
 
 const NAME_RULE = /^[a-z][a-z0-9-]{0,31}$/;
 
@@ -112,6 +112,7 @@ export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 										["native", "内置"],
 										["pi", "pi"],
 										["opencode", "opencode"],
+										["claude", "claude"],
 									] as const
 								).map(([value, label]) => (
 									<button

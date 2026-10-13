@@ -52,7 +52,7 @@ export type BotBackendDraft =
 	| { kind: "native" }
 	| {
 			kind: "cli";
-			command: "pi" | "opencode";
+			command: "pi" | "opencode" | "claude";
 			provider?: string;
 			model?: string;
 	  };

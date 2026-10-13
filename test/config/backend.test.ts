@@ -95,7 +95,9 @@ describe("rob backend schema", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.error).toContain('Unsupported CLI command "codex"');
-		expect(result.error).toContain('Only "pi" and "opencode" are supported');
+		expect(result.error).toContain(
+			'Only "pi", "opencode", and "claude" are supported',
+		);
 	});
 
 	it("accepts an opencode cli backend with a provider and model", () => {
