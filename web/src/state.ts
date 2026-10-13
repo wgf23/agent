@@ -76,7 +76,10 @@ export type ClientAction =
 	| { type: "settings_error"; error: string | null }
 	| { type: "agents_loaded"; agents: AgentStatusView[] }
 	| { type: "memory_loaded"; bot: string; entries: MemoryEntryView[] }
-	| { type: "auth_error"; authError: boolean };
+	| { type: "auth_error"; authError: boolean }
+	// A request this client made was refused (not an SSE error): the server's
+	// reason goes to the same banner so it is never swallowed.
+	| { type: "request_error"; error: string };
 
 export function initialState(): ClientState {
 	return {
@@ -189,6 +192,9 @@ export function clientReducer(
 
 		case "auth_error":
 			return { ...state, authError: action.authError };
+
+		case "request_error":
+			return { ...state, lastError: action.error };
 
 		case "server":
 			return applyServerEvent(state, action.event);
@@ -315,8 +321,19 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			return next;
 		}
 
-		case "approval_requested":
-			return { ...state, approvals: [...state.approvals, event.request] };
+		// A queued request is announced twice: once with no deadline, then again when
+		// it becomes the head and the server arms its window. Replacing in place
+		// keeps one entry per id and, critically, keeps the FIFO order the modal
+		// renders from.
+		case "approval_requested": {
+			const index = state.approvals.findIndex((a) => a.id === event.request.id);
+			if (index === -1) {
+				return { ...state, approvals: [...state.approvals, event.request] };
+			}
+			const approvals = [...state.approvals];
+			approvals[index] = event.request;
+			return { ...state, approvals };
+		}
 
 		case "approval_resolved":
 			return {

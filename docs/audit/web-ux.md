@@ -62,6 +62,7 @@ as `docs/audit/bot-architecture-trail.tsv`.
 | 2026-10-13 | unit 2 | Per-bot client data layer keyed by name, so a bot's list cannot touch the chat's, and a 401 becomes `authError`. | commit 18c9f4a; `test/web/state.test.ts`, `test/web/api.test.ts` |
 | 2026-10-13 | unit 3 | The panels: bot session list, memory delete, wake tab, and the auth banner. | commit 03bd557; vite build green; rendered UI unverified |
 | 2026-10-13 | unit 4 | `scripts/bot-e2e.ts` drove the four surfaces on the real server; phase 9 was shown to fail under the old `sessions` emit, then reverted; README/CHANGELOG/audit written. | this commit; `pnpm bot:e2e` nine PASS |
+| 2026-10-13 | hardening | Closed the review's web-side findings and added image input: the deadline reaches the dialog, a memory delete confirms and can fail visibly, the three other swallowed calls report, and the composer attaches images under the CLI's caps. | this commit; `test/serve/send-images-http.test.ts`, `test/web/images.test.ts`, `test/web/countdown.test.ts`, `test/web/state.test.ts`, `test/web/api.test.ts` |
 
 ## Verdicts
 
@@ -120,5 +121,13 @@ Named rather than assumed:
 - **The approval timeout is unit-tested, not driven live.** No phase leaves an approval
   unanswered against the real server; the timeout is covered by `test/rob/approvals.test.ts` with
   an injected scheduler.
+- **The composer, the file picker, and the countdown were never rendered.** There is no browser
+  in this environment. The pieces that can be proven without one are: the composer's validation
+  and base64 encoding (`test/web/images.test.ts`), the countdown's arithmetic
+  (`test/web/countdown.test.ts`), that a posted image reaches the turn's first user message for
+  both the chat and a rob (`test/serve/send-images-http.test.ts`), and that the deadline survives
+  the reducer. Not proven: the chip list, the picker interaction, the ticking label, the confirm
+  row, and any real model turn over an attachment — the DeepSeek key is overdrawn, so a vision
+  turn could not run here even with a browser.
 - **External-CLI backends were not driven at all**, and the interval wake remains the only
   trigger. Both are unchanged from the bot-architecture run.

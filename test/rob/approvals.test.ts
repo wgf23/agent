@@ -174,6 +174,64 @@ describe("ApprovalQueue", () => {
 		expect(queue.pending()).toEqual([]);
 	});
 
+	it("reports a deadline only once the window is armed", async () => {
+		const queue = new ApprovalQueue();
+		const schedule = () => () => undefined;
+
+		const first = queue.request("planner", request("a.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		// The head is armed at enqueue, so the client can count it down.
+		expect(queue.deadline(first.id)).not.toBeNull();
+
+		const second = queue.request("worker", request("b.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		// A queued request has no window yet, so it has no deadline to show.
+		expect(queue.deadline(second.id)).toBeNull();
+
+		queue.resolve(first.id, "allow_once");
+		expect(await first.decision).toBe("allow_once");
+		// Promotion starts the window, and only now is there a deadline.
+		const deadline = queue.deadline(second.id);
+		expect(deadline).not.toBeNull();
+		expect(deadline as number).toBeGreaterThan(Date.now());
+
+		queue.denyAll("stopped");
+		// Once taken, the request is gone and so is its deadline.
+		expect(queue.deadline(second.id)).toBeNull();
+	});
+
+	it("announces the deadline when a queued request is promoted", async () => {
+		const armed: Array<{ id: string; expiresAt: number }> = [];
+		const queue = new ApprovalQueue({
+			onArm: (pending, expiresAt) => {
+				armed.push({ id: pending.id, expiresAt });
+			},
+		});
+		const schedule = () => () => undefined;
+
+		const first = queue.request("planner", request("a.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		const second = queue.request("worker", request("b.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		// The head's emitter announces it right after enqueue, so arming it
+		// here must not announce it twice.
+		expect(armed).toEqual([]);
+
+		queue.resolve(first.id, "allow_once");
+		expect(await first.decision).toBe("allow_once");
+		expect(armed).toHaveLength(1);
+		expect(armed[0].id).toBe(second.id);
+		expect(armed[0].expiresAt).toBe(queue.deadline(second.id));
+	});
+
 	it("starts the next request's window when the head resolves", async () => {
 		const queue = new ApprovalQueue();
 		const timers: Array<() => void> = [];

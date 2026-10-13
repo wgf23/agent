@@ -65,6 +65,20 @@ const invocations: Array<{
 		body: { bot: "b", text: "hi" },
 	},
 	{
+		name: "sendWithImages",
+		run: (api) =>
+			api.send("b", "look", [
+				{ type: "image", mediaType: "image/png", data: "iVBORw0KGgo=" },
+			]),
+		path: "/api/send",
+		method: "POST",
+		body: {
+			bot: "b",
+			text: "look",
+			images: [{ type: "image", mediaType: "image/png", data: "iVBORw0KGgo=" }],
+		},
+	},
+	{
 		name: "interrupt",
 		run: (api) => api.interrupt("b"),
 		path: "/api/interrupt",
@@ -253,6 +267,27 @@ describe("response handling", () => {
 		await expect(
 			api.saveProvider({ preset: "deepseek", model: "m" }),
 		).rejects.toThrow("保存设置失败 (401)");
+	});
+
+	// The composer blocks an over-cap or unsupported file locally; the route is
+	// the second gate, and its reason is what the user is shown.
+	it("surfaces the server's refusal on send", async () => {
+		const api = createApi({
+			token: null,
+			fetchImpl: (async () =>
+				new Response(
+					JSON.stringify({
+						error: 'Unsupported image type "image/bmp": allowed types are ...',
+					}),
+					{ status: 400, headers: { "Content-Type": "application/json" } },
+				)) as typeof fetch,
+		});
+		await expect(
+			api.send("b", "hi", [
+				{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+			]),
+		).rejects.toThrow('Unsupported image type "image/bmp"');
+		await expect(api.send("b", "hi")).rejects.toMatchObject({ status: 400 });
 	});
 
 	it("carries the status on a 401 so the hub can flag the token", async () => {

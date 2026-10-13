@@ -113,6 +113,80 @@ describe("TeamHub", () => {
 		await hub.dispose();
 	});
 
+	it("puts the queue's deadline on the approval it emits", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "bash",
+					args: { command: "echo hi" },
+				},
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "go");
+		await waitFor(
+			() => events.some((event) => event.type === "approval_requested"),
+			"the approval request",
+		);
+
+		const requested = events.find(
+			(event) => event.type === "approval_requested",
+		);
+		expect(requested).toMatchObject({
+			type: "approval_requested",
+			request: { bot: "alpha", toolName: "bash" },
+		});
+		const expiresAt =
+			requested?.type === "approval_requested"
+				? requested.request.expiresAt
+				: 0;
+		// The queue armed a window on this request, so the client has a real
+		// deadline to count down rather than an invented one.
+		expect(typeof expiresAt).toBe("number");
+		expect(expiresAt as number).toBeGreaterThan(Date.now());
+
+		hub.resolveApproval(
+			requested?.type === "approval_requested" ? requested.request.id : "",
+			"deny",
+		);
+		await waitFor(
+			() => events.some((event) => event.type === "approval_resolved"),
+			"the approval to resolve",
+		);
+		await hub.dispose();
+	});
+
+	it("refuses a bad attachment with an error event, not a turn", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "ok" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "hi", [
+			{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+		]);
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "alpha",
+			message: expect.stringContaining("image/bmp"),
+		});
+		// Nothing reached the provider: the cap is enforced before the turn.
+		expect(provider.requests).toEqual([]);
+		await hub.dispose();
+	});
+
 	it("reports an unknown bot instead of throwing", async () => {
 		const hub = createHub(slowProvider());
 		const events = collect(hub);

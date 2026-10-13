@@ -31,6 +31,7 @@ import {
 import { resolveConfig } from "../config/resolve.js";
 import type { Provider } from "../providers/types.js";
 import type { Hub } from "./hub.js";
+import { MAX_SEND_BODY_BYTES, parseImages } from "./images.js";
 import { openBrowser } from "./open-browser.js";
 import {
 	buildProvider,
@@ -260,14 +261,25 @@ export async function buildServer(
 		request.raw.on("error", cleanup);
 	});
 
-	app.post("/api/send", (request, reply) => {
-		const body = request.body as Partial<SendBody> | undefined;
-		if (typeof body?.bot !== "string" || typeof body.text !== "string") {
-			return reply.code(400).send({ error: "expected {bot, text}" });
-		}
-		hub.dispatch(body.bot, body.text);
-		return reply.send({ ok: true });
-	});
+	// The only route that accepts attachments, so it is also the only one with
+	// a body limit large enough for a base64 image; every other route keeps the
+	// 1 MiB global limit.
+	app.post(
+		"/api/send",
+		{ bodyLimit: MAX_SEND_BODY_BYTES },
+		(request, reply) => {
+			const body = request.body as Partial<SendBody> | undefined;
+			if (typeof body?.bot !== "string" || typeof body.text !== "string") {
+				return reply.code(400).send({ error: "expected {bot, text}" });
+			}
+			const images = parseImages(body.images);
+			if (!images.ok) {
+				return reply.code(400).send({ error: images.error });
+			}
+			hub.dispatch(body.bot, body.text, images.images);
+			return reply.send({ ok: true });
+		},
+	);
 
 	app.post("/api/interrupt", (request, reply) => {
 		const body = request.body as Partial<InterruptBody> | undefined;

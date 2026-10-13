@@ -6,18 +6,22 @@ import type {
 	BotTranscriptResponse,
 	CancelAgentBody,
 	ForgetMemoryBody,
+	ImagePart,
 	InstallAgentBody,
 	InstallAgentStartResponse,
 	MemoryListResponse,
 	SaveProviderBody,
 	SaveProviderResponse,
+	SendBody,
 	SettingsResponse,
 	SetWakeBody,
 } from "./protocol";
 
 export interface ApiClient {
 	eventsUrl(): string;
-	send(bot: string, text: string): Promise<void>;
+	// Images are already validated and encoded by the composer; the route
+	// validates them again and answers 400 naming the reason.
+	send(bot: string, text: string, images?: ImagePart[]): Promise<void>;
 	interrupt(bot: string): Promise<void>;
 	respondApproval(id: string, choice: ApprovalChoice): Promise<void>;
 	setAllowAll(on: boolean): Promise<void>;
@@ -305,9 +309,34 @@ export function createApi(options: {
 		return { ok: true };
 	}
 
+	async function send(
+		bot: string,
+		text: string,
+		images?: ImagePart[],
+	): Promise<void> {
+		const path = "/api/send";
+		const body: SendBody = {
+			bot,
+			text,
+			// Omitted rather than sent empty, so a text-only send is byte for
+			// byte the request it was before images existed.
+			...(images !== undefined && images.length > 0 ? { images } : {}),
+		};
+		const response = await request(path, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (!response.ok) {
+			// The server names a refused attachment (bad media type, over the
+			// size cap); the composer shows that message verbatim.
+			throw await failure(response, `POST ${path} failed: ${response.status}`);
+		}
+	}
+
 	return {
 		eventsUrl: () => eventsUrl(token),
-		send: (bot, text) => post("/api/send", { bot, text }),
+		send,
 		interrupt: (bot) => post("/api/interrupt", { bot }),
 		respondApproval: (id, choice) =>
 			post("/api/approval", { id, decision: choice }),

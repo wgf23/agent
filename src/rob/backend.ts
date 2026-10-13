@@ -70,6 +70,7 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				model: options.model,
 				workspaceRoot: turn.workspaceRoot,
 				prompt: promptFor(first),
+				images: first.images,
 				history: [...turn.history],
 				signal: turn.signal,
 				authorize: options.authorize,
@@ -108,12 +109,20 @@ export function emptyUsage(): UsageTotals {
 	};
 }
 
+// The prompt text alone: an image rides beside it, not inside it.
 export function promptFor(inbound: Inbound): string {
 	return `${headerFor(inbound)} ${inbound.text}`;
 }
 
 export function toUserMessage(inbound: Inbound): Message {
-	return { role: "user", content: promptFor(inbound) };
+	// An interjection injected mid-turn keeps its attachments too.
+	return {
+		role: "user",
+		content: promptFor(inbound),
+		...(inbound.images !== undefined && inbound.images.length > 0
+			? { images: inbound.images }
+			: {}),
+	};
 }
 
 export function lastAssistantText(messages: readonly Message[]): string | null {

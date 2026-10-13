@@ -19,6 +19,24 @@ export function mediaTypeForExtension(extension: string): string | undefined {
 	return MEDIA_TYPES[extension.toLowerCase()];
 }
 
+// The same set readImage derives from a file extension, for a payload that
+// arrives already encoded (a browser upload has no path to inspect).
+export const ALLOWED_IMAGE_MEDIA_TYPES: readonly string[] = [
+	...new Set(Object.values(MEDIA_TYPES)),
+];
+
+export function isAllowedMediaType(mediaType: string): boolean {
+	return ALLOWED_IMAGE_MEDIA_TYPES.includes(mediaType);
+}
+
+// The bytes a base64 payload decodes to. A size cap has to work on a payload
+// that never touched the disk, and the padding must come off so the cap reads
+// as the file size the CLI enforces.
+export function base64ByteLength(data: string): number {
+	const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+	return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+}
+
 export type ReadImageResult =
 	| { ok: true; image: ImagePart }
 	| { ok: false; error: string };

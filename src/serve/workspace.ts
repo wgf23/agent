@@ -19,6 +19,7 @@ import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
+import type { ImagePart } from "../providers/types.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { writeJsonAtomic } from "../session/atomic.js";
 import {
@@ -264,8 +265,8 @@ export class WorkspaceHub extends EventBus implements Hub {
 		return { ok: true };
 	}
 
-	dispatch(bot: string, text: string): void {
-		this.scope.hub.dispatch(bot, text);
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
+		this.scope.hub.dispatch(bot, text, images);
 	}
 
 	interrupt(bot: string): void {

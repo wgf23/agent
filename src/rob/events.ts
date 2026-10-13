@@ -11,7 +11,14 @@ export type TeamEvent =
 	| { kind: "dm"; entry: DmEntry }
 	| { kind: "subagent"; entry: SubagentEntry }
 	| { kind: "channel"; bot: string; session: ChannelSession }
-	| { kind: "approval_requested"; request: ApprovalRequest }
+	// expiresAt is set when the request became the head of the approval queue
+	// and its window started; it is absent for a request enqueued behind
+	// another one, whose window has not begun.
+	| {
+			kind: "approval_requested";
+			request: ApprovalRequest;
+			expiresAt?: number;
+	  }
 	| { kind: "approval_resolved"; id: string; decision: ApprovalChoice };
 
 export type TeamListener = (event: TeamEvent) => void;

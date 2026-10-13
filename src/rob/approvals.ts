@@ -32,6 +32,16 @@ interface PendingApproval {
 	// The expiry window the request gets once it becomes the head.
 	timeoutMs: number;
 	schedule: ApprovalScheduler;
+	// When that window was armed, so deadline() can report the server's own
+	// expiry to a client. Null while the request is queued behind another one.
+	armedAt: number | null;
+}
+
+export interface ApprovalQueueOptions {
+	// Called when a request's window is armed, i.e. when it becomes the head.
+	// A queued request has no deadline until then, so this is how a client
+	// learns the deadline of a request that was enqueued with none.
+	onArm?: (request: ApprovalRequest, expiresAt: number) => void;
 }
 
 export interface EnqueuedApproval {
@@ -65,11 +75,16 @@ export class ApprovalQueue {
 	private seq = 0;
 	private readonly entries = new Map<string, PendingApproval>();
 	private readonly order: string[] = [];
+	private readonly onArm: ApprovalQueueOptions["onArm"];
 	// The id whose expiry timer is live. Only the head of the queue has
 	// one: the client shows only the first request, so a queued approval
 	// is invisible and its window must not run while the user works on
 	// the head.
 	private armedId: string | undefined;
+
+	constructor(options: ApprovalQueueOptions = {}) {
+		this.onArm = options.onArm;
+	}
 
 	request(
 		rob: RobName,
@@ -87,13 +102,15 @@ export class ApprovalQueue {
 				resolve,
 				timeoutMs,
 				schedule,
+				armedAt: null,
 			};
 			this.entries.set(id, entry);
 			this.order.push(id);
 		});
 		// The expiry clock starts at promotion to the head, not at
-		// enqueue; arming happens immediately only for the first request.
-		if (this.order[0] === id) this.armHead();
+		// enqueue; arming happens immediately only for the first request. No
+		// notification here: the caller emits the request itself right after.
+		if (this.order[0] === id) this.armHead(false);
 		return { id, request: queued, decision };
 	}
 
@@ -143,12 +160,13 @@ export class ApprovalQueue {
 	// Arms the head's expiry, replacing the head's own timer. A
 	// head that is already armed keeps its timer: only a removal
 	// moves the queue, and every removal re-arms here.
-	private armHead(): void {
+	private armHead(notify: boolean): void {
 		const id = this.order[0];
 		if (id === undefined || id === this.armedId) return;
 		const entry = this.entries.get(id);
 		if (entry === undefined) return;
 		if (!Number.isFinite(entry.timeoutMs) || entry.timeoutMs < 0) return;
+		entry.armedAt = Date.now();
 		entry.cancel = entry.schedule(entry.timeoutMs, () => {
 			if (!this.entries.has(id)) return;
 			this.take(id).resolve({
@@ -156,6 +174,19 @@ export class ApprovalQueue {
 			});
 		});
 		this.armedId = id;
+		// The deadline exists now, so a client waiting on this request can count
+		// it down even when it was enqueued with no window at all. Silent for the
+		// first request, whose emitter is about to announce it anyway.
+		if (notify)
+			this.onArm?.({ ...entry.request }, entry.armedAt + entry.timeoutMs);
+	}
+
+	// When the server denies this request unanswered, or null while it is still
+	// queued behind another one (its window has not started).
+	deadline(id: string): number | null {
+		const entry = this.entries.get(id);
+		if (entry === undefined || entry.armedAt === null) return null;
+		return entry.armedAt + entry.timeoutMs;
 	}
 
 	private take(id: string): PendingApproval {
@@ -166,10 +197,11 @@ export class ApprovalQueue {
 		if (index !== -1) this.order.splice(index, 1);
 		entry.cancel?.();
 		entry.cancel = undefined;
+		entry.armedAt = null;
 		if (this.armedId === id) this.armedId = undefined;
 		// The queue moved up, so the new head's own window starts
 		// now (and denyAll/denyRob leave no timer armed).
-		this.armHead();
+		this.armHead(true);
 		return entry;
 	}
 }

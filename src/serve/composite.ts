@@ -11,6 +11,7 @@ import {
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
 import { addRob } from "../config/project-file.js";
+import type { ImagePart } from "../providers/types.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
@@ -92,9 +93,9 @@ export class CompositeHub extends EventBus implements Hub {
 		return { ok: true };
 	}
 
-	dispatch(bot: string, text: string): void {
-		if (bot === WORKSPACE_BOT) this.workspace.dispatch(bot, text);
-		else this.robs.dispatch(bot, text);
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
+		if (bot === WORKSPACE_BOT) this.workspace.dispatch(bot, text, images);
+		else this.robs.dispatch(bot, text, images);
 	}
 
 	interrupt(bot: string): void {

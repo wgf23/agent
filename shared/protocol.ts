@@ -192,6 +192,15 @@ export interface BotState {
 	usage: UsageTotals;
 }
 
+// One attachment on a message: the same part the provider expands into an
+// OpenAI image_url data URL, declared here so the wire has no runtime import
+// of the provider module.
+export interface ImagePart {
+	type: "image";
+	mediaType: string;
+	data: string;
+}
+
 export interface ApprovalRequestInfo {
 	id: string;
 	bot: string;
@@ -199,6 +208,11 @@ export interface ApprovalRequestInfo {
 	subject: string;
 	dangerous: boolean;
 	rule: string | null;
+	// When the server denies this request unanswered, in epoch milliseconds,
+	// or null when nothing is armed. A request still queued behind another one
+	// has no deadline yet: its window starts when it is promoted to the head,
+	// and the server re-emits it with the deadline then.
+	expiresAt: number | null;
 }
 
 export interface SessionSummaryInfo {
@@ -302,6 +316,9 @@ export type ServerEvent =
 export interface SendBody {
 	bot: string;
 	text: string;
+	// Optional attachments, already encoded by the client as base64. The route
+	// rejects a bad media type, an over-cap payload, or too many of them.
+	images?: ImagePart[];
 }
 
 export interface InterruptBody {

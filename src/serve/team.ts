@@ -20,11 +20,12 @@ import {
 } from "../bot/wake.js";
 import { setRobWake } from "../config/project-file.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
-import type { Message } from "../providers/types.js";
+import type { ImagePart, Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
 import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
+import { parseImages } from "./images.js";
 import {
 	type ApplyRuntimeResult,
 	fallbackProviderView,
@@ -156,14 +157,21 @@ export class TeamHub extends EventBus implements Hub {
 		this.roster.push(config);
 	}
 
-	dispatch(bot: string, text: string): void {
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
 		if (text.trim() === "") return;
 		if (this.options.runtime?.isConfigured() === false) {
 			this.emit({ type: "error", bot, message: UNCONFIGURED_MESSAGE });
 			return;
 		}
+		// A second gate behind the route's: dispatch is also called in-process,
+		// so the caps hold wherever a rob's turn starts.
+		const attachments = parseImages(images);
+		if (!attachments.ok) {
+			this.emit({ type: "error", bot, message: attachments.error });
+			return;
+		}
 		try {
-			this.team.dispatch(bot, text);
+			this.team.dispatch(bot, text, attachments.images);
 		} catch (error) {
 			this.reportError(bot, error);
 		}
@@ -175,6 +183,12 @@ export class TeamHub extends EventBus implements Hub {
 		} catch (error) {
 			this.reportError(bot, error);
 		}
+	}
+
+	// When the server denies a pending rob approval unanswered, or null while it
+	// is still queued behind another one.
+	approvalDeadline(id: string): number | null {
+		return this.team.approvalDeadline(id);
 	}
 
 	resolveApproval(id: string, decision: ApprovalChoice): void {
@@ -352,6 +366,10 @@ export class TeamHub extends EventBus implements Hub {
 			case "dm":
 				this.emit({ type: "dm", entry: event.entry });
 				return;
+			// The queue starts an expiry window when a request becomes the head of
+			// it, so a request enqueued behind another one has no deadline yet.
+			// Both cases emit the same wire event; the client keeps one entry per
+			// id and reads the deadline it was last told.
 			case "approval_requested":
 				this.emit({
 					type: "approval_requested",
@@ -362,6 +380,7 @@ export class TeamHub extends EventBus implements Hub {
 						subject: event.request.subject,
 						dangerous: event.request.dangerous,
 						rule: event.request.rule,
+						expiresAt: this.team.approvalDeadline(event.request.id),
 					},
 				});
 				return;

@@ -4,6 +4,7 @@ import { readToken } from "./auth";
 import type {
 	ApprovalChoice,
 	BotDraft,
+	ImagePart,
 	SaveProviderBody,
 	ServerEvent,
 	SetWakeBody,
@@ -26,9 +27,19 @@ function isAuthRefusal(error: unknown): boolean {
 	return error instanceof ApiError && error.status === 401;
 }
 
+// The server's own message, which the response-reading calls build from the
+// error body: an unknown bot, an unknown memory entry, a refused wake. Falls
+// back to the status when a refused response carried no reason at all.
+function failureMessage(error: unknown): string {
+	if (error instanceof ApiError) return `${error.message} (${error.status})`;
+	return error instanceof Error ? error.message : String(error);
+}
+
 export interface Hub {
 	state: ClientState;
-	send: (bot: string, text: string) => void;
+	// Images are optional and already validated by the composer; a refusal
+	// lands on the error banner.
+	send: (bot: string, text: string, images?: ImagePart[]) => void;
 	interrupt: (bot: string) => void;
 	respondApproval: (id: string, decision: ApprovalChoice) => void;
 	setAllowAll: (on: boolean) => void;
@@ -37,6 +48,8 @@ export interface Hub {
 	// Selects a bot: loads its transcript and session list, then its memory, so
 	// the sidebar and memory panel fill without a second request.
 	selectBot: (bot: string) => void;
+	// Rejects with the server's message on failure: the memory panel renders
+	// that next to the row whose delete failed.
 	forgetMemory: (bot: string, id: string) => Promise<void>;
 	setWake: (bot: string, body: SetWakeBody) => Promise<void>;
 	closeBotSession: (bot: string, id: string) => void;
@@ -78,10 +91,26 @@ export function useHub(): Hub {
 		return () => source.close();
 	}, []);
 
-	const send = useCallback((bot: string, text: string) => {
-		dispatch({ type: "submit", bot, text });
-		api.send(bot, text).catch(() => {});
+	// Every refusal from a client request lands somewhere visible: a 401 on
+	// the auth banner, anything else on the error banner with the server's
+	// reason. Nothing is swallowed.
+	const reportError = useCallback((error: unknown) => {
+		if (isAuthRefusal(error)) {
+			dispatch({ type: "auth_error", authError: true });
+			return;
+		}
+		dispatch({ type: "request_error", error: failureMessage(error) });
 	}, []);
+
+	const send = useCallback(
+		(bot: string, text: string, images?: ImagePart[]) => {
+			dispatch({ type: "submit", bot, text });
+			// A refused attachment (a cap the server enforces more strictly, a
+			// media type it rejects) is a real answer the user must see.
+			api.send(bot, text, images).catch(reportError);
+		},
+		[reportError],
+	);
 
 	const interrupt = useCallback((bot: string) => {
 		api.interrupt(bot).catch(() => {});
@@ -108,12 +137,6 @@ export function useHub(): Hub {
 
 	const openSession = useCallback((bot: string, id: string) => {
 		api.openSession(bot, id).catch(() => {});
-	}, []);
-
-	const reportAuth = useCallback((error: unknown) => {
-		if (isAuthRefusal(error)) {
-			dispatch({ type: "auth_error", authError: true });
-		}
 	}, []);
 
 	const selectBot = useCallback(
@@ -144,11 +167,11 @@ export function useHub(): Hub {
 					const memory = await api.loadMemory(bot);
 					dispatch({ type: "memory_loaded", bot, entries: memory.entries });
 				} catch (error) {
-					reportAuth(error);
+					reportError(error);
 				}
 			})();
 		},
-		[reportAuth],
+		[reportError],
 	);
 
 	const forgetMemory = useCallback(
@@ -159,10 +182,13 @@ export function useHub(): Hub {
 				const memory = await api.loadMemory(bot);
 				dispatch({ type: "memory_loaded", bot, entries: memory.entries });
 			} catch (error) {
-				reportAuth(error);
+				reportError(error);
+				// The panel owns the message for a delete: it renders the failure
+				// on the row, so the promise is handed back rather than dropped.
+				throw error instanceof Error ? error : new Error(failureMessage(error));
 			}
 		},
-		[reportAuth],
+		[reportError],
 	);
 
 	const setWake = useCallback(
@@ -172,17 +198,17 @@ export function useHub(): Hub {
 				// fresh `bots` event refreshes the wake badge with no extra read.
 				await api.setWake(bot, body);
 			} catch (error) {
-				reportAuth(error);
+				reportError(error);
 			}
 		},
-		[reportAuth],
+		[reportError],
 	);
 
 	const closeBotSession = useCallback(
 		(bot: string, id: string) => {
-			api.closeBotSession(bot, id).catch(reportAuth);
+			api.closeBotSession(bot, id).catch(reportError);
 		},
-		[reportAuth],
+		[reportError],
 	);
 
 	const createBot = useCallback(async (draft: BotDraft) => {

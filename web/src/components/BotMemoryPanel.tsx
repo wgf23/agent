@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { MemoryEntryView } from "../protocol";
 
 interface Props {
@@ -35,6 +36,27 @@ export default function BotMemoryPanel({
 	onForget,
 	onRefresh,
 }: Props) {
+	// A delete is irreversible and this panel is the only place to do it, so
+	// the first click arms a confirm on that row rather than writing.
+	const [confirming, setConfirming] = useState<string | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const forget = async (id: string) => {
+		setConfirming(null);
+		setError(null);
+		setBusy(true);
+		try {
+			await onForget(bot, id);
+		} catch (cause) {
+			// The server's reason ("Unknown memory entry", a store failure),
+			// so a failed delete reads as failed instead of vanishing.
+			setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setBusy(false);
+		}
+	};
+
 	return (
 		<main className="panel">
 			<header className="panel-header">
@@ -49,6 +71,12 @@ export default function BotMemoryPanel({
 				</div>
 			</header>
 
+			{error !== null && (
+				<p className="memory-error" role="alert">
+					删除失败：{error}
+				</p>
+			)}
+
 			{entries.length === 0 ? (
 				<p className="panel-empty">这个 Bot 还没有记忆。</p>
 			) : (
@@ -60,15 +88,41 @@ export default function BotMemoryPanel({
 							</span>
 							<p className="memory-text">{entry.text}</p>
 							<time className="memory-time">{formatMemoryTime(entry.at)}</time>
-							<button
-								type="button"
-								className="btn small deny"
-								onClick={() => {
-									void onForget(bot, entry.id);
-								}}
-							>
-								删除
-							</button>
+							{confirming === entry.id ? (
+								<span className="memory-confirm">
+									<span className="memory-confirm-text">确认删除？</span>
+									<button
+										type="button"
+										className="btn small deny"
+										disabled={busy}
+										onClick={() => {
+											void forget(entry.id);
+										}}
+									>
+										删除
+									</button>
+									<button
+										type="button"
+										className="btn small"
+										disabled={busy}
+										onClick={() => setConfirming(null)}
+									>
+										取消
+									</button>
+								</span>
+							) : (
+								<button
+									type="button"
+									className="btn small deny"
+									disabled={busy}
+									onClick={() => {
+										setError(null);
+										setConfirming(entry.id);
+									}}
+								>
+									删除
+								</button>
+							)}
 						</li>
 					))}
 				</ul>

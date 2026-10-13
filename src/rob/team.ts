@@ -16,7 +16,7 @@ import type {
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
-import type { Message, Provider } from "../providers/types.js";
+import type { ImagePart, Message, Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 import { ApprovalQueue } from "./approvals.js";
 import type { TeamEvent, TeamListener } from "./events.js";
@@ -89,7 +89,14 @@ export class Team implements TeamPort {
 	private readonly loops = new Map<RobName, Promise<void>>();
 	private readonly dms: DmEntry[] = [];
 	private readonly subagents: SubagentEntry[] = [];
-	private readonly approvals = new ApprovalQueue();
+	private readonly approvals = new ApprovalQueue({
+		// A queued request has no window until it becomes the head, so re-emit
+		// it the moment it does: a client counting down needs the deadline, not
+		// the fact that one exists.
+		onArm: (request, expiresAt) => {
+			this.emit({ kind: "approval_requested", request, expiresAt });
+		},
+	});
 	private readonly listeners = new Set<TeamListener>();
 	private readonly store: BotStore;
 	// One registry for the whole team, so every rob shares the same channel
@@ -218,9 +225,9 @@ export class Team implements TeamPort {
 		});
 	}
 
-	dispatch(name: string, text: string): void {
+	dispatch(name: string, text: string, images?: ImagePart[]): void {
 		const rob = this.requireRob(name);
-		rob.deliver({ kind: "user", from: "user", text, at: Date.now() });
+		rob.deliver({ kind: "user", from: "user", text, at: Date.now(), images });
 	}
 
 	interject(name: string, text: string): void {
@@ -353,6 +360,7 @@ export class Team implements TeamPort {
 		this.emit({
 			kind: "approval_requested",
 			request: { ...enqueued.request },
+			expiresAt: this.approvals.deadline(enqueued.id) ?? undefined,
 		});
 		return enqueued.decision.then((decision) => {
 			this.emit({
@@ -367,6 +375,12 @@ export class Team implements TeamPort {
 
 	resolveApproval(id: string, decision: ApprovalDecision): void {
 		this.approvals.resolve(id, decision);
+	}
+
+	// When the queue denies this request unanswered, or null while it is still
+	// queued behind another one.
+	approvalDeadline(id: string): number | null {
+		return this.approvals.deadline(id);
 	}
 
 	emitRobEvent(rob: RobName, event: AgentEvent): void {
