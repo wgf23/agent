@@ -38,6 +38,7 @@ import {
 	unconfiguredProvider,
 } from "./runtime.js";
 import type { SettingsService } from "./settings.js";
+import { UnknownMemoryEntryError } from "./team.js";
 import {
 	openWorkspace,
 	WorkspaceHub,
@@ -417,6 +418,11 @@ export async function buildServer(
 			}
 			return reply.send({ ok: true });
 		} catch (error) {
+			// An id the bot's record has no entry for is the same
+			// 404 as an unknown bot; any other error is a 500.
+			if (error instanceof UnknownMemoryEntryError) {
+				return reply.code(404).send({ error: errorText(error) });
+			}
 			return reply.code(500).send({ error: errorText(error) });
 		}
 	});

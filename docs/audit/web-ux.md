@@ -66,7 +66,14 @@ as `docs/audit/bot-architecture-trail.tsv`.
 ## Verdicts
 
 Proven on the real artifact (a real `node` server, real HTTP, real disk, real DeepSeek turns) by
-`pnpm bot:e2e`, which exits 0 with nine `PASS` lines:
+`pnpm bot:e2e`, which exits 0 with nine `PASS` lines. Those runs happened on
+2026-10-13 while the DeepSeek key was funded; the key is now overdrawn
+(`is_available: false`, `total_balance: -0.02` CNY, and a real completion
+answers HTTP 402), so the model-driven phases were true when measured and are
+not rerunnable on this box. The harness now probes `GET /user/balance` (no
+tokens spent) before any phase and skips with exit 0 both when the key is
+absent and when the provider reports no balance, so a nightly run fails for
+the right reason instead of dying at phase 1 after a 45 s timeout.
 
 1. **Transcript reloads from the ledger.** After phase 5's workspace switch disposed the scope and
    with it the in-memory channel, phase 6 lists the bot's sessions, re-opens the session id that
@@ -98,6 +105,11 @@ Named rather than assumed:
   vanish from the ledger's `turns`; what phase 7 proves is that the id is gone from `memory` (both
   as an entry and as a `supersedes` target). A raw `not.toContain` is only possible when no turn
   recorded the id, as in the unit test's seeded case.
+- **Deleting a memory entry removes it from the prompt, not from history.** That is unchanged
+  product behavior, not a testing limitation: a forgotten entry leaves the record's `memory` (so
+  it stops reaching the prompt and the API view), but the text already inside the ledger's turn
+  log — the `remember` tool output and the turn messages — and the live replay of those turns
+  keep it. Only a turn that never recorded the id can forget it completely.
 - **Phase 6 re-opens the ask's session first.** The workspace switch in phase 5 replaces the
   in-memory session label, so the session that is current when phase 6 starts is a fresh one. The
   route returns whichever session is current when it is called; the test makes the ledger session

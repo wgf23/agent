@@ -69,6 +69,24 @@ export function createBotStore(
 ): BotStore {
 	const clock = options.clock ?? Date.now;
 
+	// Every read-modify-write of one bot's record runs on a per-bot
+	// promise chain, so a turn commit and a memory edit (and their
+	// concurrent callers) cannot interleave and clobber each other's
+	// write. Two processes on one data root remain unsafe; that needs
+	// cross-process locking, which is out of scope here.
+	const chains = new Map<string, Promise<unknown>>();
+
+	function enqueue<T>(bot: string, write: () => Promise<T>): Promise<T> {
+		const previous = chains.get(bot) ?? Promise.resolve();
+		const next = previous.then(write, write);
+		chains.set(bot, next);
+		const release = () => {
+			if (chains.get(bot) === next) chains.delete(bot);
+		};
+		next.then(release, release);
+		return next;
+	}
+
 	function botPath(bot: string): string {
 		return path.join(botsRoot(env), `${bot}.json`);
 	}
@@ -116,65 +134,72 @@ export function createBotStore(
 		turn: Turn,
 		delta = emptyDelta(),
 	): Promise<CommitBotResult> {
-		const ring = reconcileRing(record, turn);
-		const upsert = [
-			...delta.upsert,
-			...(ring.digest === null ? [] : [ring.digest]),
-		];
-		const applied = applyMemoryDelta(record.memory, {
-			upsert,
-			drop: delta.drop,
-		});
-		if (!applied.ok) return applied;
+		// Runs on the bot's chain so a concurrent memory edit
+		// cannot clobber this write, or the other way round.
+		return enqueue(record.bot, async () => {
+			const ring = reconcileRing(record, turn);
+			const upsert = [
+				...delta.upsert,
+				...(ring.digest === null ? [] : [ring.digest]),
+			];
+			const applied = applyMemoryDelta(record.memory, {
+				upsert,
+				drop: delta.drop,
+			});
+			if (!applied.ok) return applied;
 
-		const next: BotRecord = {
-			...record,
-			createdAt: record.createdAt === 0 ? turn.at : record.createdAt,
-			updatedAt: turn.at,
-			seq: Math.max(record.seq, turn.seq),
-			memory: applied.memory,
-			turns: ring.turns,
-		};
-
-		const filePath = botPath(record.bot);
-		try {
-			await writeJsonAtomic(filePath, next);
-		} catch (error) {
-			return {
-				ok: false,
-				error: `Failed to write ${filePath}: ${errorMessage(error)}`,
+			const next: BotRecord = {
+				...record,
+				createdAt: record.createdAt === 0 ? turn.at : record.createdAt,
+				updatedAt: turn.at,
+				seq: Math.max(record.seq, turn.seq),
+				memory: applied.memory,
+				turns: ring.turns,
 			};
-		}
-		return { ok: true, record: next, path: filePath };
+
+			const filePath = botPath(record.bot);
+			try {
+				await writeJsonAtomic(filePath, next);
+			} catch (error) {
+				return {
+					ok: false,
+					error: `Failed to write ${filePath}: ${errorMessage(error)}`,
+				};
+			}
+			return { ok: true, record: next, path: filePath };
+		});
 	}
 
 	// A memory-only write: the whole record is rewritten through the same atomic
-	// writer commit uses, so memory edits cannot half-apply.
+	// writer commit uses, so memory edits cannot half-apply. It runs on the
+	// bot's chain like commit, so the two cannot interleave.
 	async function saveMemory(
 		bot: string,
 		delta: MemoryDelta,
 	): Promise<SaveMemoryResult> {
-		const filePath = botPath(bot);
-		const existing = await readRecord(filePath, bot);
-		if (!existing.ok) return existing;
+		return enqueue(bot, async () => {
+			const filePath = botPath(bot);
+			const existing = await readRecord(filePath, bot);
+			if (!existing.ok) return existing;
 
-		const applied = applyMemoryDelta(existing.record.memory, delta);
-		if (!applied.ok) return applied;
+			const applied = applyMemoryDelta(existing.record.memory, delta);
+			if (!applied.ok) return applied;
 
-		const next: BotRecord = {
-			...existing.record,
-			updatedAt: clock(),
-			memory: applied.memory,
-		};
-		try {
-			await writeJsonAtomic(filePath, next);
-		} catch (error) {
-			return {
-				ok: false,
-				error: `Failed to write ${filePath}: ${errorMessage(error)}`,
+			const next: BotRecord = {
+				...existing.record,
+				updatedAt: clock(),
+				memory: applied.memory,
 			};
-		}
-		return { ok: true, record: next, path: filePath };
+			try {
+				await writeJsonAtomic(filePath, next);
+			} catch (error) {
+				return {
+					ok: false,
+					error: `Failed to write ${filePath}: ${errorMessage(error)}`,
+				};
+			}
+			return { ok: true, record: next, path: filePath };
+		});
 	}
 
 	// Best-effort read for callers that only want the memory and can tolerate a

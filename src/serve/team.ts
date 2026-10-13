@@ -43,6 +43,16 @@ export interface TeamHubOptions extends HubOptions {
 	timer?: Timer;
 }
 
+export class UnknownMemoryEntryError extends Error {
+	readonly id: string;
+
+	constructor(id: string) {
+		super(`Unknown memory entry: ${id}`);
+		this.name = "UnknownMemoryEntryError";
+		this.id = id;
+	}
+}
+
 export class TeamHub extends EventBus implements Hub {
 	private readonly options: TeamHubOptions;
 	private team: Team;
@@ -258,10 +268,25 @@ export class TeamHub extends EventBus implements Hub {
 		return { bot, entries: entries.map(toMemoryEntryView) };
 	}
 
-	// Forgets one memory entry outside a turn. False when the bot is unknown.
+	// Forgets one memory entry outside a turn. False when the bot is
+	// unknown. An id the bot's record has no entry for throws
+	// UnknownMemoryEntryError before anything is written, so the
+	// route answers 404 instead of reporting success for a no-op.
 	async forgetMemory(bot: string, id: string): Promise<boolean> {
-		if (!this.hasBot(bot)) return false;
-		const result = await this.store.saveMemory(bot, { upsert: [], drop: [id] });
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return false;
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		if (loaded.record.memory.every((entry) => entry.id !== id)) {
+			throw new UnknownMemoryEntryError(id);
+		}
+		const result = await this.store.saveMemory(bot, {
+			upsert: [],
+			drop: [id],
+		});
 		if (!result.ok) throw new Error(result.error);
 		return true;
 	}

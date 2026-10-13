@@ -10,7 +10,11 @@ import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
-import { summarizeSessions, TeamHub } from "../../src/serve/team.js";
+import {
+	summarizeSessions,
+	TeamHub,
+	UnknownMemoryEntryError,
+} from "../../src/serve/team.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
@@ -342,6 +346,50 @@ describe("TeamHub", () => {
 			"utf8",
 		);
 		expect(record).not.toContain(fact.id);
+		await hub.dispose();
+	});
+
+	it("refuses to forget a memory id the record does not have", async () => {
+		const store = createBotStore();
+		const loaded = await store.load("alpha", {
+			role: "a test rob",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const fact: MemoryEntry = {
+			id: "mem_00000000000000000000000000000001",
+			at: 1,
+			kind: "fact",
+			text: "the sky is teal",
+			source: { sessionId: null, turnSeq: 0 },
+			supersedes: [],
+		};
+		const seeded = await store.commit(
+			loaded.record,
+			{
+				id: "trn_00000000000000000000000000000001",
+				seq: 1,
+				sessionId: "chs_seed",
+				workspaceRoot,
+				at: 1,
+				wake: "user",
+				messages: [],
+			},
+			{ upsert: [fact], drop: [] },
+		);
+		if (!seeded.ok) throw new Error(seeded.error);
+		const ledger = path.join(process.env.MY_AGENT_BOTS_DIR ?? "", "alpha.json");
+		const before = readFileSync(ledger, "utf8");
+
+		const hub = createHub(slowProvider());
+		await expect(hub.forgetMemory("alpha", "mem_missing")).rejects.toThrow(
+			UnknownMemoryEntryError,
+		);
+		// The failed forget wrote nothing.
+		expect(readFileSync(ledger, "utf8")).toBe(before);
+		// A real id still forgets.
+		await hub.forgetMemory("alpha", fact.id);
+		expect((await hub.readMemory("alpha"))?.entries).toEqual([]);
 		await hub.dispose();
 	});
 

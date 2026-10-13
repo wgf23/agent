@@ -138,6 +138,103 @@ describe("ApprovalQueue", () => {
 		expect(await answered.decision).toBe("allow_once");
 		expect(canceled).toBe(2);
 	});
+
+	it("expires only the head: a queued request starts its window on promotion", async () => {
+		const queue = new ApprovalQueue();
+		const timers: Array<() => void> = [];
+		const schedule = (_delayMs: number, fn: () => void) => {
+			timers.push(fn);
+			return () => undefined;
+		};
+
+		const first = queue.request("planner", request("a.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		const second = queue.request("worker", request("b.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		// Only the head is armed: the queued request is invisible to
+		// the client and must still be pending at the head's deadline.
+		expect(timers).toHaveLength(1);
+		timers[0]?.();
+		expect(await first.decision).toEqual({
+			deny: "No one answered this approval within 0.05s, so it was denied.",
+		});
+		expect(queue.pending().map((entry) => entry.subject)).toEqual(["b.txt"]);
+
+		// Promotion armed the second's own window, so it expires on
+		// that later deadline, not on the first's.
+		expect(timers).toHaveLength(2);
+		timers[1]?.();
+		expect(await second.decision).toEqual({
+			deny: "No one answered this approval within 0.05s, so it was denied.",
+		});
+		expect(queue.pending()).toEqual([]);
+	});
+
+	it("starts the next request's window when the head resolves", async () => {
+		const queue = new ApprovalQueue();
+		const timers: Array<() => void> = [];
+		const schedule = (_delayMs: number, fn: () => void) => {
+			timers.push(fn);
+			return () => undefined;
+		};
+
+		const first = queue.request("planner", request("a.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		const second = queue.request("worker", request("b.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		expect(timers).toHaveLength(1);
+
+		queue.resolve(first.id, "allow_once");
+		expect(await first.decision).toBe("allow_once");
+		// Resolving the head promoted the second, arming its own timer.
+		expect(timers).toHaveLength(2);
+		timers[1]?.();
+		expect(await second.decision).toEqual({
+			deny: "No one answered this approval within 0.05s, so it was denied.",
+		});
+	});
+
+	it("clears the armed timer when denyAll empties the queue", async () => {
+		const queue = new ApprovalQueue();
+		const timers: Array<() => void> = [];
+		let canceled = 0;
+		const schedule = (_delayMs: number, fn: () => void) => {
+			timers.push(fn);
+			return () => {
+				canceled += 1;
+			};
+		};
+
+		const first = queue.request("planner", request("a.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		const second = queue.request("worker", request("b.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		expect(timers).toHaveLength(1);
+
+		queue.denyAll("The team stopped before this approval was answered.");
+
+		expect(await first.decision).toEqual({
+			deny: "The team stopped before this approval was answered.",
+		});
+		expect(await second.decision).toEqual({
+			deny: "The team stopped before this approval was answered.",
+		});
+		expect(queue.pending()).toEqual([]);
+		// Both the head's timer and the one promotion armed are cleared.
+		expect(canceled).toBe(2);
+	});
 });
 
 describe("allow_always", () => {

@@ -210,6 +210,12 @@ describe("bot ledger routes", () => {
 		expect(
 			(await post("/api/bots/ghost/memory/forget", { id: fact.id })).status,
 		).toBe(404);
+		// An id the bot's record has no entry for is a 404, not a
+		// success.
+		expect(
+			(await post("/api/bots/alpha/memory/forget", { id: "mem_missing" }))
+				.status,
+		).toBe(404);
 
 		const forgotten = await post("/api/bots/alpha/memory/forget", {
 			id: fact.id,

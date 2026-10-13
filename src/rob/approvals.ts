@@ -26,8 +26,12 @@ export class UnknownApprovalError extends Error {
 interface PendingApproval {
 	request: ApprovalRequest;
 	resolve: (decision: ApprovalDecision) => void;
-	// Clears the expiry timer when the decision is resolved or denied.
+	// Clears the expiry timer while the request is the head of the queue
+	// and is resolved, denied, or expired.
 	cancel?: () => void;
+	// The expiry window the request gets once it becomes the head.
+	timeoutMs: number;
+	schedule: ApprovalScheduler;
 }
 
 export interface EnqueuedApproval {
@@ -61,6 +65,11 @@ export class ApprovalQueue {
 	private seq = 0;
 	private readonly entries = new Map<string, PendingApproval>();
 	private readonly order: string[] = [];
+	// The id whose expiry timer is live. Only the head of the queue has
+	// one: the client shows only the first request, so a queued approval
+	// is invisible and its window must not run while the user works on
+	// the head.
+	private armedId: string | undefined;
 
 	request(
 		rob: RobName,
@@ -73,18 +82,18 @@ export class ApprovalQueue {
 		const timeoutMs = options.timeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS;
 		const schedule = options.schedule ?? defaultScheduler;
 		const decision = new Promise<ApprovalDecision>((resolve) => {
-			const entry: PendingApproval = { request: queued, resolve };
+			const entry: PendingApproval = {
+				request: queued,
+				resolve,
+				timeoutMs,
+				schedule,
+			};
 			this.entries.set(id, entry);
 			this.order.push(id);
-			if (Number.isFinite(timeoutMs) && timeoutMs >= 0) {
-				entry.cancel = schedule(timeoutMs, () => {
-					if (!this.entries.has(id)) return;
-					this.take(id).resolve({
-						deny: `No one answered this approval within ${timeoutMs / 1000}s, so it was denied.`,
-					});
-				});
-			}
 		});
+		// The expiry clock starts at promotion to the head, not at
+		// enqueue; arming happens immediately only for the first request.
+		if (this.order[0] === id) this.armHead();
 		return { id, request: queued, decision };
 	}
 
@@ -131,6 +140,24 @@ export class ApprovalQueue {
 		}
 	}
 
+	// Arms the head's expiry, replacing the head's own timer. A
+	// head that is already armed keeps its timer: only a removal
+	// moves the queue, and every removal re-arms here.
+	private armHead(): void {
+		const id = this.order[0];
+		if (id === undefined || id === this.armedId) return;
+		const entry = this.entries.get(id);
+		if (entry === undefined) return;
+		if (!Number.isFinite(entry.timeoutMs) || entry.timeoutMs < 0) return;
+		entry.cancel = entry.schedule(entry.timeoutMs, () => {
+			if (!this.entries.has(id)) return;
+			this.take(id).resolve({
+				deny: `No one answered this approval within ${entry.timeoutMs / 1000}s, so it was denied.`,
+			});
+		});
+		this.armedId = id;
+	}
+
 	private take(id: string): PendingApproval {
 		const entry = this.entries.get(id);
 		if (entry === undefined) throw new UnknownApprovalError(id);
@@ -138,6 +165,11 @@ export class ApprovalQueue {
 		const index = this.order.indexOf(id);
 		if (index !== -1) this.order.splice(index, 1);
 		entry.cancel?.();
+		entry.cancel = undefined;
+		if (this.armedId === id) this.armedId = undefined;
+		// The queue moved up, so the new head's own window starts
+		// now (and denyAll/denyRob leave no timer armed).
+		this.armHead();
 		return entry;
 	}
 }

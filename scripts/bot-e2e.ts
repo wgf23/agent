@@ -19,12 +19,22 @@ import {
 import { PRESETS } from "../src/providers/presets.js";
 import { newSession, saveSession } from "../src/session/store.js";
 
-// The whole point of this script is a real DeepSeek turn, so an absent key is a
-// skip, not a failure: it runs in CI without secrets the same way the other
-// scripts gate on their provider key.
+// The whole point of this script is a real DeepSeek turn, so an absent key
+// is a skip, not a failure: it runs in CI without secrets the same way the
+// other scripts gate on their provider key. An overdrawn key is the same
+// skip: the first completion would answer HTTP 402 after a phase timeout,
+// so the balance is probed (no tokens spent) before any phase runs.
 const apiKeyEnv = PRESETS.deepseek.apiKeyEnv;
-if (process.env[apiKeyEnv] === undefined || process.env[apiKeyEnv] === "") {
+const apiKey = process.env[apiKeyEnv];
+if (apiKey === undefined || apiKey === "") {
 	console.log(`skipped: ${apiKeyEnv} is not set`);
+	process.exit(0);
+}
+const balance = await probeBalance(apiKey);
+if (balance !== undefined && !balance.isAvailable) {
+	console.log(
+		`skipped: ${apiKeyEnv} reports no balance (is_available=false, total_balance=${balance.figure}); fund the key to run the phases`,
+	);
 	process.exit(0);
 }
 
@@ -237,7 +247,7 @@ try {
 	const listed = await getTranscript(server.port, BOT);
 	assert(
 		listed.sessions.length >= 1,
-		`GET /api/bots/${BOT}/transcript listed ${listed.sessions.length} sessions`,
+		`GET /api/bots/${BOT}/transcript listed ${listed.sessions.length} sessions on the list call`,
 	);
 	const askTurn = parseLedger(await readFile(ledgerPath, "utf8")).turns.find(
 		(turn) => turnHasText(turn, PHASE3_TEXT),
@@ -256,6 +266,10 @@ try {
 		`POST /api/sessions/open returned ${openedAsk.status}`,
 	);
 	const transcript = await getTranscript(server.port, BOT);
+	assert(
+		transcript.sessions.length >= 1,
+		`GET /api/bots/${BOT}/transcript listed ${transcript.sessions.length} sessions on the replayed call`,
+	);
 	assert(
 		transcript.sessionId === askSessionId,
 		`the replayed session is ${transcript.sessionId}, expected ${askSessionId}`,
@@ -359,8 +373,9 @@ try {
 
 	// Phase 9: the collision fix. A bot's session list has its own event; the
 	// timer must keep running without a chat `sessions` event, or the sidebar
-	// would replace the workspace chat's list with the bot's. The window closes
-	// on a real interval tick, so timer activity is inside it.
+	// would replace the workspace chat's list with the bot's. The window stays
+	// open until the tick's own turn is inside it, so the claim cannot pass
+	// vacuously over an idle gap.
 	phase = 9;
 	const collisionEvents = openEvents(server.port);
 	try {
@@ -380,12 +395,25 @@ try {
 			`the first session event after creating a bot session was ${JSON.stringify(firstSession)}, expected bot_sessions for ${BOT}`,
 		);
 		const seen: ServerEvent[] = [];
+		let woke = false;
 		await collisionEvents.next((event) => {
 			seen.push(event);
-			return (
+			if (
 				event.type === "notice" &&
 				event.bot === BOT &&
 				event.text === "woke on interval"
+			) {
+				woke = true;
+				return false;
+			}
+			// The window covers a whole tick: it closes only once the
+			// turn the wake delivered is inside it (its agent events or
+			// a status change), so "no chat sessions event" is a claim
+			// over real timer activity.
+			return (
+				woke &&
+				((event.type === "agent_event" && event.bot === BOT) ||
+					(event.type === "bot_status" && event.state.bot === BOT))
 			);
 		});
 		const clobber = seen.filter((event) => event.type === "sessions");
@@ -432,6 +460,45 @@ async function seedSession(root: string, text: string): Promise<string> {
 	const saved = await saveSession(session);
 	if (!saved.ok) throw new Error(saved.error);
 	return session.id;
+}
+
+// GET /user/balance spends no tokens. Only an explicit
+// is_available=false skips: a probe that fails leaves the key
+// merely unverified, so the phases run and report the real error.
+async function probeBalance(
+	apiKey: string,
+): Promise<{ isAvailable: boolean; figure: string } | undefined> {
+	try {
+		const response = await fetch(`${PRESETS.deepseek.baseURL}/user/balance`, {
+			headers: { authorization: `Bearer ${apiKey}` },
+			signal: AbortSignal.timeout(5000),
+		});
+		if (!response.ok) return undefined;
+		const body = (await response.json()) as {
+			balance_infos?: unknown;
+			is_available?: unknown;
+		};
+		if (typeof body.is_available !== "boolean") return undefined;
+		const info = Array.isArray(body.balance_infos)
+			? (body.balance_infos[0] as {
+					currency?: unknown;
+					total_balance?: unknown;
+				})
+			: undefined;
+		const amount =
+			typeof info?.total_balance === "string"
+				? info.total_balance
+				: typeof info?.total_balance === "number"
+					? String(info.total_balance)
+					: "unknown";
+		const currency = typeof info?.currency === "string" ? info.currency : "";
+		return {
+			isAvailable: body.is_available,
+			figure: currency === "" ? amount : `${amount} ${currency}`,
+		};
+	} catch {
+		return undefined;
+	}
 }
 
 // Resolves the workspace's own tsx so the child runs the same source as the

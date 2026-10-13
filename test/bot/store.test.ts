@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyDelta } from "../../src/bot/record.js";
 import type { BotRecord, MemoryEntry, Turn } from "../../src/bot/schema.js";
 import {
@@ -17,6 +17,15 @@ import {
 	botsRoot,
 	createBotStore,
 } from "../../src/bot/store.js";
+import { writeJsonAtomic } from "../../src/session/atomic.js";
+
+// The atomic writer is the store's only write path, so wrapping it
+// here is how a test injects a slow write to force interleaving.
+vi.mock("../../src/session/atomic.js", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("../../src/session/atomic.js")>();
+	return { ...actual, writeJsonAtomic: vi.fn(actual.writeJsonAtomic) };
+});
 
 const identity: BotIdentity = { role: "helper", model: "deepseek-flash" };
 
@@ -211,3 +220,57 @@ describe("memory", () => {
 		expect(await createBotStore().memory("atlas")).toEqual([]);
 	});
 });
+
+describe("concurrency", () => {
+	it("leaves both effects when a commit and a memory edit race", async () => {
+		const store = createBotStore();
+		const first = memoryEntry();
+		const second = memoryEntry({
+			id: "mem_00000000000000000000000000000002",
+			text: "likes kiwis",
+		});
+		const firstTurn = makeTurn();
+		const seeded = await store.commit(await loadRecord("atlas"), firstTurn, {
+			upsert: [first],
+			drop: [],
+		});
+		if (!seeded.ok) throw new Error(seeded.error);
+
+		const secondTurn = makeTurn({
+			id: "trn_00000000000000000000000000000002",
+			seq: 2,
+			at: 1710000000001,
+		});
+		// Slow the commit's write so the memory edit would read
+		// the pre-commit record and clobber the turn without
+		// the per-bot chain.
+		const write = vi.mocked(writeJsonAtomic);
+		const realWrite = write.getMockImplementation();
+		write.mockImplementationOnce(async (filePath, payload) => {
+			await delay(50);
+			return realWrite?.(filePath, payload);
+		});
+
+		const committed = store.commit(seeded.record, secondTurn, emptyDelta());
+		const saved = store.saveMemory("atlas", {
+			upsert: [second],
+			drop: [],
+		});
+		const [commitResult, saveResult] = await Promise.all([committed, saved]);
+
+		expect(commitResult.ok).toBe(true);
+		expect(saveResult.ok).toBe(true);
+		const onDisk = JSON.parse(await readFile(botFile("atlas"), "utf8"));
+		expect(onDisk.turns).toEqual([firstTurn, secondTurn]);
+		expect(onDisk.memory.map((entry: MemoryEntry) => entry.text)).toEqual([
+			"likes mangoes",
+			"likes kiwis",
+		]);
+	});
+});
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
