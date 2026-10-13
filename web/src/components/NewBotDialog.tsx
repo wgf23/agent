@@ -1,10 +1,17 @@
 import { type FormEvent, useState } from "react";
-import type { BotBackendDraft, BotDraft, RobCommand } from "../protocol";
+import type {
+	AgentStatusView,
+	BotBackendDraft,
+	BotDraft,
+	RobCommand,
+} from "../protocol";
 import { agentById, ROB_COMMANDS } from "../protocol";
 
 interface Props {
 	model: string;
+	agents: AgentStatusView[];
 	onCreateBot: (draft: BotDraft) => Promise<void>;
+	onInstall: (id: string) => Promise<void> | void;
 	onClose: () => void;
 }
 
@@ -20,7 +27,13 @@ const BACKEND_CHOICES: readonly { value: BackendChoice; label: string }[] = [
 
 const NAME_RULE = /^[a-z][a-z0-9-]{0,31}$/;
 
-export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
+export default function NewBotDialog({
+	model,
+	agents,
+	onCreateBot,
+	onInstall,
+	onClose,
+}: Props) {
 	const [name, setName] = useState("");
 	const [role, setRole] = useState("");
 	const [botModel, setBotModel] = useState(model);
@@ -122,18 +135,40 @@ export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 						<div className="field">
 							<span className="field-label">后端</span>
 							<div className="backend-options" role="radiogroup">
-								{BACKEND_CHOICES.map(({ value, label }) => (
-									<button
-										key={value}
-										type="button"
-										className={`backend-option ${
-											backend === value ? "active" : ""
-										}`}
-										onClick={() => setBackend(value)}
-									>
-										{label}
-									</button>
-								))}
+								{BACKEND_CHOICES.map(({ value, label }) => {
+									const status =
+										value === "native"
+											? undefined
+											: agents.find((agent) => agent.id === value);
+									// A known-but-missing CLI stays visible but disabled,
+									// with an install affordance instead of a dead end.
+									if (status !== undefined && !status.installed) {
+										return (
+											<div key={value} className="backend-option disabled">
+												<span>{label}</span>
+												<button
+													type="button"
+													className="backend-install"
+													onClick={() => onInstall(value)}
+												>
+													未安装 · 安装
+												</button>
+											</div>
+										);
+									}
+									return (
+										<button
+											key={value}
+											type="button"
+											className={`backend-option ${
+												backend === value ? "active" : ""
+											}`}
+											onClick={() => setBackend(value)}
+										>
+											{label}
+										</button>
+									);
+								})}
 							</div>
 						</div>
 

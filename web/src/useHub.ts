@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useReducer } from "react";
 import type {
+	AgentListResponse,
 	ApprovalChoice,
 	BotDraft,
+	InstallAgentStartResponse,
 	SaveProviderBody,
 	SaveProviderResponse,
 	ServerEvent,
@@ -35,6 +37,9 @@ export interface Hub {
 	// Resolves with the server's optional non-blocking warning so the dialog can
 	// surface it; throws the server's error message on failure.
 	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
+	loadAgents: () => Promise<void>;
+	installAgent: (id: string) => Promise<void>;
+	cancelInstall: (id: string) => Promise<void>;
 }
 
 export function useHub(): Hub {
@@ -168,6 +173,56 @@ export function useHub(): Hub {
 		return payload.warning;
 	}, []);
 
+	const loadAgents = useCallback(async () => {
+		const response = await fetch("/api/agents");
+		if (!response.ok) {
+			throw new Error(`GET /api/agents failed: ${response.status}`);
+		}
+		const body = (await response.json()) as AgentListResponse;
+		dispatch({ type: "agents_loaded", agents: body.agents });
+	}, []);
+
+	const installAgent = useCallback(async (id: string) => {
+		const response = await fetch("/api/agents/install", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ id, confirm: true }),
+		});
+		let payload:
+			| InstallAgentStartResponse
+			| { ok: false; error?: string }
+			| null = null;
+		try {
+			payload = (await response.json()) as
+				| InstallAgentStartResponse
+				| { ok: false; error?: string };
+		} catch {
+			payload = null;
+		}
+		if (!response.ok || payload === null || payload.ok !== true) {
+			// Surface the server's reason (unknown id, not loopback, busy) and fall
+			// back to a generic message when the body is missing or malformed.
+			const message =
+				payload !== null &&
+				payload.ok === false &&
+				typeof payload.error === "string" &&
+				payload.error !== ""
+					? payload.error
+					: `安装失败 (${response.status})`;
+			throw new Error(message);
+		}
+		// The server also streams an `agent_job`, but apply it now so the row
+		// reacts to the click without waiting for the round trip.
+		dispatch({
+			type: "server",
+			event: { type: "agent_job", job: payload.job },
+		});
+	}, []);
+
+	const cancelInstall = useCallback((id: string) => {
+		return post("/api/agents/cancel", { id }).catch(() => undefined);
+	}, []);
+
 	return {
 		state,
 		send,
@@ -181,5 +236,8 @@ export function useHub(): Hub {
 		openSettings,
 		closeSettings,
 		saveProvider,
+		loadAgents,
+		installAgent,
+		cancelInstall,
 	};
 }
