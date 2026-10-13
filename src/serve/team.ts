@@ -246,6 +246,9 @@ export class TeamHub extends EventBus implements Hub {
 			messages: toTranscript(
 				replay(turns, this.options.workspaceRoot, sessionId),
 			),
+			// The same summaries `bot_sessions` emits, so the read also fills the
+			// sidebar's list without a second request.
+			sessions: await this.sessionSummaries(bot),
 		};
 	}
 

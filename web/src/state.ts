@@ -8,6 +8,7 @@ import type {
 	BotStatus,
 	DmInfo,
 	InstallPhase,
+	MemoryEntryView,
 	PresetInfo,
 	ProviderView,
 	ServerEvent,
@@ -39,6 +40,12 @@ export interface ClientState {
 	workspaces: WorkspaceOption[];
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
+	// A bot's sessions live in their own maps keyed by bot name, so switching a
+	// bot's channel can never clobber the workspace chat's sessions.
+	botSessions: Record<string, SessionSummaryInfo[]>;
+	botActiveSession: Record<string, string | null>;
+	// A bot's memory, replaced wholesale after each read or edit.
+	memory: Record<string, MemoryEntryView[]>;
 	transcripts: Record<string, TranscriptMessage[]>;
 	approvals: ApprovalRequestInfo[];
 	allowAll: boolean;
@@ -47,6 +54,9 @@ export interface ClientState {
 	connection: ConnectionStatus;
 	usage: UsageTotals;
 	lastError: string | null;
+	// Set when a request is refused with 401 so the UI can say the token is bad
+	// rather than reporting a dropped connection.
+	authError: boolean;
 	settingsOpen: boolean;
 	settingsError: string | null;
 	agents: AgentStatusView[];
@@ -64,7 +74,9 @@ export type ClientAction =
 	| { type: "settings_open" }
 	| { type: "settings_close" }
 	| { type: "settings_error"; error: string | null }
-	| { type: "agents_loaded"; agents: AgentStatusView[] };
+	| { type: "agents_loaded"; agents: AgentStatusView[] }
+	| { type: "memory_loaded"; bot: string; entries: MemoryEntryView[] }
+	| { type: "auth_error"; authError: boolean };
 
 export function initialState(): ClientState {
 	return {
@@ -77,6 +89,9 @@ export function initialState(): ClientState {
 		workspaces: [],
 		sessions: [],
 		activeSessionId: null,
+		botSessions: {},
+		botActiveSession: {},
+		memory: {},
 		transcripts: {},
 		approvals: [],
 		allowAll: false,
@@ -85,6 +100,7 @@ export function initialState(): ClientState {
 		connection: "connecting",
 		usage: { input: 0, output: 0 },
 		lastError: null,
+		authError: false,
 		settingsOpen: false,
 		settingsError: null,
 		agents: [],
@@ -165,6 +181,15 @@ export function clientReducer(
 		case "agents_loaded":
 			return { ...state, agents: action.agents };
 
+		case "memory_loaded":
+			return {
+				...state,
+				memory: { ...state.memory, [action.bot]: action.entries },
+			};
+
+		case "auth_error":
+			return { ...state, authError: action.authError };
+
 		case "server":
 			return applyServerEvent(state, action.event);
 	}
@@ -210,9 +235,21 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			};
 
 		case "session_opened":
+			// A bot's channel switch replaces only that bot's transcript; the chat
+			// keeps its own active id. The workspace chat is the one bot whose
+			// active session the top-level `activeSessionId` tracks.
+			if (event.bot === WORKSPACE_BOT) {
+				return {
+					...state,
+					activeSessionId: event.sessionId,
+					transcripts: {
+						...state.transcripts,
+						[event.bot]: event.messages,
+					},
+				};
+			}
 			return {
 				...state,
-				activeSessionId: event.sessionId,
 				transcripts: {
 					...state.transcripts,
 					[event.bot]: event.messages,
@@ -222,10 +259,17 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 		case "sessions":
 			return { ...state, sessions: event.sessions };
 
-		// A bot's session list is its own event so it cannot clobber the chat's;
-		// this client does not render it yet.
+		// A bot's session list is its own event so it cannot clobber the chat's:
+		// it fills the bot-keyed maps only, never `sessions`/`activeSessionId`.
 		case "bot_sessions":
-			return state;
+			return {
+				...state,
+				botSessions: { ...state.botSessions, [event.bot]: event.sessions },
+				botActiveSession: {
+					...state.botActiveSession,
+					[event.bot]: event.currentSessionId,
+				},
+			};
 
 		case "bot_status":
 			return {

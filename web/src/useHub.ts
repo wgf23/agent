@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useReducer } from "react";
-import { createApi, type SwitchWorkspaceResult } from "./api";
+import { ApiError, createApi, type SwitchWorkspaceResult } from "./api";
 import { readToken } from "./auth";
 import type {
 	ApprovalChoice,
 	BotDraft,
 	SaveProviderBody,
 	ServerEvent,
+	SetWakeBody,
 } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
@@ -19,6 +20,12 @@ const token =
 // client, which keeps the request construction testable outside React.
 const api = createApi({ token });
 
+// A 401 is an auth refusal, not a dropped connection; the hub flags it so the
+// UI can say the token is bad instead of showing a retry.
+function isAuthRefusal(error: unknown): boolean {
+	return error instanceof ApiError && error.status === 401;
+}
+
 export interface Hub {
 	state: ClientState;
 	send: (bot: string, text: string) => void;
@@ -27,6 +34,12 @@ export interface Hub {
 	setAllowAll: (on: boolean) => void;
 	newSession: (bot: string) => void;
 	openSession: (bot: string, id: string) => void;
+	// Selects a bot: loads its transcript and session list, then its memory, so
+	// the sidebar and memory panel fill without a second request.
+	selectBot: (bot: string) => void;
+	forgetMemory: (bot: string, id: string) => Promise<void>;
+	setWake: (bot: string, body: SetWakeBody) => Promise<void>;
+	closeBotSession: (bot: string, id: string) => void;
 	createBot: (draft: BotDraft) => Promise<void>;
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
@@ -96,6 +109,81 @@ export function useHub(): Hub {
 	const openSession = useCallback((bot: string, id: string) => {
 		api.openSession(bot, id).catch(() => {});
 	}, []);
+
+	const reportAuth = useCallback((error: unknown) => {
+		if (isAuthRefusal(error)) {
+			dispatch({ type: "auth_error", authError: true });
+		}
+	}, []);
+
+	const selectBot = useCallback(
+		(bot: string) => {
+			void (async () => {
+				try {
+					// One read answers both questions: the transcript replaces this
+					// bot's transcript, its session list fills the bot-keyed maps.
+					const transcript = await api.loadBotTranscript(bot);
+					dispatch({
+						type: "server",
+						event: {
+							type: "session_opened",
+							bot,
+							sessionId: transcript.sessionId,
+							messages: transcript.messages,
+						},
+					});
+					dispatch({
+						type: "server",
+						event: {
+							type: "bot_sessions",
+							bot,
+							sessions: transcript.sessions,
+							currentSessionId: transcript.sessionId,
+						},
+					});
+					const memory = await api.loadMemory(bot);
+					dispatch({ type: "memory_loaded", bot, entries: memory.entries });
+				} catch (error) {
+					reportAuth(error);
+				}
+			})();
+		},
+		[reportAuth],
+	);
+
+	const forgetMemory = useCallback(
+		async (bot: string, id: string) => {
+			try {
+				await api.forgetMemory(bot, id);
+				// Re-read so the panel reflects the ledger, not a local guess.
+				const memory = await api.loadMemory(bot);
+				dispatch({ type: "memory_loaded", bot, entries: memory.entries });
+			} catch (error) {
+				reportAuth(error);
+			}
+		},
+		[reportAuth],
+	);
+
+	const setWake = useCallback(
+		async (bot: string, body: SetWakeBody) => {
+			try {
+				// The server re-emits the roster after arming the timer, so the
+				// fresh `bots` event refreshes the wake badge with no extra read.
+				await api.setWake(bot, body);
+			} catch (error) {
+				reportAuth(error);
+			}
+		},
+		[reportAuth],
+	);
+
+	const closeBotSession = useCallback(
+		(bot: string, id: string) => {
+			api.closeBotSession(bot, id).catch(reportAuth);
+		},
+		[reportAuth],
+	);
 
 	const createBot = useCallback(async (draft: BotDraft) => {
 		await api.createBot(draft);
@@ -168,6 +256,10 @@ export function useHub(): Hub {
 		setAllowAll,
 		newSession,
 		openSession,
+		selectBot,
+		forgetMemory,
+		setWake,
+		closeBotSession,
 		createBot,
 		loadSettings,
 		openSettings,

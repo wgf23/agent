@@ -3,12 +3,16 @@ import type {
 	AgentListResponse,
 	ApprovalChoice,
 	BotDraft,
+	BotTranscriptResponse,
 	CancelAgentBody,
+	ForgetMemoryBody,
 	InstallAgentBody,
 	InstallAgentStartResponse,
+	MemoryListResponse,
 	SaveProviderBody,
 	SaveProviderResponse,
 	SettingsResponse,
+	SetWakeBody,
 } from "./protocol";
 
 export interface ApiClient {
@@ -19,6 +23,12 @@ export interface ApiClient {
 	setAllowAll(on: boolean): Promise<void>;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
+	// Reads a bot's current transcript and its session list in one call.
+	loadBotTranscript(bot: string): Promise<BotTranscriptResponse>;
+	loadMemory(bot: string): Promise<MemoryListResponse>;
+	forgetMemory(bot: string, id: string): Promise<void>;
+	setWake(bot: string, body: SetWakeBody): Promise<void>;
+	closeBotSession(bot: string, id: string): Promise<void>;
 	createBot(draft: BotDraft): Promise<void>;
 	loadSettings(): Promise<SettingsResponse>;
 	// Returns the accepted provider so the caller can apply it immediately
@@ -30,6 +40,19 @@ export interface ApiClient {
 	// Server-driven switch: the POST only names the root; the server emits a
 	// fresh hello that the reducer treats as a full reset.
 	switchWorkspace(root: string): Promise<SwitchWorkspaceResult>;
+}
+
+// A failed request that keeps its HTTP status so the hub can tell an auth
+// refusal (401) apart from a transient failure. The response-reading calls
+// below throw this; the older call sites keep their plain Error behavior.
+export class ApiError extends Error {
+	readonly status: number;
+
+	constructor(status: number, message: string) {
+		super(message);
+		this.name = "ApiError";
+		this.status = status;
+	}
 }
 
 export type SavedProvider = Extract<SaveProviderResponse, { ok: true }>;
@@ -66,6 +89,85 @@ export function createApi(options: {
 		});
 		if (!response.ok) {
 			throw new Error(`POST ${path} failed: ${response.status}`);
+		}
+	}
+
+	// Builds the ApiError for a refused response, preferring the server's
+	// human-readable reason when the body carries one.
+	async function failure(
+		response: Response,
+		fallback: string,
+	): Promise<ApiError> {
+		let message = fallback;
+		try {
+			const body = (await response.json()) as { error?: string };
+			if (typeof body.error === "string" && body.error !== "") {
+				message = body.error;
+			}
+		} catch {
+			// keep the fallback message
+		}
+		return new ApiError(response.status, message);
+	}
+
+	async function loadBotTranscript(
+		bot: string,
+	): Promise<BotTranscriptResponse> {
+		const path = `/api/bots/${encodeURIComponent(bot)}/transcript`;
+		const response = await request(path);
+		if (!response.ok) {
+			throw await failure(response, `GET ${path} failed: ${response.status}`);
+		}
+		return (await response.json()) as BotTranscriptResponse;
+	}
+
+	async function loadMemory(bot: string): Promise<MemoryListResponse> {
+		const path = `/api/bots/${encodeURIComponent(bot)}/memory`;
+		const response = await request(path);
+		if (!response.ok) {
+			throw await failure(response, `GET ${path} failed: ${response.status}`);
+		}
+		return (await response.json()) as MemoryListResponse;
+	}
+
+	async function forgetMemory(bot: string, id: string): Promise<void> {
+		const path = `/api/bots/${encodeURIComponent(bot)}/memory/forget`;
+		const body: ForgetMemoryBody = { id };
+		const response = await request(path, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (!response.ok) {
+			throw await failure(response, `POST ${path} failed: ${response.status}`);
+		}
+	}
+
+	async function setWake(bot: string, body: SetWakeBody): Promise<void> {
+		const path = `/api/bots/${encodeURIComponent(bot)}/wake`;
+		const response = await request(path, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (!response.ok) {
+			throw await failure(response, `POST ${path} failed: ${response.status}`);
+		}
+	}
+
+	async function closeBotSession(bot: string, id: string): Promise<void> {
+		// A bot's session close is a POST; a 401 must stay observable so the hub
+		// can flag the token rather than a dropped connection.
+		const response = await request("/api/sessions/close", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ bot, id }),
+		});
+		if (!response.ok) {
+			throw await failure(
+				response,
+				`POST /api/sessions/close failed: ${response.status}`,
+			);
 		}
 	}
 
@@ -212,6 +314,11 @@ export function createApi(options: {
 		setAllowAll: (on) => post("/api/allow-all", { on }),
 		newSession: (bot) => post("/api/sessions/new", { bot }),
 		openSession: (bot, id) => post("/api/sessions/open", { bot, id }),
+		loadBotTranscript,
+		loadMemory,
+		forgetMemory,
+		setWake,
+		closeBotSession,
 		createBot,
 		loadSettings,
 		saveProvider,

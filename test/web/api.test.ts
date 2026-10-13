@@ -100,6 +100,34 @@ const invocations: Array<{
 		body: { bot: "b", id: "s1" },
 	},
 	{
+		name: "loadBotTranscript",
+		run: (api) => api.loadBotTranscript("b"),
+		path: "/api/bots/b/transcript",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "loadMemory",
+		run: (api) => api.loadMemory("b"),
+		path: "/api/bots/b/memory",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "forgetMemory",
+		run: (api) => api.forgetMemory("b", "m1"),
+		path: "/api/bots/b/memory/forget",
+		method: "POST",
+		body: { id: "m1" },
+	},
+	{
+		name: "setWake",
+		run: (api) => api.setWake("b", { everyMs: 60000, prompt: "tick" }),
+		path: "/api/bots/b/wake",
+		method: "POST",
+		body: { everyMs: 60000, prompt: "tick" },
+	},
+	{
 		name: "createBot",
 		run: (api) => api.createBot({ name: "b", role: "r" }),
 		path: "/api/bots",
@@ -225,6 +253,27 @@ describe("response handling", () => {
 		await expect(
 			api.saveProvider({ preset: "deepseek", model: "m" }),
 		).rejects.toThrow("保存设置失败 (401)");
+	});
+
+	it("carries the status on a 401 so the hub can flag the token", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "unauthorized" }), {
+					status: 401,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.loadBotTranscript("b")).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.loadMemory("b")).rejects.toMatchObject({ status: 401 });
+		await expect(api.forgetMemory("b", "m1")).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.setWake("b", { clear: true })).rejects.toMatchObject({
+			status: 401,
+		});
 	});
 });
 

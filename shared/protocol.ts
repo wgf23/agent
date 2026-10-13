@@ -248,10 +248,14 @@ export interface MemoryListResponse {
 	entries: MemoryEntryView[];
 }
 
+// One read answers both questions the sidebar asks when a bot is selected: the
+// current transcript and the bot's own session list, so no second request is
+// needed (the list is the same projection `bot_sessions` carries).
 export interface BotTranscriptResponse {
 	bot: string;
 	sessionId: string;
 	messages: TranscriptMessage[];
+	sessions: SessionSummaryInfo[];
 }
 
 export type ServerEvent =
