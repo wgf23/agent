@@ -18,6 +18,7 @@ import type {
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import { verifyApiKey } from "../cli/setup.js";
 import { resolveConfig } from "../config/resolve.js";
+import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import type { Provider } from "../providers/types.js";
@@ -103,6 +104,11 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const lsp = startLspServers({
+		servers: resolved.config.lspServers,
+		workspaceRoot,
+	});
+
 	const allowAll = createAllowAll();
 	// Getters, not values: SoloHub reads provider/settings at each turn, so a
 	// settings save is visible without rebuilding or restarting the server.
@@ -115,7 +121,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			return runtime.current().settings;
 		},
 		permissions,
-		extraTools: mcp.tools,
+		extraTools: [...mcp.tools, ...lsp.tools],
 		compaction: resolved.config.compaction,
 		hooks: resolved.config.hooks,
 		allowAll,
@@ -128,8 +134,10 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const latest = await latestSession(workspaceRoot);
 	const session = latest ?? newSession(workspaceRoot, settings.model);
 	const workspace = new SoloHub(hubOptions, { session, sessions: summaries });
+	// Robs keep the MCP tools only; wiring LSP into the rob roster is a follow-up.
 	const robHub = new TeamHub({
 		...hubOptions,
+		extraTools: mcp.tools,
 		robs,
 		providerEnv: runtime.current().providerEnv,
 	});
@@ -166,6 +174,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		);
 		await hub.dispose();
 		await mcp.dispose();
+		await lsp.dispose();
 		process.exitCode = 1;
 		return;
 	}
@@ -182,6 +191,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		void (async () => {
 			await hub.dispose().catch(() => undefined);
 			await mcp.dispose().catch(() => undefined);
+			await lsp.dispose().catch(() => undefined);
 			app.server.closeAllConnections?.();
 			await app.close().catch(() => undefined);
 			process.exit(0);

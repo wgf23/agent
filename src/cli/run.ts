@@ -3,6 +3,7 @@ import { runAgent, type UsageTotals } from "../agent/agent.js";
 import { estimateCost, formatCost } from "../agent/cost.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
@@ -128,6 +129,11 @@ export async function runHeadless(
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const lsp = startLspServers({
+		servers: resolved.config.lspServers,
+		workspaceRoot,
+	});
+
 	const controller = new AbortController();
 	const onSigint = (): void => controller.abort();
 	process.on("SIGINT", onSigint);
@@ -173,7 +179,7 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: [...mcp.tools, taskTool],
+			extraTools: [...mcp.tools, ...lsp.tools, taskTool],
 			hooks: resolved.config.hooks,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
@@ -237,6 +243,7 @@ export async function runHeadless(
 	} finally {
 		process.off("SIGINT", onSigint);
 		await mcp.dispose();
+		await lsp.dispose();
 	}
 }
 

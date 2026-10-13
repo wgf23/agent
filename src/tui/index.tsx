@@ -9,6 +9,7 @@ import {
 	verifyApiKey,
 } from "../cli/setup.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
@@ -202,6 +203,10 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		servers: resolved.config.mcpServers,
 		workspaceRoot: options.workspaceRoot,
 	});
+	const lsp = startLspServers({
+		servers: resolved.config.lspServers,
+		workspaceRoot: options.workspaceRoot,
+	});
 	const startupLines = [
 		...mcp.notices,
 		...mcp.servers.map(
@@ -251,7 +256,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
-			extraTools={[...mcp.tools, taskTool]}
+			extraTools={[...mcp.tools, ...lsp.tools, taskTool]}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			hooks={resolved.config.hooks}
@@ -263,6 +268,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		await instance.waitUntilExit();
 	} finally {
 		await mcp.dispose();
+		await lsp.dispose();
 	}
 }
 

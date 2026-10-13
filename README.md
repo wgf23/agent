@@ -176,7 +176,7 @@ The project file overrides the global file field by field, and both override the
 
 Each tool maps to an action: `allow`, `ask`, or `deny`. A tool can also take an ordered list of `{ "pattern", "action" }` rules; the first matching pattern wins. `*` is a wildcard, so `git status*` matches `git status` and `git status --short`.
 
-Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, `web_search`, and `task` ask.
+Defaults: `read_file`, `glob`, `grep`, and `diagnostics` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, `web_search`, and `task` ask.
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 
@@ -236,6 +236,27 @@ Every server tool is namespaced `mcp__<server>__<tool>`, with any character outs
 MCP tools default to `ask`, so the dialog approves them like `bash`, and "allow always" persists the exact `mcp__...` name to `my-agent.json`. A server that fails to start prints `mcp <server>: <error>` and does not stop the others. Headless runs print `[mcp] <server>: N tools` for each connected server; the TUI shows the same counts as transcript lines.
 
 Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox. Team mode connects them once per run: every native rob receives the configured tools, and the connection set is disposed when the team stops. A `cli` rob (`pi`, `opencode`, or `claude`) runs its own tool registry and uses its own MCP configuration instead. A sub-agent a rob starts through `delegate` does not receive MCP tools.
+
+## LSP
+
+my-agent can run a language server and surface its diagnostics. Configure a top-level `lsp` block in `my-agent.json` or the global config:
+
+```json
+{
+  "lsp": {
+    "servers": {
+      "typescript": {
+        "command": ["typescript-language-server", "--stdio"],
+        "extensions": [".ts", ".tsx"]
+      }
+    }
+  }
+}
+```
+
+Each server takes `command` (the executable and its arguments) and `extensions` (the file extensions it owns, matched case-insensitively), plus optional `env`, `initialization`, and `disabled` flags. The server starts lazily on the first file whose extension it owns and is reused afterwards. A server marked `disabled` is ignored, and project servers merge over global servers by name. An empty or absent `servers` map means LSP is off.
+
+The read-only `diagnostics` tool runs the matching server on a file and returns its diagnostics as `<path>:<line>:<col> <severity> <message>` lines, or a `no diagnostics` line when the file is clean. It filters by `severity` (`error`, `warning`, `info`, or `hint`) when asked, and an unknown extension returns an error naming the configured extensions. Servers run as your user with the same environment and are not sandboxed by the `bash` sandbox, and they shut down cleanly when the run ends.
 
 ## Hooks
 
