@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ServerEvent } from "../../shared/protocol";
+import type { ServerEvent, WorkspaceOption } from "../../shared/protocol";
 import {
 	applyAgentEvent,
 	clientReducer,
@@ -15,6 +15,13 @@ function apply(events: ServerEvent[]) {
 	);
 }
 
+const workspaces: WorkspaceOption[] = [
+	{ root: "/tmp/ws", label: "ws", lastOpenedAt: 2, active: true },
+	{ root: "/tmp/other", label: "other", lastOpenedAt: 1, active: false },
+];
+
+// The roster carries robs only; the chat is addressed by WORKSPACE_BOT and
+// arrives as hello.transcript, while its bot state still rides in states.
 const hello: ServerEvent = {
 	type: "hello",
 	workspaceRoot: "/tmp/ws",
@@ -29,9 +36,8 @@ const hello: ServerEvent = {
 	},
 	bots: [
 		{
-			name: "assistant",
-			kind: "workspace",
-			role: "agent",
+			name: "writer",
+			role: "drafts prose",
 			model: "deepseek-flash",
 			backend: "native",
 		},
@@ -46,6 +52,7 @@ const hello: ServerEvent = {
 			usage: { input: 0, output: 0 },
 		},
 	],
+	workspaces,
 	sessions: [],
 	activeSessionId: "ses_1",
 	transcript: [],
@@ -54,7 +61,7 @@ const hello: ServerEvent = {
 };
 
 describe("clientReducer", () => {
-	it("loads a hello snapshot into the workspace bot transcript", () => {
+	it("loads a hello snapshot with the chat keyed by WORKSPACE_BOT", () => {
 		const state = apply([
 			{
 				...hello,
@@ -68,9 +75,15 @@ describe("clientReducer", () => {
 		expect(state.botStates.assistant.status).toBe("idle");
 		expect(state.transcripts.assistant).toHaveLength(2);
 		expect(state.provider?.configured).toBe(true);
+		// The chat is not a roster entry any more.
+		expect(state.bots.some((bot) => bot.name === "assistant")).toBe(false);
+		expect(state.workspaces).toEqual(workspaces);
+		expect(state.workspaces.find((workspace) => workspace.active)?.root).toBe(
+			"/tmp/ws",
+		);
 	});
 
-	it("applies a bots event and keeps the workspace and robs split", () => {
+	it("replaces the roster with robs only on a bots event", () => {
 		const state = apply([
 			hello,
 			{
@@ -78,9 +91,8 @@ describe("clientReducer", () => {
 				bots: [
 					...hello.bots,
 					{
-						name: "writer",
-						kind: "rob",
-						role: "drafts prose",
+						name: "reader",
+						role: "reads docs",
 						model: "deepseek-flash",
 						backend: "native",
 					},
@@ -88,7 +100,7 @@ describe("clientReducer", () => {
 				states: [
 					...hello.states,
 					{
-						bot: "writer",
+						bot: "reader",
 						status: "idle",
 						messageCount: 0,
 						pending: 0,
@@ -98,11 +110,9 @@ describe("clientReducer", () => {
 				],
 			},
 		]);
-		expect(state.bots.map((bot) => `${bot.kind}:${bot.name}`)).toEqual([
-			"workspace:assistant",
-			"rob:writer",
-		]);
-		expect(state.botStates.writer.status).toBe("idle");
+		expect(state.bots.map((bot) => bot.name)).toEqual(["writer", "reader"]);
+		expect(state.bots.some((bot) => bot.name === "assistant")).toBe(false);
+		expect(state.botStates.reader.status).toBe("idle");
 	});
 
 	it("accumulates streaming text and tool calls onto one assistant message", () => {
