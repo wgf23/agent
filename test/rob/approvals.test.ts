@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import { addPermissionRule } from "../../src/config/project-file.js";
+import { createAllowAll } from "../../src/permissions/allow-all.js";
 import { createAuthorizer } from "../../src/permissions/authorizer.js";
 import { defaultRules } from "../../src/permissions/rules.js";
 import {
@@ -8,6 +9,7 @@ import {
 	UnknownApprovalError,
 } from "../../src/rob/approvals.js";
 import { TEAM_STOPPED_REASON, Team } from "../../src/rob/team.js";
+import type { Tool } from "../../src/tools/types.js";
 import { writeFileTool } from "../../src/tools/write_file.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
@@ -101,6 +103,41 @@ describe("ApprovalQueue", () => {
 		});
 		expect(queue.pending()).toEqual([]);
 	});
+
+	it("denies an unanswered request when the injected timer expires", async () => {
+		const queue = new ApprovalQueue();
+		const timers: Array<() => void> = [];
+		let canceled = 0;
+		const schedule = (_delayMs: number, fn: () => void) => {
+			timers.push(fn);
+			return () => {
+				canceled += 1;
+			};
+		};
+
+		const entry = queue.request("planner", request("a.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		expect(queue.pending()).toHaveLength(1);
+		expect(timers).toHaveLength(1);
+
+		timers[0]?.();
+		expect(await entry.decision).toEqual({
+			deny: "No one answered this approval within 0.05s, so it was denied.",
+		});
+		expect(queue.pending()).toEqual([]);
+		expect(canceled).toBe(1);
+
+		// Resolving first clears the timer instead of letting it fire later.
+		const answered = queue.request("planner", request("b.txt"), {
+			timeoutMs: 50,
+			schedule,
+		});
+		queue.resolve(answered.id, "allow_once");
+		expect(await answered.decision).toBe("allow_once");
+		expect(canceled).toBe(2);
+	});
 });
 
 describe("allow_always", () => {
@@ -161,3 +198,65 @@ describe("Team stop", () => {
 		).resolves.toEqual({ deny: TEAM_STOPPED_REASON });
 	});
 });
+
+describe("approval timeout", () => {
+	it("denies an unanswered approval so the rob's turn finishes", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "mcp__memory__create_entity",
+					args: { name: "Ada" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [{ name: "planner", role: "plan" }],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: (rob) =>
+				createAuthorizer({
+					workspaceRoot: workspace,
+					rules: rob.rules,
+					approval: rob.approval,
+					yesAll: false,
+					allowAll: createAllowAll(false),
+				}),
+			extraTools: [mcpTool()],
+			approvalTimeoutMs: 50,
+		});
+		const decisions: string[] = [];
+		team.subscribe((event) => {
+			if (event.kind === "approval_resolved") decisions.push(event.decision);
+		});
+
+		team.start();
+		team.dispatch("planner", "go");
+		await waitFor(
+			() =>
+				team.statuses()[0].status === "idle" && provider.requests.length === 2,
+			"the timed-out turn to finish",
+		);
+		await team.stop();
+
+		expect(decisions).toEqual(["deny"]);
+		expect(provider.requests).toHaveLength(2);
+	});
+});
+
+function mcpTool(): Tool {
+	return {
+		name: "mcp__memory__create_entity",
+		description: "create an entity",
+		readOnly: false,
+		parameters: { type: "object", properties: { name: { type: "string" } } },
+		execute: async () => ({ ok: true, output: "created" }),
+	};
+}

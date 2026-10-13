@@ -26,6 +26,8 @@ export class UnknownApprovalError extends Error {
 interface PendingApproval {
 	request: ApprovalRequest;
 	resolve: (decision: ApprovalDecision) => void;
+	// Clears the expiry timer when the decision is resolved or denied.
+	cancel?: () => void;
 }
 
 export interface EnqueuedApproval {
@@ -34,6 +36,25 @@ export interface EnqueuedApproval {
 	decision: Promise<ApprovalDecision>;
 }
 
+// The queue defaults to a five-minute expiry. A proactive wake could otherwise
+// wait on an approval nobody answers and hang its turn forever.
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 300_000;
+
+export type ApprovalScheduler = (delayMs: number, fn: () => void) => () => void;
+
+export interface ApprovalRequestOptions {
+	timeoutMs?: number;
+	schedule?: ApprovalScheduler;
+}
+
+// Unrefs the handle so a lone pending approval never holds the process open;
+// the returned cancel clears it when the request resolves first.
+const defaultScheduler: ApprovalScheduler = (delayMs, fn) => {
+	const handle = setTimeout(fn, delayMs);
+	handle.unref?.();
+	return () => clearTimeout(handle);
+};
+
 // All robs share one FIFO queue. Whoever resolves an id answers that rob's
 // authorizer; an unknown id is a programming error, not a silent no-op.
 export class ApprovalQueue {
@@ -41,14 +62,29 @@ export class ApprovalQueue {
 	private readonly entries = new Map<string, PendingApproval>();
 	private readonly order: string[] = [];
 
-	request(rob: RobName, request: AuthorizerApprovalRequest): EnqueuedApproval {
+	request(
+		rob: RobName,
+		request: AuthorizerApprovalRequest,
+		options: ApprovalRequestOptions = {},
+	): EnqueuedApproval {
 		const id = `approval-${this.seq}`;
 		this.seq += 1;
 		const queued: ApprovalRequest = { id, rob, ...request };
+		const timeoutMs = options.timeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS;
+		const schedule = options.schedule ?? defaultScheduler;
 		const decision = new Promise<ApprovalDecision>((resolve) => {
-			this.entries.set(id, { request: queued, resolve });
+			const entry: PendingApproval = { request: queued, resolve };
+			this.entries.set(id, entry);
+			this.order.push(id);
+			if (Number.isFinite(timeoutMs) && timeoutMs >= 0) {
+				entry.cancel = schedule(timeoutMs, () => {
+					if (!this.entries.has(id)) return;
+					this.take(id).resolve({
+						deny: `No one answered this approval within ${timeoutMs / 1000}s, so it was denied.`,
+					});
+				});
+			}
 		});
-		this.order.push(id);
 		return { id, request: queued, decision };
 	}
 
@@ -101,6 +137,7 @@ export class ApprovalQueue {
 		this.entries.delete(id);
 		const index = this.order.indexOf(id);
 		if (index !== -1) this.order.splice(index, 1);
+		entry.cancel?.();
 		return entry;
 	}
 }

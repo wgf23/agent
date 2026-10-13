@@ -42,11 +42,18 @@ export type ApprovalChoice = "allow_once" | "allow_always" | "deny";
 
 export const WORKSPACE_BOT = "assistant";
 
+export interface BotWake {
+	everyMs: number;
+	prompt: string;
+}
+
 export interface BotInfo {
 	name: string;
 	role: string;
 	model: string;
 	backend: BackendKind;
+	// The configured interval that wakes the bot; absent when it has none.
+	wake?: BotWake | null;
 }
 
 // One entry in the workspace picker. `active` marks the scope the server is
@@ -227,6 +234,26 @@ export interface TranscriptMessage {
 	tools: ToolCallView[];
 }
 
+// The memory view omits supersedes/source: the browser edits entries by id and
+// never needs the ledger's provenance fields.
+export interface MemoryEntryView {
+	id: string;
+	at: number;
+	kind: "fact" | "preference" | "commitment" | "digest";
+	text: string;
+}
+
+export interface MemoryListResponse {
+	bot: string;
+	entries: MemoryEntryView[];
+}
+
+export interface BotTranscriptResponse {
+	bot: string;
+	sessionId: string;
+	messages: TranscriptMessage[];
+}
+
 export type ServerEvent =
 	| {
 			type: "hello";
@@ -251,6 +278,12 @@ export type ServerEvent =
 			messages: TranscriptMessage[];
 	  }
 	| { type: "sessions"; sessions: SessionSummaryInfo[] }
+	| {
+			type: "bot_sessions";
+			bot: string;
+			sessions: SessionSummaryInfo[];
+			currentSessionId: string | null;
+	  }
 	| { type: "bot_status"; state: BotState }
 	| { type: "agent_event"; bot: string; event: AgentEvent }
 	| { type: "approval_requested"; request: ApprovalRequestInfo }
@@ -291,6 +324,18 @@ export interface SessionOpenBody {
 
 export interface SessionCloseBody {
 	bot: string;
+	id: string;
+}
+
+// A wake write either sets the interval or clears it; the route rejects a body
+// that is neither.
+export interface SetWakeBody {
+	everyMs?: number;
+	prompt?: string;
+	clear?: boolean;
+}
+
+export interface ForgetMemoryBody {
 	id: string;
 }
 

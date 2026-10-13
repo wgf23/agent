@@ -257,6 +257,92 @@ async function writeRob(
 	return { ok: true };
 }
 
+export function setRobWake(
+	workspaceRoot: string,
+	name: string,
+	wake: RobConfig["wake"] | null,
+): Promise<WriteResult> {
+	const run = writeChain.then(() => writeRobWake(workspaceRoot, name, wake));
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+// Rewrites only the named rob's wake, leaving every other key and every other
+// rob byte-for-byte intact. A rob the file does not name is an error: the
+// schedule is config-owned, so there is nothing to arm from a missing entry.
+async function writeRobWake(
+	workspaceRoot: string,
+	name: string,
+	wake: RobConfig["wake"] | null,
+): Promise<WriteResult> {
+	const filePath = projectFilePath(workspaceRoot);
+
+	let text: string;
+	try {
+		text = await readFile(filePath, "utf8");
+	} catch (error) {
+		if (isEnoent(error)) return { ok: false, error: `Unknown rob: ${name}` };
+		return {
+			ok: false,
+			error: `Failed to read ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(text);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Invalid JSON in ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	const parsed = projectFileSchema.safeParse(parsedJson);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(parsed.error)}`,
+		};
+	}
+	const raw = parsedJson as Record<string, unknown>;
+	const robs = Array.isArray(raw.robs) ? raw.robs : [];
+
+	let found = false;
+	const nextRobs = robs.map((entry) => {
+		if (typeof entry !== "object" || entry === null) return entry;
+		const rob = entry as Record<string, unknown>;
+		if (rob.name !== name) return rob;
+		found = true;
+		const copy = { ...rob };
+		if (wake === null || wake === undefined) delete copy.wake;
+		else copy.wake = { everyMs: wake.everyMs, prompt: wake.prompt };
+		return copy;
+	});
+	if (!found) return { ok: false, error: `Unknown rob: ${name}` };
+
+	const nextRaw = { ...raw, robs: nextRobs };
+	const validated = projectFileSchema.safeParse(nextRaw);
+	if (!validated.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(validated.error)}`,
+		};
+	}
+
+	try {
+		await writeFile(filePath, `${JSON.stringify(nextRaw, null, 2)}\n`, "utf8");
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to write ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true };
+}
+
 function isEnoent(error: unknown): boolean {
 	return (
 		typeof error === "object" &&

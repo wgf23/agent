@@ -222,6 +222,11 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 		case "sessions":
 			return { ...state, sessions: event.sessions };
 
+		// A bot's session list is its own event so it cannot clobber the chat's;
+		// this client does not render it yet.
+		case "bot_sessions":
+			return state;
+
 		case "bot_status":
 			return {
 				...state,

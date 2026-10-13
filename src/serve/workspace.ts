@@ -6,6 +6,9 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryListResponse,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
@@ -291,6 +294,22 @@ export class WorkspaceHub extends EventBus implements Hub {
 
 	createBot(draft: BotDraft): Promise<BotInfo> {
 		return this.scope.hub.createBot(draft);
+	}
+
+	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		return this.scope.hub.readTranscript?.(bot) ?? Promise.resolve(null);
+	}
+
+	readMemory(bot: string): Promise<MemoryListResponse | null> {
+		return this.scope.hub.readMemory?.(bot) ?? Promise.resolve(null);
+	}
+
+	forgetMemory(bot: string, id: string): Promise<boolean> {
+		return this.scope.hub.forgetMemory?.(bot, id) ?? Promise.resolve(false);
+	}
+
+	setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		return this.scope.hub.setWake?.(bot, wake) ?? Promise.resolve(false);
 	}
 
 	applyRuntime(next: RuntimeSnapshot): Promise<ApplyRuntimeResult> {

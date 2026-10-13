@@ -4,6 +4,9 @@ import {
 	type ApprovalChoice,
 	type BotDraft,
 	type BotInfo,
+	type BotTranscriptResponse,
+	type BotWake,
+	type MemoryListResponse,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
@@ -125,6 +128,24 @@ export class CompositeHub extends EventBus implements Hub {
 		// keeps an in-memory channel to close.
 		if (bot === WORKSPACE_BOT) return Promise.resolve();
 		return this.robs.closeSession(bot, id);
+	}
+
+	// The workspace chat is not a ledger bot, so every ledger route resolves
+	// against the rob roster only.
+	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		return this.robs.readTranscript(bot);
+	}
+
+	readMemory(bot: string): Promise<MemoryListResponse | null> {
+		return this.robs.readMemory(bot);
+	}
+
+	forgetMemory(bot: string, id: string): Promise<boolean> {
+		return this.robs.forgetMemory(bot, id);
+	}
+
+	setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		return this.robs.setWake(bot, wake);
 	}
 
 	async createBot(draft: BotDraft): Promise<BotInfo> {

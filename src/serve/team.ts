@@ -2,10 +2,15 @@ import type {
 	ApprovalChoice,
 	BotInfo,
 	BotState,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryEntryView,
+	MemoryListResponse,
 	ServerEvent,
 	SessionSummaryInfo,
 } from "../../shared/protocol.js";
-import type { Turn } from "../bot/schema.js";
+import { replay } from "../bot/record.js";
+import type { MemoryEntry, Turn } from "../bot/schema.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
 import {
 	type Clock,
@@ -13,6 +18,7 @@ import {
 	systemTimer,
 	type Timer,
 } from "../bot/wake.js";
+import { setRobWake } from "../config/project-file.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import type { Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
@@ -220,11 +226,74 @@ export class TeamHub extends EventBus implements Hub {
 		await this.emitSessions(bot);
 	}
 
+	// The current session's transcript, replayed from the ledger so the read
+	// never consumes the rob's live history. Unknown bot is null (404).
+	async readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return null;
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const sessionId = this.team.currentChannel(bot).id;
+		const turns = loaded.record.turns.filter(
+			(turn) => turn.sessionId === sessionId,
+		);
+		return {
+			bot,
+			sessionId,
+			messages: toTranscript(
+				replay(turns, this.options.workspaceRoot, sessionId),
+			),
+		};
+	}
+
+	async readMemory(bot: string): Promise<MemoryListResponse | null> {
+		if (!this.hasBot(bot)) return null;
+		const entries = await this.store.memory(bot);
+		return { bot, entries: entries.map(toMemoryEntryView) };
+	}
+
+	// Forgets one memory entry outside a turn. False when the bot is unknown.
+	async forgetMemory(bot: string, id: string): Promise<boolean> {
+		if (!this.hasBot(bot)) return false;
+		const result = await this.store.saveMemory(bot, { upsert: [], drop: [id] });
+		if (!result.ok) throw new Error(result.error);
+		return true;
+	}
+
+	// Writes the schedule to the project file and re-arms the live timer. False
+	// when the bot is unknown.
+	async setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return false;
+		const saved = await setRobWake(this.options.workspaceRoot, bot, wake);
+		if (!saved.ok) throw new Error(saved.error);
+		if (wake === null) delete rob.wake;
+		else rob.wake = wake;
+		this.team.setWake(bot, wake);
+		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
+		return true;
+	}
+
+	private hasBot(bot: string): boolean {
+		return this.roster.some((candidate) => candidate.name === bot);
+	}
+
 	// The bot's session list is a read-side projection over its ledger, so it
-	// survives a restart with no extra store.
+	// survives a restart with no extra store. It is its own event: the chat's
+	// `sessions` event belongs to the workspace and a bot must not clobber it.
 	private async emitSessions(bot: string): Promise<void> {
 		const sessions = await this.sessionSummaries(bot);
-		this.emit({ type: "sessions", sessions });
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		this.emit({
+			type: "bot_sessions",
+			bot,
+			sessions,
+			currentSessionId:
+				rob === undefined ? null : this.team.currentChannel(bot).id,
+		});
 	}
 
 	private async sessionSummaries(bot: string): Promise<SessionSummaryInfo[]> {
@@ -289,13 +358,18 @@ export class TeamHub extends EventBus implements Hub {
 	}
 
 	bots(): BotInfo[] {
-		return this.roster.map((rob) => ({
-			name: rob.name,
-			role: rob.role,
-			model: rob.model ?? this.options.settings.model,
-			backend:
-				rob.backend?.kind === "cli" ? ("cli" as const) : ("native" as const),
-		}));
+		return this.roster.map((rob) => {
+			const info: BotInfo = {
+				name: rob.name,
+				role: rob.role,
+				model: rob.model ?? this.options.settings.model,
+				backend:
+					rob.backend?.kind === "cli" ? ("cli" as const) : ("native" as const),
+			};
+			const wake = this.team.robWake(rob.name);
+			if (wake !== null) info.wake = wake;
+			return info;
+		});
 	}
 
 	states(): BotState[] {
@@ -353,6 +427,16 @@ function toBotState(entry: RobStatusEntry): BotState {
 		pending: entry.pending,
 		lastMessage: entry.lastMessage,
 		usage: { ...entry.usage },
+	};
+}
+
+// The wire view drops the ledger-only provenance fields.
+function toMemoryEntryView(entry: MemoryEntry): MemoryEntryView {
+	return {
+		id: entry.id,
+		at: entry.at,
+		kind: entry.kind,
+		text: entry.text,
 	};
 }
 

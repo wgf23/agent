@@ -2,6 +2,9 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryListResponse,
 	ServerEvent,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
@@ -52,6 +55,13 @@ export interface Hub {
 	closeSession?(bot: string, id: string): Promise<void>;
 	// Only a hub that manages a rob roster can create one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
+	// A hub that keeps bot ledgers can serve these. The reads return null for an
+	// unknown bot; the writes return false. A store error throws, and the route
+	// turns it into a 500.
+	readTranscript?(bot: string): Promise<BotTranscriptResponse | null>;
+	readMemory?(bot: string): Promise<MemoryListResponse | null>;
+	forgetMemory?(bot: string, id: string): Promise<boolean>;
+	setWake?(bot: string, wake: BotWake | null): Promise<boolean>;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;

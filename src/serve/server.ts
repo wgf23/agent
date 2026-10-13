@@ -9,7 +9,9 @@ import type {
 	AllowAllBody,
 	ApprovalBody,
 	BotDraft,
+	BotWake,
 	CancelAgentBody,
+	ForgetMemoryBody,
 	InstallAgentBody,
 	InterruptBody,
 	SaveProviderBody,
@@ -18,6 +20,7 @@ import type {
 	SessionCloseBody,
 	SessionNewBody,
 	SessionOpenBody,
+	SetWakeBody,
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import {
@@ -348,6 +351,105 @@ export async function buildServer(
 		}
 	});
 
+	app.get("/api/bots/:bot/transcript", async (request, reply) => {
+		const readTranscript = hub.readTranscript?.bind(hub);
+		if (readTranscript === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot read bot transcripts" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		try {
+			const transcript = await readTranscript(bot);
+			if (transcript === null) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send(transcript);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.get("/api/bots/:bot/memory", async (request, reply) => {
+		const readMemory = hub.readMemory?.bind(hub);
+		if (readMemory === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot read bot memory" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		try {
+			const memory = await readMemory(bot);
+			if (memory === null) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send(memory);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.post("/api/bots/:bot/memory/forget", async (request, reply) => {
+		const forgetMemory = hub.forgetMemory?.bind(hub);
+		if (forgetMemory === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot edit bot memory" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const body = request.body as Partial<ForgetMemoryBody> | undefined;
+		if (typeof body?.id !== "string" || body.id === "") {
+			return reply.code(400).send({ error: "expected {id}" });
+		}
+		try {
+			const served = await forgetMemory(bot, body.id);
+			if (!served) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send({ ok: true });
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.post("/api/bots/:bot/wake", async (request, reply) => {
+		const setWake = hub.setWake?.bind(hub);
+		if (setWake === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot schedule bot wakes" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const body = request.body as Partial<SetWakeBody> | undefined;
+		const wake = parseWake(body);
+		if (wake === INVALID_WAKE) {
+			return reply
+				.code(400)
+				.send({ error: "expected {everyMs, prompt} or {clear: true}" });
+		}
+		try {
+			const served = await setWake(bot, wake);
+			if (!served) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send({ ok: true });
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
 	app.get("/api/settings", (_request, reply) => {
 		if (settings === undefined) {
 			return reply
@@ -559,6 +661,33 @@ function requestToken(request: FastifyRequest): string | undefined {
 	}
 	const query = request.query as { token?: unknown };
 	return typeof query.token === "string" ? query.token : undefined;
+}
+
+function botParam(request: FastifyRequest): string | undefined {
+	const params = request.params as { bot?: unknown } | undefined;
+	return typeof params?.bot === "string" && params.bot !== ""
+		? params.bot
+		: undefined;
+}
+
+// A sentinel so a body that is neither a valid set nor a clear is a 400, never
+// silently coerced into clearing the schedule.
+const INVALID_WAKE = Symbol("invalid-wake");
+
+function parseWake(
+	body: Partial<SetWakeBody> | undefined,
+): BotWake | null | typeof INVALID_WAKE {
+	if (body?.clear === true) return null;
+	if (
+		typeof body?.everyMs === "number" &&
+		Number.isInteger(body.everyMs) &&
+		body.everyMs >= 1000 &&
+		typeof body.prompt === "string" &&
+		body.prompt.length > 0
+	) {
+		return { everyMs: body.everyMs, prompt: body.prompt };
+	}
+	return INVALID_WAKE;
 }
 
 function errorText(error: unknown): string {

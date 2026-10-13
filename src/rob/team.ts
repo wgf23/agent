@@ -74,6 +74,9 @@ export interface TeamOptions {
 	store?: BotStore;
 	clock?: Clock;
 	timer?: Timer;
+	// An unanswered approval expires and is denied after this long, so a
+	// proactive wake cannot hang a turn forever. Defaults in ApprovalQueue.
+	approvalTimeoutMs?: number;
 }
 
 export type LoadChannelResult =
@@ -96,6 +99,8 @@ export class Team implements TeamPort {
 	private readonly timer: Timer;
 	// One cancel per armed interval, keyed by rob, so stop() can disarm them all.
 	private readonly wakeTimers = new Map<RobName, () => void>();
+	// The live wake per rob, seeded from the roster and replaced by setWake.
+	private readonly wakes = new Map<RobName, RobConfig["wake"] | null>();
 	private started = false;
 	private stopping = false;
 
@@ -107,6 +112,7 @@ export class Team implements TeamPort {
 		this.channels = new ChannelRegistry({ clock: () => this.clock.now() });
 		for (const config of options.robs) {
 			this.robs.set(config.name, this.createRob(config));
+			this.wakes.set(config.name, config.wake ?? null);
 		}
 	}
 
@@ -118,9 +124,10 @@ export class Team implements TeamPort {
 		}
 		const rob = this.createRob(config);
 		this.robs.set(config.name, rob);
+		this.wakes.set(config.name, config.wake ?? null);
 		if (this.started && !this.stopping) {
 			this.loops.set(config.name, rob.run());
-			this.armWake(config);
+			this.armWake(config.name, config.wake ?? null);
 		}
 	}
 
@@ -157,21 +164,46 @@ export class Team implements TeamPort {
 		for (const [name, rob] of this.robs) {
 			this.loops.set(name, rob.run());
 		}
-		for (const config of this.options.robs) {
-			this.armWake(config);
+		for (const [name, wake] of this.wakes) {
+			this.armWake(name, wake);
 		}
 	}
 
 	// The timer only knows a bot name and a prompt; the wake reaches the rob as
 	// an ordinary inbound, so the turn plumbing is untouched.
-	private armWake(config: RobConfig): void {
-		const wake = config.wake;
-		if (wake === undefined) return;
+	private armWake(name: RobName, wake: RobConfig["wake"] | null): void {
+		if (wake === undefined || wake === null) return;
 		const cancel = this.timer.schedule(
-			{ bot: config.name, everyMs: wake.everyMs, text: wake.prompt },
+			{ bot: name, everyMs: wake.everyMs, text: wake.prompt },
 			(interval) => this.onWake(interval),
 		);
-		this.wakeTimers.set(config.name, cancel);
+		this.wakeTimers.set(name, cancel);
+	}
+
+	// Replaces the live schedule in place: cancel whatever is armed, record the
+	// new config, then arm it (or nothing). start/stop/addRob are untouched.
+	setWake(name: RobName, wake: RobConfig["wake"] | null): void {
+		this.requireRob(name);
+		const cancel = this.wakeTimers.get(name);
+		if (cancel !== undefined) {
+			cancel();
+			this.wakeTimers.delete(name);
+		}
+		this.wakes.set(name, wake ?? null);
+		if (wake !== undefined && wake !== null) this.armWake(name, wake);
+	}
+
+	// The wake the live timer was armed from; null when the rob has none.
+	robWake(name: RobName): RobConfig["wake"] | null {
+		this.requireRob(name);
+		return this.wakes.get(name) ?? null;
+	}
+
+	// The rob's current session label; reading it lazily opens the first channel,
+	// exactly as a turn would, so a transcript read never disagrees with commit.
+	currentChannel(name: RobName): ChannelSession {
+		this.requireRob(name);
+		return this.channels.current(name);
 	}
 
 	private onWake(wake: Wake): void {
@@ -314,7 +346,9 @@ export class Team implements TeamPort {
 		if (this.stopping) {
 			return Promise.resolve({ deny: TEAM_STOPPED_REASON });
 		}
-		const enqueued = this.approvals.request(rob, request);
+		const enqueued = this.approvals.request(rob, request, {
+			timeoutMs: this.options.approvalTimeoutMs,
+		});
 		target.markWaitingApproval();
 		this.emit({
 			kind: "approval_requested",

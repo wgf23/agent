@@ -1,9 +1,12 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
-import type { Turn } from "../../src/bot/schema.js";
+import type { MemoryEntry, Turn } from "../../src/bot/schema.js";
+import { createBotStore } from "../../src/bot/store.js";
+import { manualTimer, type Timer } from "../../src/bot/wake.js";
+import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
@@ -47,7 +50,7 @@ function slowProvider(): Provider {
 	};
 }
 
-function createHub(provider: Provider): TeamHub {
+function createHub(provider: Provider, timer?: Timer): TeamHub {
 	return new TeamHub({
 		workspaceRoot,
 		provider,
@@ -62,6 +65,7 @@ function createHub(provider: Provider): TeamHub {
 		robs: [{ name: "alpha", role: "a test rob" }],
 		providerEnv: {},
 		allowAll: createAllowAll(),
+		timer,
 	});
 }
 
@@ -192,10 +196,11 @@ describe("TeamHub", () => {
 
 		await hub.closeSession("alpha", sessionId);
 		const sessionsEvent = events
-			.filter((event) => event.type === "sessions")
+			.filter((event) => event.type === "bot_sessions")
 			.at(-1);
 		expect(sessionsEvent).toMatchObject({
-			type: "sessions",
+			type: "bot_sessions",
+			bot: "alpha",
 			sessions: [
 				{
 					id: sessionId,
@@ -204,6 +209,8 @@ describe("TeamHub", () => {
 				},
 			],
 		});
+		// A bot's list is its own event: the chat's `sessions` must not fire here.
+		expect(events.some((event) => event.type === "sessions")).toBe(false);
 		await hub.dispose();
 	});
 
@@ -252,5 +259,123 @@ describe("TeamHub", () => {
 			{ id: "chs_a", updatedAt: 30, messageCount: 4, firstUserText: "hi a" },
 			{ id: "chs_b", updatedAt: 20, messageCount: 3, firstUserText: "hi b" },
 		]);
+	});
+
+	it("reads the current transcript without clearing the rob's live history", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "hello there" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		hub.dispatch("alpha", "first");
+		await waitFor(
+			() => provider.requests.length === 1 && hub.states()[0].status === "idle",
+			"the first turn",
+		);
+		const before = hub.states()[0].messageCount;
+
+		const first = await hub.readTranscript("alpha");
+		const second = await hub.readTranscript("alpha");
+		expect(first).not.toBeNull();
+		expect(second).toEqual(first);
+		expect(
+			first?.messages.some(
+				(message) => message.role === "user" && message.text.includes("first"),
+			),
+		).toBe(true);
+		expect(
+			first?.messages.some(
+				(message) =>
+					message.role === "assistant" && message.text === "hello there",
+			),
+		).toBe(true);
+		// The read is a replay; the rob's live transcript is untouched.
+		expect(hub.states()[0].messageCount).toBe(before);
+		expect(await hub.readTranscript("ghost")).toBeNull();
+		await hub.dispose();
+	});
+
+	it("lists a bot's memory and forgets an entry by id", async () => {
+		const store = createBotStore();
+		const loaded = await store.load("alpha", {
+			role: "a test rob",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const fact: MemoryEntry = {
+			id: "mem_00000000000000000000000000000001",
+			at: 1,
+			kind: "fact",
+			text: "the sky is teal",
+			source: { sessionId: null, turnSeq: 0 },
+			supersedes: [],
+		};
+		const seeded = await store.commit(
+			loaded.record,
+			{
+				id: "trn_00000000000000000000000000000001",
+				seq: 1,
+				sessionId: "chs_seed",
+				workspaceRoot,
+				at: 1,
+				wake: "user",
+				messages: [],
+			},
+			{ upsert: [fact], drop: [] },
+		);
+		if (!seeded.ok) throw new Error(seeded.error);
+
+		const hub = createHub(slowProvider());
+		expect(await hub.readMemory("alpha")).toEqual({
+			bot: "alpha",
+			entries: [{ id: fact.id, at: 1, kind: "fact", text: "the sky is teal" }],
+		});
+		expect(await hub.readMemory("ghost")).toBeNull();
+
+		await expect(hub.forgetMemory("ghost", fact.id)).resolves.toBe(false);
+		await hub.forgetMemory("alpha", fact.id);
+		expect((await hub.readMemory("alpha"))?.entries).toEqual([]);
+		const record = readFileSync(
+			path.join(process.env.MY_AGENT_BOTS_DIR ?? "", "alpha.json"),
+			"utf8",
+		);
+		expect(record).not.toContain(fact.id);
+		await hub.dispose();
+	});
+
+	it("sets and clears a bot's wake and re-arms the live timer", async () => {
+		writeFileSync(
+			projectFilePath(workspaceRoot),
+			`${JSON.stringify(
+				{ robs: [{ name: "alpha", role: "a test rob" }] },
+				null,
+				2,
+			)}\n`,
+		);
+		const manual = manualTimer();
+		const hub = createHub(slowProvider(), manual.timer);
+
+		await expect(hub.setWake("ghost", null)).resolves.toBe(false);
+
+		await hub.setWake("alpha", { everyMs: 60000, prompt: "tick" });
+		expect(hub.bots()[0].wake).toEqual({ everyMs: 60000, prompt: "tick" });
+		expect(manual.pending()).toEqual([
+			{ bot: "alpha", everyMs: 60000, text: "tick" },
+		]);
+		const saving = JSON.parse(
+			readFileSync(projectFilePath(workspaceRoot), "utf8"),
+		);
+		expect(saving.robs[0].wake).toEqual({ everyMs: 60000, prompt: "tick" });
+
+		await hub.setWake("alpha", null);
+		expect(hub.bots()[0].wake).toBeUndefined();
+		expect(manual.pending()).toEqual([]);
+		const cleared = JSON.parse(
+			readFileSync(projectFilePath(workspaceRoot), "utf8"),
+		);
+		expect(cleared.robs[0].wake).toBeUndefined();
+		await hub.dispose();
 	});
 });
