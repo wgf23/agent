@@ -2,6 +2,13 @@ import type { AgentEvent } from "../agent/events.js";
 import { ChannelRegistry, type ChannelSession } from "../bot/channel.js";
 import { replay } from "../bot/record.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
+import {
+	type Clock,
+	systemClock,
+	systemTimer,
+	type Timer,
+	type Wake,
+} from "../bot/wake.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type {
 	ApprovalChoice,
@@ -65,7 +72,8 @@ export interface TeamOptions {
 	// Optional so existing callers keep compiling; a team without an injected
 	// store still gets the durable global ledger.
 	store?: BotStore;
-	clock?: () => number;
+	clock?: Clock;
+	timer?: Timer;
 }
 
 export type LoadChannelResult =
@@ -84,13 +92,19 @@ export class Team implements TeamPort {
 	// One registry for the whole team, so every rob shares the same channel
 	// bookkeeping and a bot can only ever be current in one place.
 	private readonly channels: ChannelRegistry;
+	private readonly clock: Clock;
+	private readonly timer: Timer;
+	// One cancel per armed interval, keyed by rob, so stop() can disarm them all.
+	private readonly wakeTimers = new Map<RobName, () => void>();
 	private started = false;
 	private stopping = false;
 
 	constructor(options: TeamOptions) {
 		this.options = options;
 		this.store = options.store ?? createBotStore();
-		this.channels = new ChannelRegistry({ clock: options.clock });
+		this.clock = options.clock ?? systemClock;
+		this.timer = options.timer ?? systemTimer;
+		this.channels = new ChannelRegistry({ clock: () => this.clock.now() });
 		for (const config of options.robs) {
 			this.robs.set(config.name, this.createRob(config));
 		}
@@ -106,6 +120,7 @@ export class Team implements TeamPort {
 		this.robs.set(config.name, rob);
 		if (this.started && !this.stopping) {
 			this.loops.set(config.name, rob.run());
+			this.armWake(config);
 		}
 	}
 
@@ -125,7 +140,7 @@ export class Team implements TeamPort {
 			hooks: this.options.hooks,
 			store: this.store,
 			channels: this.channels,
-			clock: this.options.clock,
+			clock: () => this.clock.now(),
 		});
 	}
 
@@ -142,6 +157,33 @@ export class Team implements TeamPort {
 		for (const [name, rob] of this.robs) {
 			this.loops.set(name, rob.run());
 		}
+		for (const config of this.options.robs) {
+			this.armWake(config);
+		}
+	}
+
+	// The timer only knows a bot name and a prompt; the wake reaches the rob as
+	// an ordinary inbound, so the turn plumbing is untouched.
+	private armWake(config: RobConfig): void {
+		const wake = config.wake;
+		if (wake === undefined) return;
+		const cancel = this.timer.schedule(
+			{ bot: config.name, everyMs: wake.everyMs, text: wake.prompt },
+			(interval) => this.onWake(interval),
+		);
+		this.wakeTimers.set(config.name, cancel);
+	}
+
+	private onWake(wake: Wake): void {
+		const rob = this.robs.get(wake.bot);
+		if (rob === undefined) return;
+		this.emitNotice(wake.bot, "woke on interval");
+		rob.deliver({
+			kind: "interval",
+			from: "scheduler",
+			text: wake.text,
+			at: wake.at,
+		});
 	}
 
 	dispatch(name: string, text: string): void {
@@ -172,6 +214,10 @@ export class Team implements TeamPort {
 
 	async stop(): Promise<void> {
 		this.stopping = true;
+		for (const cancel of this.wakeTimers.values()) {
+			cancel();
+		}
+		this.wakeTimers.clear();
 		this.approvals.denyAll(TEAM_STOPPED_REASON);
 		for (const rob of this.robs.values()) {
 			rob.stop();

@@ -12,18 +12,6 @@ export const MAX_MEMORY_TEXT = 2_000;
 const memoryIdSchema = z.string().regex(/^mem_[0-9a-f]+$/);
 const turnIdSchema = z.string().regex(/^trn_[0-9a-f]+$/);
 
-// The ledger is interval-driven only for now; a manual rule means no timer.
-export const wakeRuleSchema = z.discriminatedUnion("kind", [
-	z.object({ kind: z.literal("manual") }).strict(),
-	z
-		.object({
-			kind: z.literal("interval"),
-			everyMs: z.number().int().min(1000),
-		})
-		.strict(),
-]);
-export type WakeRule = z.infer<typeof wakeRuleSchema>;
-
 export const memoryEntrySchema = z
 	.object({
 		id: memoryIdSchema,
@@ -66,7 +54,6 @@ export const botRecordSchema = z
 		usage: z.object({ input: z.number(), output: z.number() }).strict(),
 		memory: z.array(memoryEntrySchema),
 		turns: z.array(turnSchema),
-		wakeRule: wakeRuleSchema,
 	})
 	.strict();
 export type BotRecord = z.infer<typeof botRecordSchema>;

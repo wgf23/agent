@@ -169,7 +169,6 @@ function emptyRecord(bot: string, identity: BotIdentity): BotRecord {
 		usage: { input: 0, output: 0 },
 		memory: [],
 		turns: [],
-		wakeRule: { kind: "manual" },
 	};
 }
 

@@ -426,7 +426,6 @@ function emptyRecord(
 		usage: { input: 0, output: 0 },
 		memory: [],
 		turns: [],
-		wakeRule: { kind: "manual" },
 	};
 }
 

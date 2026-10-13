@@ -7,6 +7,12 @@ import type {
 } from "../../shared/protocol.js";
 import type { Turn } from "../bot/schema.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
+import {
+	type Clock,
+	systemClock,
+	systemTimer,
+	type Timer,
+} from "../bot/wake.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import type { Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
@@ -27,7 +33,8 @@ export interface TeamHubOptions extends HubOptions {
 	// Optional so existing test literals keep compiling; production shares the
 	// one durable global ledger.
 	store?: BotStore;
-	clock?: () => number;
+	clock?: Clock;
+	timer?: Timer;
 }
 
 export class TeamHub extends EventBus implements Hub {
@@ -61,7 +68,8 @@ export class TeamHub extends EventBus implements Hub {
 			extraTools: this.options.extraTools,
 			hooks: this.options.hooks,
 			store: this.store,
-			clock: this.options.clock,
+			clock: this.options.clock ?? systemClock,
+			timer: this.options.timer ?? systemTimer,
 			authorizerFactory: ({ name, rules, approval }) =>
 				createAuthorizer({
 					workspaceRoot: this.options.workspaceRoot,
