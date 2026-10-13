@@ -7,10 +7,14 @@ Each entry names the smallest first step and the unblocking condition. Nothing h
 - **npm publish.** Unblock: an npm token. Then `pnpm build && npm publish --access <x>`. Also flip
   `"private": true` to false and set the real `repository`/`license`. Irreversible, so it pauses
   for the owner.
-- **web_search tool.** Needs a search backend + key. First step: pick one (Brave / Tavily / Exa),
-  add `provider.searchApiKeyEnv` to config, then implement like web_fetch (same truncation,
-  permission `ask`, stubbed-fetch tests).
-- **claude / codex / kimi CLI rob backends.** Binaries absent, so their non-interactive output
+- **web_search tool.** DONE this run as a config-driven tool (brave / tavily / searxng). Set a
+  top-level `search` block. Live query unverified here, since this machine has no search key and
+  no general internet; tests stub the network.
+- **claude CLI rob backend.** DONE this run. Install `@anthropic-ai/claude-code` (done, 2.1.296),
+  probe it, then run a rob with `{ "kind": "cli", "command": "claude" }`. Real spawn and args are
+  proven; a successful real turn needs Anthropic credentials, which this machine lacks. Interactive
+  approval is not bridged, so only `allow` tools are exposed.
+- **codex / kimi CLI rob backends.** Binaries absent, so their non-interactive output
   cannot be probed. Repeat the `docs/design/pi-capabilities.md` method per tool: confirm non-
   interactive mode, event shape, permission channel, session resume. Only then write a backend.
 - **macOS / Windows sandbox.** No host to test. macOS: seatbelt (`sandbox-exec`) profile that

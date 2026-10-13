@@ -48,6 +48,8 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
 | session fork | feat/session-fork | `my-agent sessions fork <id> [--at n]` |
 | init AGENTS.md | feat/init-agents-md | `my-agent init` |
 | web auth token | feat/web-auth-token | token on non-loopback binds |
+| web_search tool | feat/agent-capabilities | search via a configurable provider (stubbed tests) |
+| claude cli backend | feat/claude-backend | rob runs on Claude Code (real CLI, no live turn) |
 
 ## Gated this run
 
@@ -55,14 +57,22 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
 
 - **npm publish** (make the package public). Needs an npm registry token and is irreversible
   (a public release). Gate: owner runs `npm publish` after `pnpm build`.
-- **web_search tool**. Needs a search backend and key (no provider is configured). Unblock:
-  name the backend (Brave, Tavily, Exa, ...) and add `search.apiKeyEnv`; then it is the same
-  shape as web_fetch.
-- **claude / codex / kimi CLI rob backends**. The binaries are not installed, so behavior cannot
-  be verified (docs/design/pi-capabilities.md sets the rule: verify, never assume). Unblock:
+- **codex / kimi CLI rob backends**. The binaries are not installed, so behavior cannot be
+  verified (docs/design/pi-capabilities.md sets the rule: verify, never assume). Unblock:
   install each tool and repeat the pi capability probe.
 - **macOS / Windows sandbox**. No such host here to test seatbelt/AppContainer. Unblock:
   a macOS runner plus a seatbelt profile, a Windows runner plus a job object.
+
+### Implemented but not live-verified
+
+- **web_search tool** (added this run). Config-driven with brave, tavily, and searxng mappings,
+  tested against a stubbed network. This machine has no search key and no general internet, so a
+  live query is unverified. Set `<provider>` under a top-level `search` block to use it.
+- **claude CLI rob backend** (added this run). Installed and probed the real `claude` 2.1.296 CLI
+  and drove it end to end from a rob, proving the spawn, args, and isolated `CLAUDE_CONFIG_DIR`.
+  The turn stopped at the expected `authentication_failed` result because there are no Anthropic
+  credentials here, so a successful real turn is unverified. Interactive approval is also not
+  bridged (only `allow` tools are exposed via `--allowedTools`).
 
 ### Multi-week design programs (proposal below, not this run)
 
