@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import AgentsPanel from "./components/AgentsPanel";
 import BotHeader from "./components/BotHeader";
+import BotMemoryPanel from "./components/BotMemoryPanel";
 import BotPlaza from "./components/BotPlaza";
 import Composer from "./components/Composer";
 import MessageList from "./components/MessageList";
@@ -8,6 +9,7 @@ import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
+import WakeEditor from "./components/WakeEditor";
 import type { BotInfo } from "./protocol";
 import { WORKSPACE_BOT } from "./protocol";
 import { isLivePhase, robBots } from "./state";
@@ -22,12 +24,21 @@ const CHAT_BOT: BotInfo = {
 	backend: "native",
 };
 
+type BotTab = "chat" | "memory" | "wake";
+
+const BOT_TABS: readonly { id: BotTab; label: string }[] = [
+	{ id: "chat", label: "对话" },
+	{ id: "memory", label: "记忆" },
+	{ id: "wake", label: "唤醒" },
+];
+
 export default function App() {
 	const hub = useHub();
 	const { state } = hub;
 
 	const [view, setView] = useState<View>("chat");
 	const [selectedBot, setSelectedBot] = useState<string | null>(null);
+	const [tab, setTab] = useState<BotTab>("chat");
 	const [dialogOpen, setDialogOpen] = useState(false);
 
 	const robs = robBots(state.bots);
@@ -81,9 +92,15 @@ export default function App() {
 		loadAgents().catch(() => {});
 	}, [settledJobs, loadAgents]);
 
+	// Selecting a bot loads its transcript and memory in one place, so the
+	// sidebar's session list and the memory panel fill without a second click.
 	const openBot = (name: string | null) => {
 		setSelectedBot(name);
 		setView("chat");
+		if (name !== null) {
+			hub.selectBot(name);
+			setTab("chat");
+		}
 	};
 
 	return (
@@ -98,12 +115,17 @@ export default function App() {
 				onSwitchWorkspace={hub.switchWorkspace}
 				sessions={state.sessions}
 				activeSessionId={state.activeSessionId}
+				botSessions={state.botSessions}
+				botActiveSession={state.botActiveSession}
 				selectedBot={selectedBot}
 				onSelectBot={openBot}
 				allowAll={state.allowAll}
 				onToggleAllowAll={hub.setAllowAll}
 				onNewSession={hub.newSession}
 				onOpenSession={hub.openSession}
+				onNewBotSession={hub.newSession}
+				onOpenBotSession={hub.openSession}
+				onCloseBotSession={hub.closeBotSession}
 				onCreateBot={() => setDialogOpen(true)}
 				onOpenSettings={hub.openSettings}
 				usage={state.usage}
@@ -111,10 +133,20 @@ export default function App() {
 			/>
 
 			<div className="main">
-				{state.connection === "closed" && (
-					<div className="banner banner-warn" role="status">
-						连接已断开，正在尝试重连…
+				{state.authError ? (
+					<div className="banner banner-error" role="alert">
+						<span className="banner-text">
+							<strong>请求被拒绝：缺少访问令牌。</strong>
+							请用带 <code>?token=</code>{" "}
+							的地址打开页面，或让服务只绑定回环地址。
+						</span>
 					</div>
+				) : (
+					state.connection === "closed" && (
+						<div className="banner banner-warn" role="status">
+							连接已断开，正在尝试重连…
+						</div>
+					)
 				)}
 				{state.lastError !== null && (
 					<div className="banner banner-error" role="alert">
@@ -156,20 +188,55 @@ export default function App() {
 							</div>
 						)}
 						<BotHeader bot={currentBot} state={botState} />
-						<MessageList
-							key={currentBot.name}
-							botName={currentBot.name}
-							messages={messages}
-							workspaceRoot={state.workspaceRoot}
-							working={botState?.status === "working"}
-						/>
-						<Composer
-							model={currentBot.model || state.model}
-							status={botState?.status ?? "idle"}
-							configured={configured}
-							onSend={(text) => hub.send(currentBot.name, text)}
-							onInterrupt={() => hub.interrupt(currentBot.name)}
-						/>
+						{selectedRob !== undefined && (
+							<div className="tab-strip" role="tablist">
+								{BOT_TABS.map(({ id, label }) => (
+									<button
+										key={id}
+										type="button"
+										role="tab"
+										aria-selected={tab === id}
+										className={`tab ${tab === id ? "active" : ""}`}
+										onClick={() => setTab(id)}
+									>
+										{label}
+									</button>
+								))}
+							</div>
+						)}
+						{selectedRob === undefined || tab === "chat" ? (
+							<>
+								<MessageList
+									key={currentBot.name}
+									botName={currentBot.name}
+									messages={messages}
+									workspaceRoot={state.workspaceRoot}
+									working={botState?.status === "working"}
+								/>
+								<Composer
+									model={currentBot.model || state.model}
+									status={botState?.status ?? "idle"}
+									configured={configured}
+									onSend={(text) => hub.send(currentBot.name, text)}
+									onInterrupt={() => hub.interrupt(currentBot.name)}
+								/>
+							</>
+						) : tab === "memory" ? (
+							<BotMemoryPanel
+								key={currentBot.name}
+								bot={currentBot.name}
+								entries={state.memory[currentBot.name] ?? []}
+								onForget={hub.forgetMemory}
+								onRefresh={() => hub.selectBot(currentBot.name)}
+							/>
+						) : (
+							<WakeEditor
+								key={`${currentBot.name}:wake`}
+								bot={currentBot.name}
+								wake={selectedRob.wake ?? null}
+								onSetWake={hub.setWake}
+							/>
+						)}
 					</section>
 				)}
 			</div>

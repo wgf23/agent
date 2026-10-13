@@ -24,12 +24,19 @@ interface Props {
 	onSwitchWorkspace: (root: string) => Promise<SwitchWorkspaceResult>;
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
+	// A bot's own session list and active id, keyed by bot name; kept separate
+	// from the workspace chat's so the two lists never overwrite each other.
+	botSessions: Record<string, SessionSummaryInfo[]>;
+	botActiveSession: Record<string, string | null>;
 	selectedBot: string | null;
 	onSelectBot: (name: string | null) => void;
 	allowAll: boolean;
 	onToggleAllowAll: (on: boolean) => void;
 	onNewSession: (bot: string) => void;
 	onOpenSession: (bot: string, id: string) => void;
+	onNewBotSession: (bot: string) => void;
+	onOpenBotSession: (bot: string, id: string) => void;
+	onCloseBotSession: (bot: string, id: string) => void;
 	onCreateBot: () => void;
 	onOpenSettings: () => void;
 	usage: UsageTotals;
@@ -47,12 +54,17 @@ export default function Sidebar(props: Props) {
 		onSwitchWorkspace,
 		sessions,
 		activeSessionId,
+		botSessions,
+		botActiveSession,
 		selectedBot,
 		onSelectBot,
 		allowAll,
 		onToggleAllowAll,
 		onNewSession,
 		onOpenSession,
+		onNewBotSession,
+		onOpenBotSession,
+		onCloseBotSession,
 		onCreateBot,
 		onOpenSettings,
 		usage,
@@ -189,6 +201,57 @@ export default function Sidebar(props: Props) {
 						</ul>
 					)}
 				</section>
+
+				{selectedBot !== null && (
+					<section className="sidebar-section">
+						<div className="sidebar-label">
+							<span>会话</span>
+						</div>
+						<button
+							type="button"
+							className="btn new-chat"
+							onClick={() => onNewBotSession(selectedBot)}
+						>
+							<PlusIcon />
+							新建会话
+						</button>
+						{(botSessions[selectedBot] ?? []).length === 0 ? (
+							<p className="sidebar-empty">还没有会话</p>
+						) : (
+							<ul className="session-list">
+								{(botSessions[selectedBot] ?? []).map((session) => (
+									<li key={session.id} className="bot-session-row">
+										<button
+											type="button"
+											className={`session-item ${
+												session.id === (botActiveSession[selectedBot] ?? null)
+													? "active"
+													: ""
+											}`}
+											onClick={() => onOpenBotSession(selectedBot, session.id)}
+										>
+											<span className="session-title">
+												{session.firstUserText || "新会话"}
+											</span>
+											<span className="session-meta">
+												{session.messageCount} 条消息
+											</span>
+										</button>
+										<button
+											type="button"
+											className="session-close"
+											title="关闭会话"
+											aria-label="关闭会话"
+											onClick={() => onCloseBotSession(selectedBot, session.id)}
+										>
+											×
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+					</section>
+				)}
 			</div>
 
 			<div className="sidebar-footer">

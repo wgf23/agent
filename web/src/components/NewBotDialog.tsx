@@ -149,7 +149,18 @@ export default function NewBotDialog({
 												<button
 													type="button"
 													className="backend-install"
-													onClick={() => onInstall(value)}
+													onClick={() => {
+														setError(null);
+														Promise.resolve(onInstall(value)).catch(
+															(installError) => {
+																setError(
+																	installError instanceof Error
+																		? installError.message
+																		: String(installError),
+																);
+															},
+														);
+													}}
 												>
 													未安装 · 安装
 												</button>
