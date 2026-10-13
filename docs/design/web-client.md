@@ -20,7 +20,7 @@
 - **前端 JSON 处理**：`web/tsconfig.json` 用单文件 + `tsc --noEmit`，未用 `tsc -b` 的项目引用（引用要求 `composite`，与 `noEmit` 冲突）。前端独立用 TypeScript 5.9，根仓库是 7.x。
 - **`summarizeArgs` 在前端有一份本地副本**，避免前端构建依赖 Node 侧模块图；`shared/protocol.ts` 里的 `AgentEvent` 同样是 `src/agent/events.ts` 的镜像。
 - **组件测试**：只提交了纯 reducer 测试。DOM 级渲染测试需要 jsdom，未纳入首版。
-- **CSS 抑制**：`web/src/styles.css` 两处 `code` 覆盖规则加了带理由的 `noDescendingSpecificity` 抑制。
+- **CSS 抑制**：重写 `web/src/styles.css` 后，原两处 `code` 覆盖规则不再需要，`noDescendingSpecificity` 抑制已删除（见「UI 重设计」）。
 
 
 ## 已确认的决策
@@ -187,18 +187,18 @@ web/dist 路径在 `src/index.ts` 用 `new URL("../web/dist", import.meta.url)` 
 | `src/useHub.ts` | `EventSource` 订阅 + reducer，产出客户端状态；封装 POST |
 | `src/state.ts` | 客户端 reducer（移植 `src/tui/state.ts` 的 `applyAgentEvent` 思路） |
 | `src/protocol.ts` | `export * from "../../shared/protocol"` |
-| `src/components/TopBar.tsx` | ① 顶栏：Logo、视图切换、model、连接状态 |
-| `src/components/Sidebar.tsx` | ② 左侧：Bot 列表（状态点）、当前 Bot 的会话列表、＋新会话、allow-all、主题 |
-| `src/components/BotPlaza.tsx` | Bot 广场：Bot 卡片 + DM 流 |
-| `src/components/BotHeader.tsx` | ③-A Bot 头像 / 名字 / 描述（只读展示） |
-| `src/components/SessionTabs.tsx` | ③-B 会话标签页 |
-| `src/components/MessageList.tsx` | ③-C 消息流 |
-| `src/components/ToolCard.tsx` | 工具卡：状态、摘要、展开输出、Diff 着色 |
-| `src/components/Markdown.tsx` | `marked` 解析 + `dompurify` 清洗 |
-| `src/components/Composer.tsx` | ③-D 输入区：多行、Enter 发送、Shift+Enter 换行、发送/停止、allow-all |
-| `src/components/PermissionModal.tsx` | 权限弹窗：allow once / allow always / deny，危险标记 |
-| `src/components/StatusBar.tsx` | ⑤ 底部：usage、session id、连接状态 |
-| `src/styles.css` | 深色主题变量（Grok 风） |
+| `src/components/Sidebar.tsx` | 唯一的导航区：品牌、新建对话、视图切换、Bot 列表、当前 Bot 的会话列表、allow-all 开关、连接与 usage |
+| `src/components/BotPlaza.tsx` | Bot 广场：Bot 卡片 + DM 流 + 通知 |
+| `src/components/BotHeader.tsx` | Bot 头像 / 名字 / 状态 / 描述 / 模型 |
+| `src/components/MessageList.tsx` | 消息流：跟随滚动、回到底部、思考动画、助手消息头像与复制 |
+| `src/components/ToolCard.tsx` | 工具卡：状态、摘要、展开输出 |
+| `src/components/Markdown.tsx` | `marked` 解析 + `highlight.js` 高亮 + `dompurify` 清洗，代码块带语言标签与复制按钮 |
+| `src/components/Composer.tsx` | 输入区：单行起步自适应增高、Enter 发送、Shift+Enter 换行、Esc 停止、发送/停止 |
+| `src/components/PermissionModal.tsx` | 权限弹窗：allow once / allow always / deny，危险标记，Esc = 拒绝 |
+| `src/components/icons.tsx` | 内联 SVG 图标（避免 emoji 字体差异） |
+| `src/clipboard.ts` | 复制到剪贴板（代码块与整条消息共用） |
+| `src/status.ts` | Bot 状态中文文案 |
+| `src/styles.css` | 设计令牌 + 浅色/深色（`prefers-color-scheme`） |
 
 ## 关键流程
 
@@ -279,6 +279,45 @@ Bot 模型修正为两个并存的概念：
 - 保存流程（`src/serve/settings.ts`，单条 promise 链串行）：`validateProviderSelection` → 可选 `verifyApiKey`（失败可「仍然保存」`verify:false`）→ `writeCredential` → `writeGlobalProviderSettings` → 重新 `resolveConfig` → `buildProvider` → `applyRuntime` → 广播 `settings`。
 - 密钥只进 `credentials.json`（0700/0600，原子写），不进 `config.json`，不上线，不落日志。`ProviderView` 没有密钥字段，浏览器结构上拿不到。
 - 项目 `my-agent.json` 的 `provider` 会盖过全局配置。保存后检测到不一致只返回 `warning`，不假装回滚（文件此时已写入）。
+
+## UI 重设计（第二轮）
+
+首版界面偏「深色仪表盘」：顶栏、底部状态栏、会话标签页各占一行，助手输出是一列卡片。本轮按主流对话工具（Claude.ai / ChatGPT）的做法重做视觉与交互，**只动渲染层**：`state.ts`、`useHub.ts`、`shared/protocol.ts`、`src/serve/` 均未改，`test/web/state.test.ts` 不变。
+
+### 布局
+
+- 删掉 `TopBar` / `StatusBar` / `SessionTabs`：它们重复占空间，且与侧栏职责重叠。导航、Bot 列表、历史会话、allow-all、连接状态与 usage 全部收进侧栏。
+- 主区域只剩「对话」：Bot 头（头像 / 名字 / 状态 / 模型）→ 消息流 → 输入区。未配置模型、连接断开、致命错误改为顶部条幅（`banner`）。
+- 侧栏在窄屏（≤640px）隐藏，主区域留出全部宽度。
+
+### 模型输出
+
+- 助手消息改为**文档流**：左侧小头像 + 名字，正文直接铺在页面上（用户消息仍是右侧气泡）。字号 15px、行高 1.75，标题 / 列表 / 引用 / 分隔线间距重排。
+- 代码块：顶部条含**语言标签 + 复制按钮**，代码区横向滚动；`highlight.js`（`lib/common`）做语法高亮，token 颜色用 CSS 变量按主题给定。
+- 表格：`display: block` + `width: max-content` + `overflow-x: auto`，宽表横向滚动而不是压扁单元格。
+- 流式：末条助手消息末尾显示闪烁光标；等待首个 token 时显示三点动画。
+- 交互：助手消息悬停出现「复制」；链接一律 `target="_blank" rel="noopener"`（`DOMPurify` hook 注入）。
+- `Markdown` 的 renderer 是自定义的，代码块结构由它产出，复制按钮用根节点事件委托处理（HTML 来自 `dangerouslySetInnerHTML`，无法用 React 事件直接挂）。
+
+### 交互修复
+
+- **输入法回车**：`event.nativeEvent.isComposing` 为真时不发送（中文拼音选词不再误发）。
+- **滚动**：只在读者本来就贴近底部时自动跟随；向上翻看时给「回到最新」按钮，不再把读者拽回底部。
+- **输入框**：从 1 行起步，随内容增高到上限后内部滚动；运行中按 Esc 停止当前回合。
+- **审批弹窗**：默认聚焦「允许一次」，Esc = 拒绝（永不误批准），多项排队时显示「另有 N 项待处理」，参数用等宽可换行的 `pre`。
+- **Bot 广场**：卡片可点击直接进入该 Bot 的对话；空列表有引导文案。
+- **创建 Bot**：名称提示在用户输入之前保持中性色，不再一打开就报红。
+
+### 依赖与体积
+
+- 新增 `highlight.js@11`（仅 `lib/common`）。`web/dist` 的 JS 从 320 KB 增到 492 KB（gzip 103 → 158 KB）。这是"输出区更专业"的取舍，已确认接受。
+
+### 验收方式
+
+- 用 headless Chromium（`puppeteer-core` + `@sparticuz/chromium`）对一个 mock SSE 后端截图，覆盖：浅色/深色对话、长代码块与表格、流式（光标 + 停止键）、审批弹窗（危险 + 排队）、Bot 广场、模型设置、创建 Bot、未配置、快捷键提示、空会话、窄屏。截图存 `screenshots/web/`（未纳入版本库）。
+- **悬停态**单独验证：headless Chromium 报告 `hover: none`，会把「悬停才出现」的元素强制显示，所以截图前用 `--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4` 让 Blink 报告鼠标，再派发真实 `mouseMoved`。实测：无指针时消息复制按钮 `opacity: 0`，悬停后为 `1`。
+- 顺带发现并修掉一个真实缺陷：headless 下点复制得到「复制失败」，因为 `navigator.clipboard` 在缺少权限/非安全上下文时会拒绝。`src/clipboard.ts` 现在降级到 `execCommand("copy")`；授权后实测标签变为「已复制」且剪贴板内容正确。
+- `pnpm test`（580 通过）、`pnpm typecheck`、`pnpm lint`、`web` 的 `tsc --noEmit && vite build` 全部通过。
 
 ## 风险与边界
 
