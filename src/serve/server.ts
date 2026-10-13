@@ -22,6 +22,7 @@ import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import type { Provider } from "../providers/types.js";
+import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
 import { CompositeHub } from "./composite.js";
 import type { Hub, HubOptions } from "./hub.js";
@@ -110,6 +111,11 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	});
 
 	const allowAll = createAllowAll();
+	const semanticTool = buildSemanticSearchTool({
+		embeddings: resolved.config.embeddings,
+		workspaceRoot,
+		env,
+	});
 	// Getters, not values: SoloHub reads provider/settings at each turn, so a
 	// settings save is visible without rebuilding or restarting the server.
 	const hubOptions = {
@@ -121,7 +127,11 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			return runtime.current().settings;
 		},
 		permissions,
-		extraTools: [...mcp.tools, ...lsp.tools],
+		extraTools: [
+			...mcp.tools,
+			...lsp.tools,
+			...(semanticTool === undefined ? [] : [semanticTool]),
+		],
 		compaction: resolved.config.compaction,
 		hooks: resolved.config.hooks,
 		allowAll,

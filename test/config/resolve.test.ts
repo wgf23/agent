@@ -366,6 +366,78 @@ describe("resolveConfig mcp", () => {
 	});
 });
 
+describe("resolveConfig embeddings", () => {
+	it("is undefined by default", async () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.embeddings).toBeUndefined();
+	});
+
+	it("reads an embeddings block from the project file", async () => {
+		await writeProject({
+			embeddings: {
+				baseURL: "https://api.openai.com/v1",
+				model: "text-embedding-3-small",
+				apiKeyEnv: "OPENAI_API_KEY",
+				dimensions: 1536,
+			},
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.embeddings).toEqual({
+			baseURL: "https://api.openai.com/v1",
+			model: "text-embedding-3-small",
+			apiKeyEnv: "OPENAI_API_KEY",
+			dimensions: 1536,
+		});
+	});
+
+	it("merges project over global per field", async () => {
+		await writeGlobal({
+			embeddings: {
+				baseURL: "https://global.example/v1",
+				model: "global-model",
+				apiKeyEnv: "GLOBAL_KEY",
+				dimensions: 1024,
+			},
+		});
+		await writeProject({
+			embeddings: {
+				baseURL: "https://project.example/v1",
+				model: "project-model",
+				apiKeyEnv: "PROJECT_KEY",
+			},
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.embeddings).toEqual({
+			baseURL: "https://project.example/v1",
+			model: "project-model",
+			apiKeyEnv: "PROJECT_KEY",
+			dimensions: 1024,
+		});
+	});
+
+	it("rejects an incomplete embeddings block and names the file", async () => {
+		await writeProject({ embeddings: { model: "text-embedding-3-small" } });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Invalid embeddings");
+		expect(result.error).toContain(path.join(workspaceRoot, "my-agent.json"));
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({
