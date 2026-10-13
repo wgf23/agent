@@ -62,8 +62,11 @@ export class CompositeHub extends EventBus implements Hub {
 			workspaceRoot: workspace.workspaceRoot,
 			model: workspace.model,
 			provider: workspace.provider,
-			bots: [...workspace.bots, ...this.robs.bots()],
+			// The chat is not a roster entry: it is addressed by WORKSPACE_BOT and
+			// keeps a state, but only the robs appear in the bot list.
+			bots: this.robs.bots(),
 			states: [...workspace.states, ...this.robs.states()],
+			workspaces: [],
 			sessions: workspace.sessions,
 			activeSessionId: workspace.activeSessionId,
 			transcript: workspace.transcript,

@@ -77,6 +77,7 @@ export class SoloHub extends EventBus implements Hub {
 				fallbackProviderView(this.options.settings),
 			bots: [this.botInfo()],
 			states: [this.state()],
+			workspaces: [],
 			sessions: this.sessions,
 			activeSessionId: this.session.id,
 			transcript: toTranscript(this.session.messages),
@@ -308,7 +309,6 @@ export class SoloHub extends EventBus implements Hub {
 	private botInfo(): BotInfo {
 		return {
 			name: DEFAULT_BOT,
-			kind: "workspace",
 			role: DEFAULT_BOT_ROLE,
 			model: this.options.settings.model,
 			backend: "native" as const,

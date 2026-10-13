@@ -16,6 +16,7 @@ import type {
 	TranscriptMessage,
 	UsageTotals,
 } from "./protocol";
+import { WORKSPACE_BOT } from "./protocol";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -86,12 +87,14 @@ export function initialState(): ClientState {
 	};
 }
 
+// The workspace chat is no longer a roster entry: it is addressed by name, and
+// the roster carries robs only. (The workspace UI is a later unit.)
 export function workspaceBot(bots: BotInfo[]): BotInfo | undefined {
-	return bots.find((bot) => bot.kind === "workspace");
+	return bots.find((bot) => bot.name === WORKSPACE_BOT);
 }
 
 export function robBots(bots: BotInfo[]): BotInfo[] {
-	return bots.filter((bot) => bot.kind === "rob");
+	return bots.filter((bot) => bot.name !== WORKSPACE_BOT);
 }
 
 // Mirrors isLive in src/agents/job.ts: only these phases have a process behind

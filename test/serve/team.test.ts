@@ -96,7 +96,6 @@ describe("TeamHub", () => {
 		expect(hello.bots).toEqual([
 			{
 				name: "alpha",
-				kind: "rob",
 				role: "a test rob",
 				model: "deepseek-flash",
 				backend: "native",

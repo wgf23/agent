@@ -47,6 +47,7 @@ interface ServeOptions {
 	open?: boolean;
 	model?: string;
 	maxSteps?: string;
+	workspace?: string;
 }
 
 interface ForkOptions {
@@ -213,9 +214,10 @@ program
 	.option("--open", "open the browser after the server starts")
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps")
+	.option("--workspace <root>", "workspace root to serve")
 	.action(async (options: ServeOptions) => {
 		await runServe({
-			workspaceRoot: process.cwd(),
+			workspaceRoot: options.workspace ?? process.cwd(),
 			model: options.model,
 			maxSteps: parseMaxSteps(options.maxSteps),
 			port: parsePort(options.port),

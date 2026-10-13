@@ -124,6 +124,7 @@ export class TeamHub extends EventBus implements Hub {
 				fallbackProviderView(this.options.settings),
 			bots: this.bots(),
 			states: this.states(),
+			workspaces: [],
 			sessions: [],
 			activeSessionId: null,
 			transcript: [],
@@ -290,7 +291,6 @@ export class TeamHub extends EventBus implements Hub {
 	bots(): BotInfo[] {
 		return this.roster.map((rob) => ({
 			name: rob.name,
-			kind: "rob",
 			role: rob.role,
 			model: rob.model ?? this.options.settings.model,
 			backend:

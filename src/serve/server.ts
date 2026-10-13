@@ -25,26 +25,21 @@ import {
 	toAgentJobView,
 	toAgentStatusView,
 } from "../agents/supervisor.js";
-import { verifyApiKey } from "../cli/setup.js";
 import { resolveConfig } from "../config/resolve.js";
-import { startLspServers } from "../lsp/manager.js";
-import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
-import { createAllowAll } from "../permissions/allow-all.js";
-import { loadPlugins } from "../plugins/load.js";
 import type { Provider } from "../providers/types.js";
-import { buildSemanticSearchTool } from "../semantic/tool.js";
-import { latestSession, listSessions, newSession } from "../session/store.js";
-import { CompositeHub } from "./composite.js";
-import type { Hub, HubOptions } from "./hub.js";
+import type { Hub } from "./hub.js";
 import { openBrowser } from "./open-browser.js";
 import {
 	buildProvider,
 	ProviderRuntime,
 	unconfiguredProvider,
 } from "./runtime.js";
-import { SettingsService } from "./settings.js";
-import { SoloHub } from "./solo.js";
-import { TeamHub } from "./team.js";
+import type { SettingsService } from "./settings.js";
+import {
+	openWorkspace,
+	WorkspaceHub,
+	type WorkspaceScope,
+} from "./workspace.js";
 
 export interface RunServeOptions {
 	workspaceRoot: string;
@@ -86,7 +81,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		return;
 	}
 
-	const { provider: settings, apiKey, permissions, robs } = resolved.config;
+	const { provider: settings, apiKey } = resolved.config;
 	const apiKeySource = resolved.config.apiKeySource ?? null;
 	const initialProvider =
 		apiKey === undefined
@@ -109,95 +104,43 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		);
 	}
 
-	const mcp = await connectMcpServers({
-		servers: resolved.config.mcpServers,
-		workspaceRoot,
-	});
-	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
-
-	const lsp = startLspServers({
-		servers: resolved.config.lspServers,
-		workspaceRoot,
-	});
-
-	const plugins = await loadPlugins(resolved.config.plugins, workspaceRoot);
-	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
-
-	const allowAll = createAllowAll();
-	const semanticTool = buildSemanticSearchTool({
-		embeddings: resolved.config.embeddings,
-		workspaceRoot,
-		env,
-	});
-	// Getters, not values: SoloHub reads provider/settings at each turn, so a
-	// settings save is visible without rebuilding or restarting the server.
-	const hubOptions = {
-		workspaceRoot,
-		get provider() {
-			return runtime.current().provider;
-		},
-		get settings() {
-			return runtime.current().settings;
-		},
-		permissions,
-		extraTools: [
-			...mcp.tools,
-			...lsp.tools,
-			...plugins.tools,
-			...(semanticTool === undefined ? [] : [semanticTool]),
-		],
-		compaction: resolved.config.compaction,
-		hooks: resolved.config.hooks,
-		extraInstructions: plugins.extraInstructions || undefined,
-		allowAll,
-		runtime,
-	} satisfies HubOptions;
-
-	// The workspace chat and the rob roster coexist: creating a bot never
-	// replaces the default assistant, and no mode switch is involved.
-	const summaries = await listSessions(workspaceRoot);
-	const latest = await latestSession(workspaceRoot);
-	const session = latest ?? newSession(workspaceRoot, settings.model);
-	const workspace = new SoloHub(hubOptions, { session, sessions: summaries });
-	// Robs keep the MCP and plugin tools; wiring LSP into the rob roster is a
-	// follow-up.
-	const robHub = new TeamHub({
-		...hubOptions,
-		extraTools: [...mcp.tools, ...plugins.tools],
-		robs,
-		providerEnv: runtime.current().providerEnv,
-	});
+	// The CLI supervisor and the provider runtime are workspace-independent:
+	// every workspace scope shares them, so an install, a detection, or a
+	// settings save stays visible after a switch.
 	const supervisor = new AgentSupervisor();
-	const hub: Hub = new CompositeHub(
-		workspace,
-		robHub,
-		workspaceRoot,
+	const openInput = {
 		runtime,
-		supervisor,
-	);
-
-	const settingsService = new SettingsService({
-		homeDir,
-		workspaceRoot,
 		env,
-		runtime,
-		applyRuntime: (next) => {
-			if (hub.applyRuntime === undefined) {
-				return Promise.resolve({
-					ok: false as const,
-					error: "this server cannot apply provider settings",
-				});
-			}
-			return hub.applyRuntime(next);
-		},
-		verify: verifyApiKey,
+		homeDir,
+		cliModel: options.model,
+		cliMaxSteps: options.maxSteps,
+		agents: supervisor,
+	};
+
+	let scope: WorkspaceScope;
+	try {
+		scope = await openWorkspace({ ...openInput, root: workspaceRoot });
+	} catch (error) {
+		process.stderr.write(`${errorText(error)}\n`);
+		await supervisor.dispose();
+		process.exitCode = 1;
+		return;
+	}
+
+	const hub = new WorkspaceHub({
+		initial: scope,
+		open: (root) => openWorkspace({ ...openInput, root }),
 	});
 
 	const app = await buildServer(
 		hub,
 		options.webDist,
 		{
-			service: settingsService,
+			// Read through the hub so /api/settings targets whichever scope is
+			// active when the request lands.
+			get service() {
+				return hub.settings;
+			},
 			host,
 			token,
 		},
@@ -212,9 +155,6 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		);
 		await hub.dispose();
 		await supervisor.dispose();
-		await mcp.dispose();
-		await lsp.dispose();
-		await plugins.dispose();
 		process.exitCode = 1;
 		return;
 	}
@@ -231,9 +171,6 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		void (async () => {
 			await hub.dispose().catch(() => undefined);
 			await supervisor.dispose().catch(() => undefined);
-			await mcp.dispose().catch(() => undefined);
-			await lsp.dispose().catch(() => undefined);
-			await plugins.dispose().catch(() => undefined);
 			app.server.closeAllConnections?.();
 			await app.close().catch(() => undefined);
 			process.exit(0);
@@ -456,6 +393,36 @@ export async function buildServer(
 			provider: result.provider,
 			...(result.warning !== undefined ? { warning: result.warning } : {}),
 		});
+	});
+
+	app.get("/api/workspaces", (_request, reply) => {
+		if (hub.listWorkspaces === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot switch workspaces" });
+		}
+		return { workspaces: hub.listWorkspaces() };
+	});
+
+	app.post("/api/workspaces", async (request, reply) => {
+		const switchWorkspace = hub.switchWorkspace?.bind(hub);
+		if (switchWorkspace === undefined) {
+			return reply
+				.code(501)
+				.send({ ok: false, error: "this server cannot switch workspaces" });
+		}
+		const body = request.body as { root?: unknown } | undefined;
+		if (typeof body?.root !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {root}" });
+		}
+		const result = await switchWorkspace(body.root);
+		if (!result.ok) {
+			// A refusal because a turn is live is a conflict; a root the server
+			// cannot open is a bad request.
+			const status = hub.busy?.() === true ? 409 : 400;
+			return reply.code(status).send({ ok: false, error: result.error });
+		}
+		return reply.send({ ok: true });
 	});
 
 	app.get("/api/agents", async (_request, reply) => {
