@@ -118,7 +118,7 @@ Project file `<workspace>/my-agent.json`:
 }
 ```
 
-Global file `~/.config/my-agent/config.json` accepts the `provider`, `compaction`, `sandbox`, and `mcp` blocks. It cannot set `permissions` or `robs`; those come only from the project file:
+Global file `~/.config/my-agent/config.json` accepts the `provider`, `compaction`, `sandbox`, `search`, and `mcp` blocks. It cannot set `permissions` or `robs`; those come only from the project file:
 
 ```json
 {
@@ -146,15 +146,37 @@ Keys are not allowed in either file. A file with an `apiKey` field is rejected; 
 
 The directory is created `0700` and the file `0600`. The key is looked up by the resolved `apiKeyEnv` name. Resolution order for the key: the environment variable first, then the credentials file. A corrupt file is an error and names the file rather than silently ignoring it. The key value is never printed.
 
+### Search
+
+`web_search` queries a web search provider and returns a numbered list of titled snippets. Configure it with a top-level `search` block in `my-agent.json` or the global config:
+
+```json
+{
+  "search": {
+    "provider": "brave",
+    "apiKeyEnv": "BRAVE_API_KEY",
+    "baseURL": "https://api.search.brave.com/res/v1/web/search"
+  }
+}
+```
+
+- `provider` is `"brave"` (default), `"tavily"`, or `"searxng"`.
+- `apiKeyEnv` names the environment variable that holds the key. It defaults to `BRAVE_API_KEY` for brave and `TAVILY_API_KEY` for tavily. Searxng is keyless and ignores it.
+- `baseURL` overrides the provider endpoint. Searxng has no built-in endpoint, so a self-hosted instance must set it.
+
+The project file overrides the global file field by field, and both override the built-in defaults. A missing key (or a searxng without `baseURL`) returns a clear error naming the setting to add and the variable to set.
+
 ## Tools
 
 `web_fetch` retrieves one `http` or `https` URL and returns the body. Other schemes are rejected before any request. `format` is `markdown` (the default), `text`, or `html`. `markdown` and `text` strip HTML tags to readable text. `html` returns the response body unchanged. The result is cut at 2000 lines or 50 KB, the same limits as file reads. `timeout_ms` defaults to 30000, must be at least 1, and cannot be higher than 120000. A non-2xx status, an invalid URL, a network failure, a timeout, or an abort returns an error.
+
+`web_search` runs a query against the configured search provider and returns a numbered list of result titles, URLs, and snippets. It reads the `search` block (see Search above); a missing key or a searxng without a base URL returns an error, and the result is truncated like file reads. `count` defaults to 5 and must be between 1 and 20.
 
 ## Permissions
 
 Each tool maps to an action: `allow`, `ask`, or `deny`. A tool can also take an ordered list of `{ "pattern", "action" }` rules; the first matching pattern wins. `*` is a wildcard, so `git status*` matches `git status` and `git status --short`.
 
-Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, and `task` ask.
+Defaults: `read_file`, `glob`, and `grep` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, `web_search`, and `task` ask.
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 

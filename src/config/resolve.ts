@@ -59,6 +59,44 @@ export const sandboxOptionsSchema = z.object({
 });
 export type SandboxOptions = z.infer<typeof sandboxOptionsSchema>;
 
+export const searchProviderSchema = z.enum(["brave", "tavily", "searxng"]);
+export type SearchProvider = z.infer<typeof searchProviderSchema>;
+
+export const searchOptionsSchema = z.object({
+	provider: searchProviderSchema.optional(),
+	apiKeyEnv: z.string().min(1).optional(),
+	baseURL: z.string().min(1).optional(),
+});
+export type SearchOptions = z.infer<typeof searchOptionsSchema>;
+
+export interface SearchSettings {
+	provider: SearchProvider;
+	apiKeyEnv: string;
+	baseURL: string | undefined;
+}
+
+// The apiKeyEnv and baseURL defaults follow the provider, so a project that
+// only sets "provider" still resolves to the right key variable and endpoint.
+const SEARCH_PROVIDER_DEFAULTS: Record<
+	SearchProvider,
+	{ apiKeyEnv: string; baseURL: string | undefined }
+> = {
+	brave: {
+		apiKeyEnv: "BRAVE_API_KEY",
+		baseURL: "https://api.search.brave.com/res/v1/web/search",
+	},
+	tavily: {
+		apiKeyEnv: "TAVILY_API_KEY",
+		baseURL: "https://api.tavily.com/search",
+	},
+	searxng: { apiKeyEnv: "", baseURL: undefined },
+};
+
+export const DEFAULT_SEARCH: SearchSettings = {
+	provider: "brave",
+	...SEARCH_PROVIDER_DEFAULTS.brave,
+};
+
 export const mcpServerSchema = z.object({
 	command: z.array(z.string().min(1)).min(1),
 	env: z.record(z.string(), z.string()).optional(),
@@ -145,6 +183,7 @@ export interface ResolvedConfig {
 	hooks: HooksConfig;
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
+	search: SearchSettings;
 	mcpServers: McpServers;
 }
 
@@ -277,6 +316,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		global.layer.compaction,
 	);
 	const sandbox = resolveSandbox(project.layer.sandbox, global.layer.sandbox);
+	const search = resolveSearch(project.layer.search, global.layer.search);
 	// Project servers win over global servers of the same name; other names from
 	// both layers stay.
 	const mcpServers: McpServers = {
@@ -315,6 +355,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			hooks: project.layer.hooks ?? {},
 			compaction,
 			sandbox,
+			search,
 			mcpServers,
 		},
 	};
@@ -367,6 +408,7 @@ interface Layer {
 	hooks?: HooksConfig;
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
+	search?: SearchOptions;
 	mcp?: McpServers;
 }
 
@@ -482,6 +524,18 @@ function loadLayer(
 		sandbox = parsed.data;
 	}
 
+	let search: SearchOptions | undefined;
+	if (raw.search !== undefined) {
+		const parsed = searchOptionsSchema.safeParse(raw.search);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid search in ${filePath}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		search = parsed.data;
+	}
+
 	let mcp: McpServers | undefined;
 	if (raw.mcp !== undefined) {
 		const parsed = parseMcpServers(raw.mcp, filePath);
@@ -498,6 +552,7 @@ function loadLayer(
 			hooks,
 			compaction,
 			sandbox,
+			search,
 			mcp,
 		},
 	};
@@ -571,6 +626,19 @@ function resolveSandbox(
 			project?.writablePaths ??
 			global?.writablePaths ??
 			DEFAULT_SANDBOX.writablePaths,
+	};
+}
+
+function resolveSearch(
+	project: SearchOptions | undefined,
+	global: SearchOptions | undefined,
+): SearchSettings {
+	const provider = project?.provider ?? global?.provider ?? "brave";
+	const defaults = SEARCH_PROVIDER_DEFAULTS[provider];
+	return {
+		provider,
+		apiKeyEnv: project?.apiKeyEnv ?? global?.apiKeyEnv ?? defaults.apiKeyEnv,
+		baseURL: project?.baseURL ?? global?.baseURL ?? defaults.baseURL,
 	};
 }
 

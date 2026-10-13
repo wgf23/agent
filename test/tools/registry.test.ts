@@ -74,6 +74,7 @@ describe("toolDefinitions", () => {
 			"grep",
 			"load_skill",
 			"web_fetch",
+			"web_search",
 		]);
 
 		const readFile = definitions[0].parameters as {
