@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { errorMessage } from "../util/errors.js";
@@ -169,10 +170,20 @@ export class StdioLspClient {
 		});
 
 		try {
+			// typescript-language-server and other servers attach the project only
+			// when the client advertises workspaceFolders; with only rootUri they
+			// initialize cleanly but never publish diagnostics.
+			const rootUri = pathToFileURL(this.workspaceRoot).toString();
 			await this.request("initialize", {
 				processId: process.pid,
-				rootUri: pathToFileURL(this.workspaceRoot).toString(),
-				capabilities: {},
+				rootUri,
+				workspaceFolders: [
+					{ uri: rootUri, name: path.basename(this.workspaceRoot) },
+				],
+				capabilities: {
+					workspace: { workspaceFolders: true },
+					textDocument: { publishDiagnostics: { relatedInformation: true } },
+				},
 				initializationOptions: this.initializationOptions,
 			});
 		} catch (error) {

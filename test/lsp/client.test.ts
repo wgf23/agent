@@ -74,7 +74,18 @@ describe("StdioLspClient", () => {
 				params: {
 					processId: expect.any(Number),
 					rootUri: pathToFileURL(process.cwd()).toString(),
-					capabilities: {},
+					workspaceFolders: [
+						{
+							uri: pathToFileURL(process.cwd()).toString(),
+							name: path.basename(process.cwd()),
+						},
+					],
+					capabilities: {
+						workspace: { workspaceFolders: true },
+						textDocument: {
+							publishDiagnostics: { relatedInformation: true },
+						},
+					},
 					initializationOptions: {},
 				},
 			});

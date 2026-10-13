@@ -133,8 +133,11 @@ async function runDiagnostics(input: {
 	try {
 		await client.ensureStarted();
 		const uri = pathToFileURL(target).toString();
-		const languageId = extension.slice(1);
-		const diagnostics = await client.requestDiagnostics(uri, languageId, text);
+		const diagnostics = await client.requestDiagnostics(
+			uri,
+			languageIdFor(extension),
+			text,
+		);
 		const filtered = filterDiagnostics(diagnostics, args.severity);
 		return {
 			ok: true,
@@ -143,4 +146,27 @@ async function runDiagnostics(input: {
 	} catch (error) {
 		return { ok: false, error: errorMessage(error) };
 	}
+}
+
+// LSP language ids are canonical names, not the file extension. Passing "ts"
+// makes typescript-language-server reject the didOpen with "Invalid
+// languageId", so map the common extensions and fall back to the bare
+// extension for anything else.
+const LANGUAGE_IDS: Record<string, string> = {
+	".ts": "typescript",
+	".mts": "typescript",
+	".cts": "typescript",
+	".tsx": "typescriptreact",
+	".js": "javascript",
+	".mjs": "javascript",
+	".cjs": "javascript",
+	".jsx": "javascriptreact",
+	".json": "json",
+	".py": "python",
+	".go": "go",
+	".rs": "rust",
+};
+
+function languageIdFor(extension: string): string {
+	return LANGUAGE_IDS[extension] ?? extension.slice(1);
 }

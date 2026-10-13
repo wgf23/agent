@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAgent } from "../../src/agent/agent.js";
 import type { LspServers } from "../../src/lsp/config.js";
@@ -68,12 +69,30 @@ describe("diagnostics tool", () => {
 				.split("\n")
 				.map((line) => JSON.parse(line) as Record<string, unknown>);
 			expect(received[0].method).toBe("initialize");
+			const initParams = received[0].params as Record<string, unknown>;
+			// typescript-language-server publishes nothing without workspaceFolders
+			// and the publishDiagnostics capability, so lock both in.
+			expect(initParams.workspaceFolders).toEqual([
+				{
+					uri: pathToFileURL(workspace).toString(),
+					name: path.basename(workspace),
+				},
+			]);
+			expect(initParams.capabilities).toEqual({
+				workspace: { workspaceFolders: true },
+				textDocument: { publishDiagnostics: { relatedInformation: true } },
+			});
 			expect(received[1]).toEqual({
 				jsonrpc: "2.0",
 				method: "initialized",
 				params: {},
 			});
 			expect(received[2].method).toBe("textDocument/didOpen");
+			// The language id is the canonical name, not the raw extension.
+			const didOpen = received[2].params as {
+				textDocument: { languageId: string };
+			};
+			expect(didOpen.textDocument.languageId).toBe("typescript");
 		} finally {
 			await lsp.dispose();
 		}
