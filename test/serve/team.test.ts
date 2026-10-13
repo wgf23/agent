@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
+import type { Turn } from "../../src/bot/schema.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
-import { TeamHub } from "../../src/serve/team.js";
+import { summarizeSessions, TeamHub } from "../../src/serve/team.js";
+import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
 	preset: "deepseek",
@@ -23,6 +25,9 @@ let workspaceRoot: string;
 beforeEach(() => {
 	process.env.MY_AGENT_SESSIONS_DIR = mkdtempSync(
 		path.join(tmpdir(), "my-agent-web-team-sessions-"),
+	);
+	process.env.MY_AGENT_BOTS_DIR = mkdtempSync(
+		path.join(tmpdir(), "my-agent-web-team-bots-"),
 	);
 	workspaceRoot = mkdtempSync(path.join(tmpdir(), "my-agent-web-team-ws-"));
 });
@@ -139,5 +144,114 @@ describe("TeamHub", () => {
 		await waitFor(statusIs(events, "working"), "working after re-dispatch");
 		hub.interrupt("alpha");
 		await hub.dispose();
+	});
+
+	it("opens a bot session, replays a stored one, and reports an unknown id", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "one" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		await hub.newSession("alpha");
+		const opened = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(opened).toMatchObject({ bot: "alpha", messages: [] });
+		const sessionId = opened?.type === "session_opened" ? opened.sessionId : "";
+
+		hub.dispatch("alpha", "first");
+		await waitFor(
+			() => provider.requests.length === 1 && hub.states()[0].status === "idle",
+			"the first turn",
+		);
+
+		await hub.openSession("alpha", "nope");
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "error",
+				bot: "alpha",
+				message: expect.stringContaining("nope"),
+			}),
+		);
+
+		await hub.openSession("alpha", sessionId);
+		const replayed = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(replayed).toMatchObject({ bot: "alpha", sessionId });
+		const messages =
+			replayed?.type === "session_opened" ? replayed.messages : [];
+		expect(
+			messages.some(
+				(message) => message.role === "user" && message.text.includes("first"),
+			),
+		).toBe(true);
+
+		await hub.closeSession("alpha", sessionId);
+		const sessionsEvent = events
+			.filter((event) => event.type === "sessions")
+			.at(-1);
+		expect(sessionsEvent).toMatchObject({
+			type: "sessions",
+			sessions: [
+				{
+					id: sessionId,
+					messageCount: 2,
+					firstUserText: "[from user] first",
+				},
+			],
+		});
+		await hub.dispose();
+	});
+
+	it("summarizes a bot's sessions newest first with the right message count", () => {
+		const turns = [
+			{
+				id: "trn_0000000000000000000000000000000a",
+				seq: 1,
+				sessionId: "chs_a",
+				workspaceRoot,
+				at: 10,
+				wake: "user",
+				messages: [
+					{ role: "user", content: "hi a" },
+					{ role: "assistant", content: [{ type: "text", text: "hello" }] },
+				],
+			},
+			{
+				id: "trn_0000000000000000000000000000000b",
+				seq: 2,
+				sessionId: "chs_b",
+				workspaceRoot,
+				at: 20,
+				wake: "user",
+				messages: [
+					{ role: "user", content: "hi b" },
+					{ role: "assistant", content: [{ type: "text", text: "yo" }] },
+					{ role: "user", content: "more b" },
+				],
+			},
+			{
+				id: "trn_0000000000000000000000000000000c",
+				seq: 3,
+				sessionId: "chs_a",
+				workspaceRoot,
+				at: 30,
+				wake: "user",
+				messages: [
+					{ role: "user", content: "again a" },
+					{ role: "assistant", content: [{ type: "text", text: "sure" }] },
+				],
+			},
+		] satisfies Turn[];
+
+		expect(summarizeSessions(turns)).toEqual([
+			{ id: "chs_a", updatedAt: 30, messageCount: 4, firstUserText: "hi a" },
+			{ id: "chs_b", updatedAt: 20, messageCount: 3, firstUserText: "hi b" },
+		]);
 	});
 });

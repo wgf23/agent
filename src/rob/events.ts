@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../agent/events.js";
+import type { ChannelSession } from "../bot/channel.js";
 import type { ApprovalChoice } from "../permissions/authorizer.js";
 import type { ApprovalRequest } from "./approvals.js";
 import type { DmEntry, RobStatus, SubagentEntry } from "./types.js";
@@ -9,6 +10,7 @@ export type TeamEvent =
 	| { kind: "notice"; rob: string; text: string }
 	| { kind: "dm"; entry: DmEntry }
 	| { kind: "subagent"; entry: SubagentEntry }
+	| { kind: "channel"; bot: string; session: ChannelSession }
 	| { kind: "approval_requested"; request: ApprovalRequest }
 	| { kind: "approval_resolved"; id: string; decision: ApprovalChoice };
 

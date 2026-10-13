@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
+import { ChannelRegistry } from "../../src/bot/channel.js";
 import { renderMemory } from "../../src/bot/record.js";
 import type { MemoryEntry, Turn } from "../../src/bot/schema.js";
 import { type BotStore, createBotStore } from "../../src/bot/store.js";
@@ -174,6 +175,7 @@ describe("Rob", () => {
 			authorizerFactory: allowAllAuthorizerFactory(),
 			team: new FakeTeam(),
 			store: memoryStore(),
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -256,6 +258,7 @@ describe("Rob", () => {
 			authorizerFactory: allowAllAuthorizerFactory(),
 			team: new FakeTeam(),
 			store,
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -348,6 +351,7 @@ describe("Rob", () => {
 			authorizerFactory: allowAllAuthorizerFactory(),
 			team: new FakeTeam(),
 			store,
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -398,6 +402,7 @@ describe("Rob", () => {
 			authorizerFactory: allowAllAuthorizerFactory(),
 			team,
 			store: memoryStore(),
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -444,6 +449,7 @@ describe("Rob", () => {
 			authorizerFactory: allowAllAuthorizerFactory(),
 			team: new FakeTeam(),
 			store: memoryStore(),
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -489,6 +495,7 @@ describe("Rob", () => {
 			authorizerFactory: () => readOnlyAuthorize,
 			team: new FakeTeam(),
 			store: memoryStore(),
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -543,6 +550,7 @@ describe("Rob", () => {
 			team: new FakeTeam(),
 			extraTools: [extra],
 			store: memoryStore(),
+			channels: new ChannelRegistry(),
 		});
 
 		const running = rob.run();
@@ -575,5 +583,150 @@ describe("Rob", () => {
 			content: "created Ada",
 			isError: false,
 		});
+	});
+
+	it("destroys a session without touching memory or the next transcript", async () => {
+		const store = memoryStore();
+		const loaded = await store.load("planner", {
+			role: "work",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const seedTurn: Turn = {
+			id: "trn_00000000000000000000000000000002",
+			seq: 1,
+			sessionId: "chs_seed",
+			workspaceRoot: workspace,
+			at: 1,
+			wake: "user",
+			messages: [],
+		};
+		const fact: MemoryEntry = {
+			id: "mem_00000000000000000000000000000002",
+			at: 1,
+			kind: "fact",
+			text: "the password is hunter2",
+			source: { sessionId: null, turnSeq: 0 },
+			supersedes: [],
+		};
+		const seeded = await store.commit(loaded.record, seedTurn, {
+			upsert: [fact],
+			drop: [],
+		});
+		expect(seeded.ok).toBe(true);
+
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "reply one" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "reply two" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [{ name: "planner", role: "work" }],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+			store,
+		});
+		team.start();
+
+		team.dispatch("planner", "hello A");
+		await waitFor(
+			() =>
+				provider.requests.length === 1 && team.statuses()[0].status === "idle",
+			"the first session's turn",
+		);
+		team.openChannel("planner");
+		team.dispatch("planner", "hello B");
+		await waitFor(
+			() =>
+				provider.requests.length === 2 && team.statuses()[0].status === "idle",
+			"the second session's turn",
+		);
+		await team.stop();
+
+		const record = await loadBot("planner");
+		const turns = record.turns.filter((turn) => turn.sessionId !== "chs_seed");
+		expect(turns).toHaveLength(2);
+		expect(turns[0].sessionId).not.toBe(turns[1].sessionId);
+
+		// The destroyed session cannot leak into the next transcript, but the
+		// bot's memory still reaches the model.
+		const second = provider.requests[1].messages;
+		expect(JSON.stringify(second)).not.toContain("reply one");
+		expect(JSON.stringify(second)).toContain("hello B");
+		expect(second[0].content).toContain("the password is hunter2");
+	});
+
+	it("replays an opened session's literal history into the next turn", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "reply one" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "reply two" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "reply three" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [{ name: "planner", role: "work" }],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+			store: memoryStore(),
+		});
+		team.start();
+
+		team.dispatch("planner", "hello A");
+		await waitFor(
+			() =>
+				provider.requests.length === 1 && team.statuses()[0].status === "idle",
+			"the first session's turn",
+		);
+		const a = team.listChannels("planner")[0].id;
+		team.openChannel("planner");
+		team.dispatch("planner", "hello B");
+		await waitFor(
+			() =>
+				provider.requests.length === 2 && team.statuses()[0].status === "idle",
+			"the second session's turn",
+		);
+
+		const opened = await team.loadChannel("planner", a);
+		expect(opened).toEqual({
+			ok: true,
+			messages: [
+				{ role: "user", content: "[from user] hello A" },
+				{ role: "assistant", content: [{ type: "text", text: "reply one" }] },
+			],
+		});
+
+		team.dispatch("planner", "again A");
+		await waitFor(
+			() =>
+				provider.requests.length === 3 && team.statuses()[0].status === "idle",
+			"the replayed session's turn",
+		);
+		await team.stop();
+
+		const replayed = JSON.stringify(provider.requests[2].messages);
+		expect(replayed).toContain("hello A");
+		expect(replayed).toContain("reply one");
+		expect(replayed).toContain("again A");
+
+		// The reopened turn continues the same session id.
+		const record = await loadBot("planner");
+		expect(record.turns.filter((turn) => turn.sessionId === a)).toHaveLength(2);
 	});
 });

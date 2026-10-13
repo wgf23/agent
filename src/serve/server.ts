@@ -15,6 +15,7 @@ import type {
 	SaveProviderBody,
 	SendBody,
 	ServerEvent,
+	SessionCloseBody,
 	SessionNewBody,
 	SessionOpenBody,
 } from "../../shared/protocol.js";
@@ -376,6 +377,15 @@ export async function buildServer(
 			return reply.code(400).send({ error: "expected {bot, id}" });
 		}
 		await hub.openSession(body.bot, body.id);
+		return reply.send({ ok: true });
+	});
+
+	app.post("/api/sessions/close", async (request, reply) => {
+		const body = request.body as Partial<SessionCloseBody> | undefined;
+		if (typeof body?.bot !== "string" || typeof body.id !== "string") {
+			return reply.code(400).send({ error: "expected {bot, id}" });
+		}
+		await hub.closeSession?.(body.bot, body.id);
 		return reply.send({ ok: true });
 	});
 

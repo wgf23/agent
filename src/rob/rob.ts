@@ -3,7 +3,13 @@ import { agentByCommand } from "../../shared/agents.js";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
-import { emptyDelta, type MemoryDelta, renderMemory } from "../bot/record.js";
+import type { ChannelRegistry } from "../bot/channel.js";
+import {
+	emptyDelta,
+	type MemoryDelta,
+	renderMemory,
+	replay,
+} from "../bot/record.js";
 import {
 	BOT_RECORD_VERSION,
 	type BotRecord,
@@ -59,6 +65,7 @@ export interface RobOptions {
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
 	store: BotStore;
+	channels: ChannelRegistry;
 	clock?: () => number;
 }
 
@@ -77,11 +84,10 @@ export class Rob {
 	private readonly events: AgentEvent[] = [];
 	private readonly hooks?: HooksConfig;
 	private readonly store: BotStore;
+	private readonly channels: ChannelRegistry;
 	private readonly clock: () => number;
 
-	// The channel id is ephemeral for now; a later unit makes it openable. The
-	// memory tools capture this.delta by reference, so reset it in place.
-	private readonly channelId = `chs_${randomBytes(8).toString("hex")}`;
+	// The memory tools capture this.delta by reference, so reset it in place.
 	private readonly delta: MemoryDelta = emptyDelta();
 	private memoryBlock = "";
 
@@ -102,6 +108,7 @@ export class Rob {
 		this.team = options.team;
 		this.hooks = options.hooks;
 		this.store = options.store;
+		this.channels = options.channels;
 		this.clock = options.clock ?? Date.now;
 		this.authorize = options.authorizerFactory({
 			name: options.name,
@@ -187,6 +194,36 @@ export class Rob {
 	markWorking(): void {
 		if (this.stopRequested) return;
 		this.setStatus("working");
+	}
+
+	// The channel is an in-memory label. Reading it lazily opens the bot's first
+	// channel; the registry owns every later open and close.
+	private get channelId(): string {
+		return this.channels.current(this.name).id;
+	}
+
+	// A fresh session: drop the live transcript, never memory. The next committed
+	// turn carries the new channel's id.
+	openChannel(): void {
+		this.channels.open(this.name);
+		this.history = [];
+	}
+
+	closeCurrentChannel(): void {
+		this.channels.close(this.name, this.channels.current(this.name).id);
+		this.history = [];
+	}
+
+	// Replays a past session's turns into the live transcript and makes that
+	// session current, so the next committed turn continues its id.
+	loadChannelHistory(turns: readonly Turn[]): void {
+		const id = turns[0]?.sessionId;
+		if (id === undefined) {
+			this.history = [];
+			return;
+		}
+		this.history = replay([...turns], this.workspaceRoot, id);
+		this.channels.focus(this.name, id);
 	}
 
 	statusSnapshot(): RobStatusEntry {

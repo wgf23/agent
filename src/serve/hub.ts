@@ -48,6 +48,7 @@ export interface Hub {
 	setAllowAll(on: boolean): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
+	closeSession?(bot: string, id: string): Promise<void>;
 	// Only a hub that manages a rob roster can create one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
 	// A hub that can swap the provider at runtime implements this. It refuses

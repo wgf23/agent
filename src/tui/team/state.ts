@@ -246,6 +246,8 @@ function applyTeamEvent(state: TeamState, event: TeamEvent): TeamState {
 				...state,
 				subagents: [...state.subagents, structuredClone(event.entry)],
 			};
+		case "channel":
+			return state;
 		case "approval_requested":
 			if (state.approvals.some((item) => item.id === event.request.id)) {
 				return state;

@@ -1,4 +1,6 @@
 import type { AgentEvent } from "../agent/events.js";
+import { ChannelRegistry, type ChannelSession } from "../bot/channel.js";
+import { replay } from "../bot/record.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type {
@@ -7,7 +9,7 @@ import type {
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
-import type { Provider } from "../providers/types.js";
+import type { Message, Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 import { ApprovalQueue } from "./approvals.js";
 import type { TeamEvent, TeamListener } from "./events.js";
@@ -66,6 +68,10 @@ export interface TeamOptions {
 	clock?: () => number;
 }
 
+export type LoadChannelResult =
+	| { ok: true; messages: Message[] }
+	| { ok: false; error: string };
+
 export class Team implements TeamPort {
 	private readonly options: TeamOptions;
 	private readonly robs = new Map<RobName, Rob>();
@@ -74,11 +80,17 @@ export class Team implements TeamPort {
 	private readonly subagents: SubagentEntry[] = [];
 	private readonly approvals = new ApprovalQueue();
 	private readonly listeners = new Set<TeamListener>();
+	private readonly store: BotStore;
+	// One registry for the whole team, so every rob shares the same channel
+	// bookkeeping and a bot can only ever be current in one place.
+	private readonly channels: ChannelRegistry;
 	private started = false;
 	private stopping = false;
 
 	constructor(options: TeamOptions) {
 		this.options = options;
+		this.store = options.store ?? createBotStore();
+		this.channels = new ChannelRegistry({ clock: options.clock });
 		for (const config of options.robs) {
 			this.robs.set(config.name, this.createRob(config));
 		}
@@ -111,7 +123,8 @@ export class Team implements TeamPort {
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
 			hooks: this.options.hooks,
-			store: this.options.store ?? createBotStore(),
+			store: this.store,
+			channels: this.channels,
 			clock: this.options.clock,
 		});
 	}
@@ -175,6 +188,61 @@ export class Team implements TeamPort {
 
 	hasRob(name: string): boolean {
 		return this.robs.has(name);
+	}
+
+	// Opens a fresh session for the named rob: the live transcript is dropped and
+	// the next committed turn carries the new channel id. Memory is untouched.
+	openChannel(name: string): ChannelSession {
+		const rob = this.requireRob(name);
+		rob.openChannel();
+		const session = this.channels.current(name);
+		this.emit({ kind: "channel", bot: name, session });
+		return session;
+	}
+
+	// Closes the named session when it is the rob's current one, then opens a
+	// fresh one. Returns whether the id matched.
+	closeChannel(name: string, id: string): boolean {
+		const rob = this.requireRob(name);
+		if (this.channels.current(name).id !== id) return false;
+		rob.closeCurrentChannel();
+		this.emit({
+			kind: "channel",
+			bot: name,
+			session: this.channels.current(name),
+		});
+		return true;
+	}
+
+	listChannels(name: string): readonly ChannelSession[] {
+		this.requireRob(name);
+		return this.channels.list(name);
+	}
+
+	// Loads the ledger, replays the named session into the rob's live transcript,
+	// and makes it current so the next turn continues the same session id. The
+	// store is the only durable source; the registry only holds the label.
+	async loadChannel(name: string, id: string): Promise<LoadChannelResult> {
+		const rob = this.requireRob(name);
+		const loaded = await this.store.load(name, {
+			role: rob.role,
+			model: rob.model,
+		});
+		if (!loaded.ok) return loaded;
+		const turns = loaded.record.turns.filter((turn) => turn.sessionId === id);
+		if (turns.length === 0) {
+			return { ok: false, error: `Unknown session: ${id}` };
+		}
+		rob.loadChannelHistory(turns);
+		this.emit({
+			kind: "channel",
+			bot: name,
+			session: this.channels.current(name),
+		});
+		return {
+			ok: true,
+			messages: replay(turns, this.options.workspaceRoot, id),
+		};
 	}
 
 	postDm(from: RobName, to: RobName, text: string): void {

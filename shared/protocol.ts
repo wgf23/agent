@@ -281,4 +281,9 @@ export interface SessionOpenBody {
 	id: string;
 }
 
+export interface SessionCloseBody {
+	bot: string;
+	id: string;
+}
+
 export type CreateBotBody = BotDraft;
