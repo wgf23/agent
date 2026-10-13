@@ -1,7 +1,11 @@
 import { authHeaders, eventsUrl } from "./auth";
 import type {
+	AgentListResponse,
 	ApprovalChoice,
 	BotDraft,
+	CancelAgentBody,
+	InstallAgentBody,
+	InstallAgentStartResponse,
 	SaveProviderBody,
 	SaveProviderResponse,
 	SettingsResponse,
@@ -20,6 +24,9 @@ export interface ApiClient {
 	// Returns the accepted provider so the caller can apply it immediately
 	// instead of waiting for the server's broadcast.
 	saveProvider(body: SaveProviderBody): Promise<SavedProvider>;
+	loadAgents(): Promise<AgentListResponse>;
+	installAgent(id: string): Promise<InstallAgentStartResponse>;
+	cancelAgent(id: string): Promise<void>;
 }
 
 export type SavedProvider = Extract<SaveProviderResponse, { ok: true }>;
@@ -115,6 +122,57 @@ export function createApi(options: {
 		return payload;
 	}
 
+	async function loadAgents(): Promise<AgentListResponse> {
+		const response = await request("/api/agents");
+		if (!response.ok) {
+			throw new Error(`GET /api/agents failed: ${response.status}`);
+		}
+		return (await response.json()) as AgentListResponse;
+	}
+
+	async function installAgent(id: string): Promise<InstallAgentStartResponse> {
+		const body: InstallAgentBody = { id, confirm: true };
+		const response = await request("/api/agents/install", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		let payload:
+			| InstallAgentStartResponse
+			| { ok: false; error?: string }
+			| null = null;
+		try {
+			payload = (await response.json()) as
+				| InstallAgentStartResponse
+				| { ok: false; error?: string };
+		} catch {
+			payload = null;
+		}
+		if (!response.ok || payload === null || payload.ok !== true) {
+			// Surface the server's reason (unknown id, not loopback, busy) and fall
+			// back to a generic message when the body is missing or malformed.
+			const message =
+				payload !== null &&
+				payload.ok === false &&
+				typeof payload.error === "string" &&
+				payload.error !== ""
+					? payload.error
+					: `安装失败 (${response.status})`;
+			throw new Error(message);
+		}
+		return payload;
+	}
+
+	async function cancelAgent(id: string): Promise<void> {
+		// A failed cancel is not fatal: the job may already have finished.
+		const body: CancelAgentBody = { id };
+		await request("/api/agents/cancel", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	}
+
 	return {
 		eventsUrl: () => eventsUrl(token),
 		send: (bot, text) => post("/api/send", { bot, text }),
@@ -127,5 +185,8 @@ export function createApi(options: {
 		createBot,
 		loadSettings,
 		saveProvider,
+		loadAgents,
+		installAgent,
+		cancelAgent,
 	};
 }
