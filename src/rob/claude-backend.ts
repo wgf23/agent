@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +7,7 @@ import type { UsageTotals } from "../agent/agent.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
 import type { Message } from "../providers/types.js";
+import { killProcessGroup } from "../util/process.js";
 import {
 	emptyUsage,
 	promptFor,
@@ -361,23 +362,6 @@ function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
 			conclude();
 		});
 	});
-}
-
-function killProcessGroup(child: ChildProcess): void {
-	if (child.pid === undefined) return;
-	// Windows has no process group here; taskkill walks the child tree.
-	if (process.platform === "win32") {
-		const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-			stdio: "ignore",
-		});
-		killer.on("error", () => child.kill());
-		return;
-	}
-	try {
-		process.kill(-child.pid, "SIGKILL");
-	} catch {
-		child.kill("SIGKILL");
-	}
 }
 
 function recordUsage(
