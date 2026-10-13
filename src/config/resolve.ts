@@ -169,6 +169,32 @@ export function parseMcpServers(
 	return { ok: true, servers };
 }
 
+// A plugin spec is a module specifier string: a path starting with "." or "/",
+// or a bare package name resolved from node_modules.
+export function parsePlugins(
+	value: unknown,
+	filePath: string,
+): { ok: true; plugins: string[] } | { ok: false; error: string } {
+	if (value === undefined) return { ok: true, plugins: [] };
+	if (!Array.isArray(value)) {
+		return {
+			ok: false,
+			error: `Invalid plugins in ${filePath}: expected an array of strings.`,
+		};
+	}
+	const plugins: string[] = [];
+	for (const [index, entry] of value.entries()) {
+		if (typeof entry !== "string" || entry.trim() === "") {
+			return {
+				ok: false,
+				error: `Invalid plugins in ${filePath}: entry at index ${index} must be a non-empty string.`,
+			};
+		}
+		plugins.push(entry);
+	}
+	return { ok: true, plugins };
+}
+
 export interface ProviderSettings {
 	preset: BuiltinPresetName;
 	model: string;
@@ -203,6 +229,7 @@ export interface ResolvedConfig {
 	embeddings: EmbeddingsSettings | undefined;
 	mcpServers: McpServers;
 	lspServers: LspServers;
+	plugins: string[];
 }
 
 export type ResolveConfigResult =
@@ -353,6 +380,14 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			...(project.layer.lsp ?? {}),
 		}).filter(([, config]) => config.disabled !== true),
 	);
+	// Global specs load first, then project-only ones; a spec present in both
+	// layers loads once.
+	const plugins = [
+		...new Set([
+			...(global.layer.plugins ?? []),
+			...(project.layer.plugins ?? []),
+		]),
+	];
 
 	return {
 		ok: true,
@@ -389,6 +424,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			embeddings,
 			mcpServers,
 			lspServers,
+			plugins,
 		},
 	};
 }
@@ -444,6 +480,7 @@ interface Layer {
 	embeddings?: EmbeddingsOptions;
 	mcp?: McpServers;
 	lsp?: LspServers;
+	plugins?: string[];
 }
 
 function loadLayer(
@@ -596,6 +633,13 @@ function loadLayer(
 		lsp = parsed.servers;
 	}
 
+	let plugins: string[] | undefined;
+	if (raw.plugins !== undefined) {
+		const parsed = parsePlugins(raw.plugins, filePath);
+		if (!parsed.ok) return parsed;
+		plugins = parsed.plugins;
+	}
+
 	return {
 		ok: true,
 		layer: {
@@ -609,6 +653,7 @@ function loadLayer(
 			embeddings,
 			mcp,
 			lsp,
+			plugins,
 		},
 	};
 }

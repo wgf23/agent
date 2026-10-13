@@ -28,6 +28,7 @@ export interface HubOptions {
 	extraTools: Tool[];
 	compaction: CompactionSettings;
 	hooks?: HooksConfig;
+	extraInstructions?: string;
 	allowAll: AllowAll;
 	// Optional so existing test literals keep compiling. When present the hubs
 	// use it to gate dispatch and to report the live provider in hello/view.

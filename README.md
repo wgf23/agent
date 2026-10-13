@@ -303,6 +303,48 @@ A `preToolUse` hook that exits zero lets the call proceed. A non-zero exit block
 
 Team robs run the same hooks as the solo agent. A native rob applies the project hooks to its own tool calls and to the sub-agents it starts through `delegate`. A `cli` rob runs its own external process and tool registry, so it does not receive these hooks.
 
+## Plugins
+
+A plugin is an in-process ESM module that contributes tools, slash commands, and extra system-prompt text. Configure its module specifiers in a top-level `plugins` array in `my-agent.json` or the global config:
+
+```json
+{
+  "plugins": ["./my-plugin.mjs", "my-agent-plugin-time"]
+}
+```
+
+A spec starting with `.` or `/` resolves relative to the workspace root; anything else is a bare package name resolved from `node_modules`. Project and global specs merge and dedupe by spec string.
+
+A plugin module exports either the plugin object itself or `{ "default": plugin }`:
+
+```js
+// my-plugin.mjs
+export default {
+  name: "my-plugin",
+  tools: [
+    {
+      name: "hello",
+      description: "Return a greeting.",
+      readOnly: true,
+      async execute(args) {
+        return { ok: true, output: `hello ${args.name}` };
+      },
+    },
+  ],
+  commands: [
+    { name: "hello", description: "Say hello", body: "Say hello to $ARGUMENTS." },
+  ],
+  systemPrompt: "You answer in the style of the workspace plugin.",
+  async dispose() {
+    // release resources this plugin holds
+  },
+};
+```
+
+Plugin tools join the agent's tool list alongside the built-ins and MCP tools, and their `execute` runs in-process with the agent's full privileges. A plugin's `systemPrompt` is appended to the agent's extra instructions (multiple plugins join with blank lines), and its `commands` show up in the TUI slash-command menu after the file-based custom commands. A plugin's `dispose` runs when the process stops, at the same points the MCP server connections are disposed.
+
+Plugins are trusted code. They run in-process with full access to your machine and workspace, outside the bash sandbox, so only load plugins you trust. A plugin that fails to import, is missing a `name`, or has a tool without an `execute` is reported and skipped and never stops the other plugins. A plugin tool whose name collides with a built-in tool or another plugin's tool is rejected with a message naming both. TypeScript plugins are out of scope for now: plugins are plain JavaScript (ESM).
+
 ## AGENTS.md
 
 If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only. `my-agent init` drafts one for you from a scan of the workspace; it refuses to overwrite an existing file unless you pass `--force`.

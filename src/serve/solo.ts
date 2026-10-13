@@ -241,6 +241,7 @@ export class SoloHub extends EventBus implements Hub {
 				authorize,
 				compaction: this.options.compaction,
 				extraTools: [...this.options.extraTools, taskTool],
+				extraInstructions: this.options.extraInstructions,
 				hooks: this.options.hooks,
 				drainInput: () => {
 					const queued = this.queue.splice(0);

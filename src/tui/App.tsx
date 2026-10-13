@@ -66,6 +66,8 @@ export interface AppProps {
 	initialHistory?: Message[];
 	initialSessionId?: string;
 	extraTools?: Tool[];
+	extraInstructions?: string;
+	pluginCommands?: Command[];
 	startupLines?: string[];
 	compaction?: CompactionSettings;
 	hooks?: HooksConfig;
@@ -100,6 +102,8 @@ export function App({
 	initialHistory,
 	initialSessionId,
 	extraTools,
+	extraInstructions,
+	pluginCommands,
 	startupLines,
 	compaction,
 	hooks,
@@ -170,9 +174,10 @@ export function App({
 		let cancelled = false;
 		void loadCommands(workspaceRoot).then((loaded) => {
 			if (cancelled) return;
-			setCommands(loaded);
+			const merged = [...loaded, ...(pluginCommands ?? [])];
+			setCommands(merged);
 			setCustomCommands(
-				loaded.map((command) => ({
+				merged.map((command) => ({
 					name: `/${command.name}`,
 					hint: command.description,
 				})),
@@ -181,7 +186,7 @@ export function App({
 		return () => {
 			cancelled = true;
 		};
-	}, [workspaceRoot]);
+	}, [workspaceRoot, pluginCommands]);
 
 	const setAllowAll = useCallback(
 		(arg: string) => {
@@ -237,6 +242,7 @@ export function App({
 					authorize,
 					compaction,
 					extraTools,
+					extraInstructions,
 					hooks,
 					// No lastInputTokens: state.usage.input is cumulative across
 					// turns, so auto compaction trusts the character estimate instead.
@@ -280,6 +286,7 @@ export function App({
 			authorize,
 			compaction,
 			extraTools,
+			extraInstructions,
 			hooks,
 			onTurnEnd,
 			state.pendingImage,
