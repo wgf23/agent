@@ -14,6 +14,7 @@ import {
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
+import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { chooseSession } from "../session/chooser.js";
 import {
 	latestSession,
@@ -164,6 +165,14 @@ export async function runHeadless(
 			}).then((result) => lastAssistantText(result.messages)),
 	});
 
+	// The semantic index tool is registered only when the embeddings block is
+	// configured; without it the workspace search stays off entirely.
+	const semanticTool = buildSemanticSearchTool({
+		embeddings: resolved.config.embeddings,
+		workspaceRoot,
+		env,
+	});
+
 	let reasoningChars = 0;
 	try {
 		const result = await runAgent({
@@ -179,7 +188,12 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: [...mcp.tools, ...lsp.tools, taskTool],
+			extraTools: [
+				...mcp.tools,
+				...lsp.tools,
+				taskTool,
+				...(semanticTool === undefined ? [] : [semanticTool]),
+			],
 			hooks: resolved.config.hooks,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.

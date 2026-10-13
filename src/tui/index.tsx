@@ -20,6 +20,7 @@ import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Message, TextBlock } from "../providers/types.js";
 import { Team } from "../rob/team.js";
+import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { chooseSession } from "../session/chooser.js";
 import {
 	latestSession,
@@ -240,6 +241,12 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			}).then((result) => lastAssistantText(result.messages)),
 	});
 
+	const semanticTool = buildSemanticSearchTool({
+		embeddings: resolved.config.embeddings,
+		workspaceRoot: options.workspaceRoot,
+		env: process.env,
+	});
+
 	const instance = render(
 		<App
 			provider={provider}
@@ -256,7 +263,12 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
-			extraTools={[...mcp.tools, ...lsp.tools, taskTool]}
+			extraTools={[
+				...mcp.tools,
+				...lsp.tools,
+				taskTool,
+				...(semanticTool === undefined ? [] : [semanticTool]),
+			]}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			hooks={resolved.config.hooks}

@@ -166,6 +166,26 @@ The directory is created `0700` and the file `0600`. The key is looked up by the
 
 The project file overrides the global file field by field, and both override the built-in defaults. A missing key (or a searxng without `baseURL`) returns a clear error naming the setting to add and the variable to set.
 
+### Semantic search
+
+`semantic_search` builds a local vector index of the workspace and answers a query by meaning. Configure it with a top-level `embeddings` block in `my-agent.json` or the global config; without it the tool is not registered:
+
+```json
+{
+  "embeddings": {
+    "baseURL": "https://api.openai.com/v1",
+    "model": "text-embedding-3-small",
+    "apiKeyEnv": "OPENAI_API_KEY",
+    "dimensions": 1536
+  }
+}
+```
+
+- `baseURL`, `model`, and `apiKeyEnv` are required; `dimensions` is optional.
+- The index lives at `~/.local/share/my-agent/index/<project>/index.json`, and `MY_AGENT_INDEX_DIR` overrides that base.
+- Files are chunked 40 lines with 10 lines of overlap, embedded in batches of 64 through `POST {baseURL}/embeddings`, and unchanged files are reused by mtime and size. A changed model or dimensions rebuilds the index, and writes are atomic.
+- Search embeds the query and returns the top `k` (default 5, max 20) chunks as `<path>:<startLine>-<endLine> (score 0.xx)` with the chunk text. The tool defaults to `ask`, and a missing key names the `apiKeyEnv` variable.
+
 ## Tools
 
 `web_fetch` retrieves one `http` or `https` URL and returns the body. Other schemes are rejected before any request. `format` is `markdown` (the default), `text`, or `html`. `markdown` and `text` strip HTML tags to readable text. `html` returns the response body unchanged. The result is cut at 2000 lines or 50 KB, the same limits as file reads. `timeout_ms` defaults to 30000, must be at least 1, and cannot be higher than 120000. A non-2xx status, an invalid URL, a network failure, a timeout, or an abort returns an error.
@@ -176,7 +196,7 @@ The project file overrides the global file field by field, and both override the
 
 Each tool maps to an action: `allow`, `ask`, or `deny`. A tool can also take an ordered list of `{ "pattern", "action" }` rules; the first matching pattern wins. `*` is a wildcard, so `git status*` matches `git status` and `git status --short`.
 
-Defaults: `read_file`, `glob`, `grep`, and `diagnostics` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, `web_search`, and `task` ask.
+Defaults: `read_file`, `glob`, `grep`, and `diagnostics` are allowed; `write_file`, `edit_file`, `bash`, `web_fetch`, `web_search`, `semantic_search`, and `task` ask.
 
 In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Allow always appends a rule to `<workspace>/my-agent.json`. Dangerous commands (`rm -rf`, `sudo`, `curl ... | sh`, force push, and similar) are flagged and cannot be remembered as a standing rule.
 
