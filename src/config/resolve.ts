@@ -6,6 +6,7 @@ import {
 	DEFAULT_COMPACTION,
 } from "../agent/compact.js";
 import { type HooksConfig, hooksSchema } from "../hooks/hooks.js";
+import { type LspServers, parseLspServers } from "../lsp/config.js";
 import {
 	type PermissionRules,
 	permissionRulesSchema,
@@ -185,6 +186,7 @@ export interface ResolvedConfig {
 	sandbox: SandboxSettings;
 	search: SearchSettings;
 	mcpServers: McpServers;
+	lspServers: LspServers;
 }
 
 export type ResolveConfigResult =
@@ -323,6 +325,14 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		...(global.layer.mcp ?? {}),
 		...(project.layer.mcp ?? {}),
 	};
+	// Project servers win over global servers of the same name; a server marked
+	// disabled in either layer drops out so a project can turn off a global one.
+	const lspServers: LspServers = Object.fromEntries(
+		Object.entries({
+			...(global.layer.lsp ?? {}),
+			...(project.layer.lsp ?? {}),
+		}).filter(([, config]) => config.disabled !== true),
+	);
 
 	return {
 		ok: true,
@@ -357,6 +367,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			sandbox,
 			search,
 			mcpServers,
+			lspServers,
 		},
 	};
 }
@@ -410,6 +421,7 @@ interface Layer {
 	sandbox?: SandboxOptions;
 	search?: SearchOptions;
 	mcp?: McpServers;
+	lsp?: LspServers;
 }
 
 function loadLayer(
@@ -543,6 +555,13 @@ function loadLayer(
 		mcp = parsed.servers;
 	}
 
+	let lsp: LspServers | undefined;
+	if (raw.lsp !== undefined) {
+		const parsed = parseLspServers(raw.lsp, filePath);
+		if (!parsed.ok) return parsed;
+		lsp = parsed.servers;
+	}
+
 	return {
 		ok: true,
 		layer: {
@@ -554,6 +573,7 @@ function loadLayer(
 			sandbox,
 			search,
 			mcp,
+			lsp,
 		},
 	};
 }

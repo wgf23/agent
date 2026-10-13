@@ -19,6 +19,7 @@ const DEFAULTS: PermissionRules = {
 	read_file: "allow",
 	glob: "allow",
 	grep: "allow",
+	diagnostics: "allow",
 	write_file: "ask",
 	edit_file: "ask",
 	bash: "ask",
@@ -93,6 +94,7 @@ export function toolSubject(toolName: string, args: unknown): string {
 		case "read_file":
 		case "write_file":
 		case "edit_file":
+		case "diagnostics":
 			return stringValue(record.path);
 		case "glob":
 		case "grep":
