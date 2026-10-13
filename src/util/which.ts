@@ -1,29 +1,45 @@
 import { accessSync, constants } from "node:fs";
 import path from "node:path";
 
-// True when `command` resolves to an executable file. A name containing a path
-// separator is checked directly; otherwise each PATH entry is tried. Used to
-// reject a cli-backed rob whose command is not installed.
-export function commandExists(
+// Resolves `command` to the absolute path of an executable file. A name
+// containing a path separator is checked directly; otherwise each PATH entry is
+// tried. Returns undefined when nothing executable matches, so callers that only
+// need a yes/no answer can compare against undefined.
+export function resolveCommand(
 	command: string,
 	pathEnv: string | undefined = process.env.PATH,
 	platform: NodeJS.Platform = process.platform,
-): boolean {
-	if (command === "") return false;
+): string | undefined {
+	if (command === "") return undefined;
 	const extensions = platform === "win32" ? windowsExtensions(command) : [""];
 
 	if (command.includes("/") || command.includes("\\")) {
-		return extensions.some((ext) => isExecutable(command + ext));
+		for (const ext of extensions) {
+			const candidate = command + ext;
+			if (isExecutable(candidate)) return path.resolve(candidate);
+		}
+		return undefined;
 	}
 
 	const dirs = (pathEnv ?? "").split(platform === "win32" ? ";" : ":");
 	for (const dir of dirs) {
 		if (dir === "") continue;
 		for (const ext of extensions) {
-			if (isExecutable(path.join(dir, command + ext))) return true;
+			const candidate = path.join(dir, command + ext);
+			if (isExecutable(candidate)) return candidate;
 		}
 	}
-	return false;
+	return undefined;
+}
+
+// True when `command` resolves to an executable file. Used to reject a
+// cli-backed rob whose command is not installed.
+export function commandExists(
+	command: string,
+	pathEnv: string | undefined = process.env.PATH,
+	platform: NodeJS.Platform = process.platform,
+): boolean {
+	return resolveCommand(command, pathEnv, platform) !== undefined;
 }
 
 function windowsExtensions(command: string): string[] {

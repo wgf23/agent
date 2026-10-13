@@ -1,3 +1,4 @@
+import { agentByCommand } from "../../shared/agents.js";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
@@ -25,7 +26,6 @@ import type {
 	RobUsage,
 	TeamPort,
 } from "./types.js";
-import { CLAUDE_CLI_COMMAND, OPENCODE_CLI_COMMAND } from "./types.js";
 
 export interface AuthorizerInput {
 	name: RobName;
@@ -89,7 +89,7 @@ export class Rob {
 		});
 		this.backend =
 			options.backend?.kind === "cli"
-				? options.backend.command === OPENCODE_CLI_COMMAND
+				? agentByCommand(options.backend.command)?.id === "opencode"
 					? createOpencodeBackend({
 							rob: options.name,
 							role: options.role,
@@ -100,7 +100,7 @@ export class Rob {
 							drain: () => this.inbox.drain(),
 							extraEnv: options.providerEnv,
 						})
-					: options.backend.command === CLAUDE_CLI_COMMAND
+					: agentByCommand(options.backend.command)?.id === "claude"
 						? createClaudeBackend({
 								rob: options.name,
 								role: options.role,

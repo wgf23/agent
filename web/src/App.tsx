@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AgentsPanel from "./components/AgentsPanel";
 import BotHeader from "./components/BotHeader";
 import BotPlaza from "./components/BotPlaza";
 import Composer from "./components/Composer";
@@ -7,7 +8,7 @@ import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
-import { robBots, workspaceBot } from "./state";
+import { isLivePhase, robBots, workspaceBot } from "./state";
 import { useHub } from "./useHub";
 
 export default function App() {
@@ -38,10 +39,31 @@ export default function App() {
 	const configured = state.provider?.configured !== false;
 
 	// Fetch presets (and a fresh provider view) once on load.
-	const { loadSettings } = hub;
+	const { loadSettings, loadAgents } = hub;
 	useEffect(() => {
 		loadSettings().catch(() => {});
 	}, [loadSettings]);
+
+	// Detection reads the machine, so only run it when the Agents view opens.
+	useEffect(() => {
+		if (view !== "agents") return;
+		loadAgents().catch(() => {});
+	}, [view, loadAgents]);
+
+	// Load once too, so the create dialog knows which backends are installed.
+	useEffect(() => {
+		loadAgents().catch(() => {});
+	}, [loadAgents]);
+
+	// Re-detect once a job settles so a finished install stops reading as missing.
+	const settledJobs = Object.values(state.agentJobs)
+		.filter((job) => !isLivePhase(job.phase))
+		.map((job) => job.id)
+		.join(",");
+	useEffect(() => {
+		if (settledJobs === "") return;
+		loadAgents().catch(() => {});
+	}, [settledJobs, loadAgents]);
 
 	const openBot = (name: string) => {
 		setSelectedBot(name);
@@ -90,6 +112,13 @@ export default function App() {
 						notices={state.notices}
 						onOpenBot={openBot}
 						onCreateBot={() => setDialogOpen(true)}
+					/>
+				) : view === "agents" ? (
+					<AgentsPanel
+						agents={state.agents}
+						jobs={state.agentJobs}
+						onInstall={hub.installAgent}
+						onCancel={hub.cancelInstall}
 					/>
 				) : currentBot === null ? (
 					<div className="empty-page">
@@ -162,7 +191,9 @@ export default function App() {
 			{dialogOpen && (
 				<NewBotDialog
 					model={state.model}
+					agents={state.agents}
 					onCreateBot={hub.createBot}
+					onInstall={hub.installAgent}
 					onClose={() => setDialogOpen(false)}
 				/>
 			)}
