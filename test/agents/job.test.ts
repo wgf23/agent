@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { InstallPhase } from "../../shared/protocol.js";
 import {
 	advance,
 	type InstallJob,
-	type InstallPhase,
 	isLive,
 	type JobEvent,
 } from "../../src/agents/job.js";

@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { missingCommandMessage } from "../../shared/agents.js";
+import { agentByCommand, missingCommandMessage } from "../../shared/agents.js";
 import {
 	type ApprovalChoice,
 	type BotDraft,
 	type BotInfo,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
+import type { AgentSupervisor } from "../agents/supervisor.js";
 import { addRob } from "../config/project-file.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { commandExists } from "../util/which.js";
@@ -35,18 +36,21 @@ export class CompositeHub extends EventBus implements Hub {
 	private readonly robs: TeamHub;
 	private readonly workspaceRoot: string;
 	private readonly runtime: ProviderRuntime | undefined;
+	private readonly agents: AgentSupervisor | undefined;
 
 	constructor(
 		workspace: SoloHub,
 		robs: TeamHub,
 		workspaceRoot: string,
 		runtime?: ProviderRuntime,
+		agents?: AgentSupervisor,
 	) {
 		super();
 		this.workspace = workspace;
 		this.robs = robs;
 		this.workspaceRoot = workspaceRoot;
 		this.runtime = runtime;
+		this.agents = agents;
 		this.workspace.subscribe((event) => this.emit(event));
 		this.robs.subscribe((event) => this.emit(event));
 	}
@@ -118,7 +122,7 @@ export class CompositeHub extends EventBus implements Hub {
 		}
 		if (
 			parsed.data.backend?.kind === "cli" &&
-			!commandExists(parsed.data.backend.command)
+			!(await this.commandInstalled(parsed.data.backend.command))
 		) {
 			throw new BotDraftError(
 				missingCommandMessage(parsed.data.backend.command),
@@ -139,6 +143,17 @@ export class CompositeHub extends EventBus implements Hub {
 			throw new BotDraftError(`Bot "${parsed.data.name}" was not registered.`);
 		}
 		return created;
+	}
+
+	// Detection and creation must agree: ask the supervisor (which also sees a
+	// binary installed off PATH) when it is available, else fall back to a plain
+	// PATH check.
+	private async commandInstalled(command: string): Promise<boolean> {
+		if (this.agents === undefined) return commandExists(command);
+		const row = agentByCommand(command);
+		const states = await this.agents.list();
+		const state = states.find((candidate) => candidate.id === row?.id);
+		return state?.presence.kind === "installed";
 	}
 
 	async dispose(): Promise<void> {

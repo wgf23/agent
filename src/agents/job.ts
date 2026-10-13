@@ -1,13 +1,5 @@
 import type { AgentId } from "../../shared/agents.js";
-
-export type InstallPhase =
-	| "queued"
-	| "installing"
-	| "verifying"
-	| "installed"
-	| "unverified"
-	| "failed"
-	| "cancelled";
+import type { InstallPhase } from "../../shared/protocol.js";
 
 export interface InstallJob {
 	id: string;

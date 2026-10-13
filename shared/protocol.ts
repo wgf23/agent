@@ -3,7 +3,7 @@
 // type-only `RobCommand` from ./agents.js, so tsc and Vite both read it
 // directly. AgentEvent mirrors src/agent/events.ts.
 
-import type { RobCommand } from "./agents.js";
+import type { AgentId, RobCommand } from "./agents.js";
 
 export const DEFAULT_PORT = 4317;
 
@@ -107,6 +107,63 @@ export type SaveProviderResponse =
 	| { ok: true; provider: ProviderView; warning?: string }
 	| { ok: false; error: string };
 
+// The install lifecycle, declared once: src/agents/job.ts imports this so the
+// wire and the domain can never disagree about the phase names.
+export type InstallPhase =
+	| "queued"
+	| "installing"
+	| "verifying"
+	| "installed"
+	| "unverified"
+	| "failed"
+	| "cancelled";
+
+// The wire view of an InstallJob: the domain job without its timestamps.
+export interface AgentJobView {
+	id: string;
+	agent: AgentId;
+	phase: InstallPhase;
+	detail: string;
+	error: string | null;
+}
+
+// One catalog row folded together with its detected presence and live job.
+export interface AgentStatusView {
+	id: AgentId;
+	label: string;
+	command: string;
+	npmPackage: string;
+	installed: boolean;
+	onPath: boolean;
+	path: string | null;
+	version: string | null;
+	error: string | null;
+	robBackend: boolean;
+	needsProviderAndModel: boolean;
+	robBlockedReason: string;
+	testedVersion: string;
+	job: AgentJobView | null;
+}
+
+export interface AgentListResponse {
+	agents: AgentStatusView[];
+}
+
+export interface InstallAgentBody {
+	id: string;
+	confirm: boolean;
+}
+
+export interface CancelAgentBody {
+	id: string;
+}
+
+export type InstallAgentStartResponse = {
+	ok: true;
+	job: AgentJobView;
+	alreadyRunning: boolean;
+};
+
 export interface UsageTotals {
 	input: number;
 	output: number;
@@ -193,6 +250,8 @@ export type ServerEvent =
 	| { type: "notice"; bot: string; text: string }
 	| { type: "dm"; entry: DmInfo }
 	| { type: "allow_all"; on: boolean }
+	| { type: "agents"; agents: AgentStatusView[] }
+	| { type: "agent_job"; job: AgentJobView }
 	| { type: "error"; bot?: string; message: string };
 
 export interface SendBody {

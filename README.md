@@ -41,6 +41,7 @@ my-agent            # interactive TUI
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
 - `my-agent setup` stores an API key and writes the provider, model, and endpoint to the global config file.
 - `my-agent init` drafts an `AGENTS.md` for the current workspace from a scan of `package.json`, `README.md`, and the top-level files, then one model call. It writes `<workspace>/AGENTS.md` and prints the path. If the file already exists it refuses unless you pass `--force`.
+- `my-agent agents` lists the external CLIs my-agent can drive and whether each is installed, and `my-agent agents install <id>` installs one (see [Agents](#agents)).
 
 ## TUI
 
@@ -382,6 +383,20 @@ my-agent skill remove <name>
 ```
 
 Skills install into `~/.config/my-agent/skills`, which acts as an npm project (my-agent creates its `package.json`). Set `MY_AGENT_SKILLS_DIR` to use a different prefix; tests and sandboxes point it at a temp directory. npm runs with `--ignore-scripts --no-audit --no-fund`. A package that does not declare a valid skill is uninstalled again.
+
+## Agents
+
+A rob can hand its turns to an external coding CLI. The catalog in `shared/agents.ts` is the single source of truth for which programs are recognized: `pi`, `opencode`, `claude`, `codex`, and `gemini`. The first three can back a rob; `codex` and `gemini` are recognized but have no rob backend yet.
+
+```bash
+my-agent agents              # one row per agent: id, label, npm package, status, version, path
+my-agent agents list         # the same table
+my-agent agents install pi   # runs `npm install -g --no-audit --no-fund --loglevel=error -- <package>`
+```
+
+`agents install` resolves the id against the catalog, prints the exact npm command it will run, and prompts on stdin; `--yes` skips the prompt. The install is a global `npm install -g` as your own user: no `sudo`, no piped install script. Lifecycle scripts are allowed because these CLIs create their bin shims in `postinstall`. npm's exit code is not trusted on its own: the binary is re-probed on `PATH` and a job only reports `installed` once that probe succeeds, so a missing binary ends `unverified`.
+
+The web UI exposes the same surface. `GET /api/agents` returns the catalog folded with detection, `POST /api/agents/install` starts a job (body `{ "id": "pi", "confirm": true }`), and `POST /api/agents/cancel` stops the live job for an id (body `{ "id": "pi" }`). The two `POST` routes are refused with `403` on a non-loopback bind, mirroring the provider-credential rule, and `install` requires `confirm: true` (`428` otherwise). Progress streams over `/api/events` as `agents` (the full list) and `agent_job` (one job snapshot) events. The **Agents** panel in the sidebar installs a missing CLI in place and cancels a running job, and the create-bot dialog shows an uninstalled backend disabled with a `未安装 · 安装` affordance instead of a dead end.
 
 ## Custom commands
 

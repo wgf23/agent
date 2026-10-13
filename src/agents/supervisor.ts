@@ -1,4 +1,5 @@
 import { type AgentId, type AgentRow, agentById } from "../../shared/agents.js";
+import type { AgentJobView, AgentStatusView } from "../../shared/protocol.js";
 import { errorMessage } from "../util/errors.js";
 import { resolveCommand } from "../util/which.js";
 import { type AgentState, detectAgents } from "./detect.js";
@@ -339,6 +340,41 @@ export class AgentSupervisor {
 
 function defaultId(): string {
 	return `job_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// The one projection from domain state to the wire view, shared by the server
+// and the CLI so the two surfaces cannot drift.
+export function toAgentJobView(job: InstallJob): AgentJobView {
+	return {
+		id: job.id,
+		agent: job.agent,
+		phase: job.phase,
+		detail: job.detail,
+		error: job.error,
+	};
+}
+
+export function toAgentStatusView(state: AgentState): AgentStatusView {
+	const row = agentById(state.id);
+	if (row === undefined) throw new Error(`Unknown agent: ${state.id}`);
+	const presence = state.presence;
+	const installed = presence.kind === "installed";
+	return {
+		id: state.id,
+		label: row.label,
+		command: row.command,
+		npmPackage: row.npm,
+		installed,
+		onPath: installed ? presence.onPath : false,
+		path: installed ? presence.path : null,
+		version: installed ? presence.version : null,
+		error: installed ? presence.error : null,
+		robBackend: row.rob,
+		needsProviderAndModel: row.needsProviderAndModel === true,
+		robBlockedReason: row.robBlockedReason ?? "",
+		testedVersion: row.testedVersion,
+		job: state.job === undefined ? null : toAgentJobView(state.job),
+	};
 }
 
 // A push queue that an async generator drains. Push before a consumer arrives
