@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer } from "react";
+import { authHeaders, eventsUrl, readToken } from "./auth";
 import type {
 	ApprovalChoice,
 	BotDraft,
@@ -9,8 +10,26 @@ import type {
 } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
+// The server hands the token in the page URL on a non-loopback bind, where
+// every /api/* request is gated; loopback leaves it absent, keeping no-auth.
+// Read once at import; guard the missing window so a node import cannot throw.
+const token =
+	typeof window === "undefined" ? null : readToken(window.location.search);
+
+type ApiInit = Omit<RequestInit, "headers"> & {
+	headers?: Record<string, string>;
+};
+
+function apiFetch(path: string, init: ApiInit = {}): Promise<Response> {
+	const { headers, ...rest } = init;
+	return fetch(path, {
+		...rest,
+		headers: { ...authHeaders(token), ...headers },
+	});
+}
+
 async function post(path: string, body: unknown): Promise<void> {
-	const response = await fetch(path, {
+	const response = await apiFetch(path, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
@@ -41,7 +60,7 @@ export function useHub(): Hub {
 	const [state, dispatch] = useReducer(clientReducer, undefined, initialState);
 
 	useEffect(() => {
-		const source = new EventSource("/api/events");
+		const source = new EventSource(eventsUrl(token));
 
 		source.onopen = () => dispatch({ type: "connection", status: "open" });
 		// EventSource reconnects automatically; "closed" just dims the status dot
@@ -93,7 +112,7 @@ export function useHub(): Hub {
 	}, []);
 
 	const createBot = useCallback(async (draft: BotDraft) => {
-		const response = await fetch("/api/bots", {
+		const response = await apiFetch("/api/bots", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(draft),
@@ -115,7 +134,7 @@ export function useHub(): Hub {
 	}, []);
 
 	const loadSettings = useCallback(async () => {
-		const response = await fetch("/api/settings");
+		const response = await apiFetch("/api/settings");
 		if (!response.ok) {
 			throw new Error(`GET /api/settings failed: ${response.status}`);
 		}
@@ -136,7 +155,7 @@ export function useHub(): Hub {
 	}, []);
 
 	const saveProvider = useCallback(async (body: SaveProviderBody) => {
-		const response = await fetch("/api/settings", {
+		const response = await apiFetch("/api/settings", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
