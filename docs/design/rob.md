@@ -159,11 +159,11 @@ Inbound = { kind: user | dm | subagent_result, from, text }
 
 ## 后端类型（待确认）
 
-用户提出：每个 rob 可以选择不同的 agent 类型，例如 claude、kimi、pi、codex。这里有两种完全不同的含义，需要先确认。
+用户提出：每个 rob 可以选择不同的 agent 类型。可选的外部命令与标签以 `shared/agents.ts` 的 agent 表为准（唯一事实来源）。这里有两种完全不同的含义，需要先确认。
 
 **含义 A：模型。** 只换模型，仍由我们的循环驱动。例如 kimi 模型通过 OpenAI 兼容端点调用。这种情况下 `native` 后端已经能支持，只需要在 `preset` 或 `baseURL` 上配置，不需要新代码。
 
-**含义 B：外部 CLI 工具。** 每个 rob 实际运行 `claude`、`codex`、`kimi`、`pi` 这类 agent 程序。它们自带工具和权限系统，我们无法直接截获它们的工具调用。
+**含义 B：外部 CLI 工具。** 每个 rob 实际运行一个外部 agent 程序（即 agent 表中 `rob: true` 的行）。它们自带工具和权限系统，我们无法直接截获它们的工具调用。
 
 两种含义对设计影响很大。下面按含义 B 写。
 
@@ -184,7 +184,7 @@ RobBackend
 {
   "robs": [
     { "name": "planner", "role": "拆解任务", "backend": { "kind": "native", "preset": "deepseek", "model": "deepseek-flash" } },
-    { "name": "reviewer", "role": "审查改动", "backend": { "kind": "cli", "command": "codex", "args": ["exec"] } }
+    { "name": "reviewer", "role": "审查改动", "backend": { "kind": "cli", "command": "opencode" } }
   ]
 }
 ```
