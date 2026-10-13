@@ -373,4 +373,7 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm build
+pnpm lsp:smoke      # run the real typescript-language-server and print diagnostics
 ```
+
+`pnpm lsp:smoke` starts the real `typescript-language-server` against a throwaway TypeScript workspace that contains one type error, runs the `diagnostics` tool, and prints the result. It prints `skipped: ...` and exits 0 when the binary is not on `PATH`.

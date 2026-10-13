@@ -31,6 +31,9 @@ const DEFAULT_TIMEOUT_MS = 30000;
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const STDERR_TAIL_MAX = 2000;
 const KILL_GRACE_MS = 200;
+// A frame this large is never legitimate; reject it instead of buffering bytes
+// until a body that size arrives (or never does).
+const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 
 const diagnosticSchema = z.object({
 	range: z.object({
@@ -71,7 +74,13 @@ export class StdioLspClient {
 	private state: LspState = "idle";
 	private child: ChildProcessWithoutNullStreams | undefined;
 	private readonly pending = new Map<number, Pending>();
-	private readonly waiters = new Map<string, Waiter>();
+	private readonly waiters = new Map<string, Waiter[]>();
+	// Per-uri open state: the version and last text sent to the server, so the
+	// first request opens a document and later ones send an incremented change.
+	private readonly documents = new Map<
+		string,
+		{ version: number; text: string }
+	>();
 	private nextId = 1;
 	private buffer = Buffer.alloc(0);
 	private stderrTail = "";
@@ -100,16 +109,69 @@ export class StdioLspClient {
 		uri: string,
 		languageId: string,
 		text: string,
+		signal?: AbortSignal,
 	): Promise<LspDiagnostic[]> {
 		return new Promise((resolve, reject) => {
+			if (signal?.aborted) {
+				reject(this.wrap("aborted"));
+				return;
+			}
 			const timer = setTimeout(() => {
-				this.waiters.delete(uri);
+				this.removeWaiter(uri, waiter);
 				reject(this.wrap(`timed out waiting for diagnostics for ${uri}`));
 			}, this.timeoutMs);
-			this.waiters.set(uri, { resolve, reject, timer });
+			const waiter: Waiter = { resolve, reject, timer };
+			this.addWaiter(uri, waiter);
+			if (signal !== undefined) {
+				signal.addEventListener(
+					"abort",
+					() => {
+						clearTimeout(waiter.timer);
+						this.removeWaiter(uri, waiter);
+						this.rejectAll(this.wrap("aborted"));
+						reject(this.wrap("aborted"));
+					},
+					{ once: true },
+				);
+			}
+			this.openOrChange(uri, languageId, text);
+		});
+	}
+
+	private addWaiter(uri: string, waiter: Waiter): void {
+		const list = this.waiters.get(uri);
+		if (list === undefined) {
+			this.waiters.set(uri, [waiter]);
+		} else {
+			list.push(waiter);
+		}
+	}
+
+	private removeWaiter(uri: string, waiter: Waiter): void {
+		const list = this.waiters.get(uri);
+		if (list === undefined) return;
+		const next = list.filter((entry) => entry !== waiter);
+		if (next.length === 0) {
+			this.waiters.delete(uri);
+		} else {
+			this.waiters.set(uri, next);
+		}
+	}
+
+	private openOrChange(uri: string, languageId: string, text: string): void {
+		const open = this.documents.get(uri);
+		if (open === undefined) {
+			this.documents.set(uri, { version: 1, text });
 			this.notify("textDocument/didOpen", {
 				textDocument: { uri, languageId, version: 1, text },
 			});
+			return;
+		}
+		open.version += 1;
+		open.text = text;
+		this.notify("textDocument/didChange", {
+			textDocument: { uri, version: open.version },
+			contentChanges: [{ text }],
 		});
 	}
 
@@ -124,6 +186,12 @@ export class StdioLspClient {
 			child.exitCode === null &&
 			child.signalCode === null
 		) {
+			for (const uri of this.documents.keys()) {
+				this.notify("textDocument/didClose", {
+					textDocument: { uri },
+				});
+			}
+			this.documents.clear();
 			try {
 				await this.request("shutdown", null, SHUTDOWN_TIMEOUT_MS);
 			} catch {
@@ -143,6 +211,8 @@ export class StdioLspClient {
 
 	private async start(): Promise<void> {
 		this.state = "starting";
+		this.buffer = Buffer.alloc(0);
+		this.documents.clear();
 		this.child = spawn(this.command[0], this.command.slice(1), {
 			cwd: this.workspaceRoot,
 			env: { ...process.env, ...this.env },
@@ -157,6 +227,7 @@ export class StdioLspClient {
 		this.child.on("error", (error) => {
 			const wrapped = this.wrap(errorMessage(error));
 			this.state = "failed";
+			this.startup = null;
 			this.rejectAll(wrapped);
 			this.rejectWaiters(wrapped);
 		});
@@ -165,6 +236,7 @@ export class StdioLspClient {
 				this.withStderr(`server exited (${signal ?? code})`),
 			);
 			this.state = "failed";
+			this.startup = null;
 			this.rejectAll(wrapped);
 			this.rejectWaiters(wrapped);
 		});
@@ -188,6 +260,7 @@ export class StdioLspClient {
 			});
 		} catch (error) {
 			this.state = "failed";
+			this.startup = null;
 			throw error;
 		}
 		this.notify("initialized", {});
@@ -239,12 +312,20 @@ export class StdioLspClient {
 			const headerEnd = this.buffer.indexOf("\r\n\r\n");
 			if (headerEnd === -1) return;
 			const header = this.buffer.subarray(0, headerEnd).toString("utf8");
-			const match = /^Content-Length: (\d+)$/im.exec(header);
+			const match = /^Content-Length: (-?\d+)$/im.exec(header);
 			if (match === null) {
 				this.buffer = this.buffer.subarray(headerEnd + 4);
 				continue;
 			}
 			const length = Number(match[1]);
+			if (
+				!Number.isSafeInteger(length) ||
+				length < 0 ||
+				length > MAX_FRAME_BYTES
+			) {
+				this.failProtocol(`invalid Content-Length ${match[1]}`);
+				return;
+			}
 			const bodyStart = headerEnd + 4;
 			if (this.buffer.length < bodyStart + length) return;
 			const body = this.buffer
@@ -265,7 +346,7 @@ export class StdioLspClient {
 		if (!isRecord(message)) return;
 		if (typeof message.method === "string") {
 			if (message.id !== undefined) {
-				this.answer(message.id, message.method);
+				this.answer(message.id, message.method, message.params);
 			} else if (message.method === "textDocument/publishDiagnostics") {
 				this.onPublishDiagnostics(message.params);
 			}
@@ -293,7 +374,19 @@ export class StdioLspClient {
 		pending.resolve(message.result);
 	}
 
-	private answer(id: unknown, method: string): void {
+	private answer(id: unknown, method: string, params: unknown): void {
+		// Some real servers request workspace/configuration during startup; a
+		// -32601 there breaks them. Answer it with one null per requested item.
+		if (method === "workspace/configuration") {
+			const items =
+				isRecord(params) && Array.isArray(params.items) ? params.items : [];
+			this.write({
+				jsonrpc: "2.0",
+				id,
+				result: items.map(() => null),
+			});
+			return;
+		}
 		this.write({
 			jsonrpc: "2.0",
 			id,
@@ -303,11 +396,24 @@ export class StdioLspClient {
 
 	private onPublishDiagnostics(params: unknown): void {
 		if (!isRecord(params) || typeof params.uri !== "string") return;
-		const waiter = this.waiters.get(params.uri);
-		if (waiter === undefined) return;
+		const waiters = this.waiters.get(params.uri);
+		if (waiters === undefined) return;
 		this.waiters.delete(params.uri);
-		clearTimeout(waiter.timer);
-		waiter.resolve(parseDiagnostics(params.diagnostics));
+		const diagnostics = parseDiagnostics(params.diagnostics);
+		for (const waiter of waiters) {
+			clearTimeout(waiter.timer);
+			waiter.resolve(diagnostics);
+		}
+	}
+
+	private failProtocol(message: string): void {
+		const error = this.wrap(message);
+		this.state = "failed";
+		this.startup = null;
+		this.buffer = Buffer.alloc(0);
+		this.rejectAll(error);
+		this.rejectWaiters(error);
+		this.child?.kill("SIGKILL");
 	}
 
 	private rejectAll(error: Error): void {
@@ -319,9 +425,11 @@ export class StdioLspClient {
 	}
 
 	private rejectWaiters(error: Error): void {
-		for (const waiter of this.waiters.values()) {
-			clearTimeout(waiter.timer);
-			waiter.reject(error);
+		for (const waiters of this.waiters.values()) {
+			for (const waiter of waiters) {
+				clearTimeout(waiter.timer);
+				waiter.reject(error);
+			}
 		}
 		this.waiters.clear();
 	}

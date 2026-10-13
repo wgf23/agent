@@ -184,4 +184,150 @@ describe("StdioLspClient", () => {
 
 		await waitFor(() => expect(isAlive(pid)).toBe(false));
 	});
+
+	it("restarts after the server exits while ready", async () => {
+		const dir = await tempDir();
+		const pidFile = path.join(dir, "pid");
+		const client = new StdioLspClient(serverOptions("ts", { pid: pidFile }));
+		try {
+			await client.ensureStarted();
+			await waitFor(() => {
+				expect(existsSync(pidFile)).toBe(true);
+			});
+			const firstPid = Number((await readFile(pidFile, "utf8")).trim());
+			expect(isAlive(firstPid)).toBe(true);
+
+			process.kill(firstPid, "SIGKILL");
+			await waitFor(() => expect(isAlive(firstPid)).toBe(false));
+
+			// A fresh child (a new pid) is the observable effect of clearing the
+			// stale startup promise after the crash.
+			await waitFor(async () => {
+				await client.ensureStarted();
+				const pid = Number((await readFile(pidFile, "utf8")).trim());
+				expect(pid).not.toBe(firstPid);
+			});
+
+			const diagnostics = await client.requestDiagnostics(
+				pathToFileURL("/tmp/restart.ts").toString(),
+				"ts",
+				"const x = 1;\n",
+			);
+			expect(diagnostics[0].message).toBe("Cannot find name 'x'.");
+		} finally {
+			await client.dispose();
+		}
+	});
+
+	it("resolves two concurrent requests for the same uri", async () => {
+		const client = new StdioLspClient(serverOptions("ts", { timeoutMs: 1000 }));
+		try {
+			await client.ensureStarted();
+			const uri = pathToFileURL("/tmp/same.ts").toString();
+			const [a, b] = await Promise.all([
+				client.requestDiagnostics(uri, "ts", "const x = 1;\n"),
+				client.requestDiagnostics(uri, "ts", "const x = 1;\n"),
+			]);
+			expect(a).toEqual(b);
+			expect(a[0].message).toBe("Cannot find name 'x'.");
+		} finally {
+			await client.dispose();
+		}
+	});
+
+	it("sends didChange, not a second didOpen, for a reopened uri", async () => {
+		const dir = await tempDir();
+		const log = path.join(dir, "log.jsonl");
+		const client = new StdioLspClient(serverOptions("ts", { log }));
+		try {
+			await client.ensureStarted();
+			const uri = pathToFileURL("/tmp/versioned.ts").toString();
+			await client.requestDiagnostics(uri, "ts", "const a = 1;\n");
+			await client.requestDiagnostics(uri, "ts", "const b = 2;\n");
+
+			const received = await readLog(log);
+			const methods = received.map((message) => message.method);
+			expect(
+				methods.filter((method) => method === "textDocument/didOpen"),
+			).toHaveLength(1);
+			const didChange = received.find(
+				(message) => message.method === "textDocument/didChange",
+			);
+			expect(didChange?.params).toEqual({
+				textDocument: { uri, version: 2 },
+				contentChanges: [{ text: "const b = 2;\n" }],
+			});
+		} finally {
+			await client.dispose();
+		}
+	});
+
+	it("sends didClose for every open uri before shutdown", async () => {
+		const dir = await tempDir();
+		const log = path.join(dir, "log.jsonl");
+		const client = new StdioLspClient(serverOptions("ts", { log }));
+		const uri = pathToFileURL("/tmp/close.ts").toString();
+		await client.ensureStarted();
+		await client.requestDiagnostics(uri, "ts", "const x = 1;\n");
+		await client.dispose();
+
+		const received = await readLog(log);
+		const methods = received.map((message) => message.method);
+		const closeIndex = methods.indexOf("textDocument/didClose");
+		const shutdownIndex = methods.indexOf("shutdown");
+		expect(closeIndex).toBeGreaterThan(-1);
+		expect(shutdownIndex).toBeGreaterThan(-1);
+		expect(closeIndex).toBeLessThan(shutdownIndex);
+	});
+
+	it("rejects promptly when aborted mid-wait", async () => {
+		const controller = new AbortController();
+		const client = new StdioLspClient(
+			serverOptions("ts", { scenario: "silent", timeoutMs: 5000 }),
+		);
+		try {
+			await client.ensureStarted();
+			const pending = client.requestDiagnostics(
+				"file:///tmp/abort.ts",
+				"ts",
+				"",
+				controller.signal,
+			);
+			setTimeout(() => controller.abort(), 20);
+			await expect(pending).rejects.toThrow("aborted");
+		} finally {
+			await client.dispose();
+		}
+	});
+
+	it("answers workspace/configuration with an array of nulls", async () => {
+		const dir = await tempDir();
+		const log = path.join(dir, "log.jsonl");
+		const client = new StdioLspClient(
+			serverOptions("ts", { scenario: "configuration", log }),
+		);
+		try {
+			await client.ensureStarted();
+			await waitFor(async () => {
+				const response = (await readLog(log)).find((entry) => entry.id === 42);
+				expect(response?.result).toEqual([null, null]);
+			});
+		} finally {
+			await client.dispose();
+		}
+	});
+
+	it("rejects an absurd Content-Length instead of buffering", async () => {
+		const client = new StdioLspClient(
+			serverOptions("ts", { scenario: "oversized-frame", timeoutMs: 300 }),
+		);
+		try {
+			await client.ensureStarted();
+			await expect(
+				client.requestDiagnostics("file:///tmp/big.ts", "ts", ""),
+			).rejects.toThrow("invalid Content-Length");
+		} finally {
+			await client.dispose();
+		}
+	});
 });

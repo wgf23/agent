@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -166,6 +166,35 @@ describe("diagnostics tool", () => {
 			expect(result.ok).toBe(false);
 			if (result.ok) return;
 			expect(result.error).toContain("lsp typescript: server exited");
+		} finally {
+			await lsp.dispose();
+		}
+	});
+
+	it("matches the server's real-path uri for a symlinked file", async () => {
+		await mkdir(path.join(workspace, "real"), { recursive: true });
+		await writeFile(
+			path.join(workspace, "real", "app.ts"),
+			"const x = 1;\n",
+			"utf8",
+		);
+		await symlink(
+			path.join(workspace, "real", "app.ts"),
+			path.join(workspace, "link.ts"),
+		);
+		const lsp = startLspServers({
+			servers: servers(),
+			workspaceRoot: workspace,
+			timeoutMs: 1000,
+		});
+		try {
+			const result = await run(lsp.tools[0], { path: "link.ts" }, workspace);
+			expect(result).toEqual({
+				ok: true,
+				output:
+					"link.ts:1:1 error Cannot find name 'x'.\n" +
+					"link.ts:3:5 warning Unused variable 'y'.",
+			});
 		} finally {
 			await lsp.dispose();
 		}

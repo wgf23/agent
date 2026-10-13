@@ -27,6 +27,7 @@
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"smoke:provider": "tsx scripts/smoke-provider.ts",
+		"lsp:smoke": "tsx scripts/lsp-smoke.ts",
 		"e2e": "tsx scripts/e2e.ts",
 		"e2e:team": "tsx scripts/e2e-team.ts"
 	},

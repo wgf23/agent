@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Tool, ToolContext, ToolResult } from "../tools/types.js";
@@ -132,11 +132,15 @@ async function runDiagnostics(input: {
 
 	try {
 		await client.ensureStarted();
-		const uri = pathToFileURL(target).toString();
+		// A server publishes diagnostics for a symlinked file's real path, so
+		// the uri must match that rather than the lexical path the user asked
+		// for, or the diagnostics never land.
+		const uri = pathToFileURL(await realpath(target)).toString();
 		const diagnostics = await client.requestDiagnostics(
 			uri,
 			languageIdFor(extension),
 			text,
+			ctx.signal,
 		);
 		const filtered = filterDiagnostics(diagnostics, args.severity);
 		return {

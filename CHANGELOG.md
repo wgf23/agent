@@ -39,6 +39,7 @@
 
 - A `cli` rob now receives the resolved provider key in its environment, so `pi` authenticates from a key stored with `my-agent setup` or the web Settings dialog instead of reporting "No API key found".
 - A `cli` rob whose command is not on `PATH` is rejected at creation, and an already-saved one reports an actionable "command not found on PATH" message instead of the raw `spawn <cmd> ENOENT`.
+- LSP diagnostics. A crashed server now restarts on the next request instead of hanging later calls, concurrent requests for the same file all resolve, repeated requests send `didChange` with a bumped version rather than a second `didOpen`, and `dispose` sends `didClose` for every open file. The client answers `workspace/configuration` with an array of `null` (one per requested item) instead of `-32601`, builds the `file://` uri from the file's real path so symlinked files match the server's published uri, rejects promptly on abort, and rejects a `Content-Length` over 64 MiB instead of buffering it. A new `pnpm lsp:smoke` script runs the real `typescript-language-server` against a temp workspace with a type error.
 
 ## 0.1.0 - 2026-10-11
 

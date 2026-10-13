@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync, writeFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scenario = process.env.FAKE_LSP_SCENARIO ?? "basic";
 const logFile = process.env.FAKE_LSP_LOG;
@@ -26,6 +28,47 @@ function send(message) {
 
 function respond(id, result) {
 	send({ jsonrpc: "2.0", id, result });
+}
+
+// Publish for the file's real path, like a real server resolves symlinks, so a
+// client that sends the symlink uri and waits on it never matches.
+async function publishFor(uri) {
+	let publishUri = uri;
+	if (typeof uri === "string" && uri.startsWith("file://")) {
+		try {
+			publishUri = pathToFileURL(await realpath(fileURLToPath(uri))).toString();
+		} catch {
+			publishUri = uri;
+		}
+	}
+	const firstMessage = process.env.FAKE_LSP_MESSAGE ?? "Cannot find name 'x'.";
+	send({
+		jsonrpc: "2.0",
+		method: "textDocument/publishDiagnostics",
+		params: {
+			uri: publishUri,
+			diagnostics: [
+				{
+					range: {
+						start: { line: 0, character: 0 },
+						end: { line: 0, character: 5 },
+					},
+					severity: 1,
+					message: firstMessage,
+					source: "fake-lsp",
+				},
+				{
+					range: {
+						start: { line: 2, character: 4 },
+						end: { line: 2, character: 8 },
+					},
+					severity: 2,
+					message: "Unused variable 'y'.",
+					source: "fake-lsp",
+				},
+			],
+		},
+	});
 }
 
 let buffer = Buffer.alloc(0);
@@ -72,43 +115,47 @@ function handle(body) {
 		return;
 	}
 
+	if (scenario === "configuration") {
+		if (message.method === "initialize") {
+			respond(message.id, { capabilities: {} });
+			send({
+				jsonrpc: "2.0",
+				id: 42,
+				method: "workspace/configuration",
+				params: {
+					items: [{ section: "foo" }, { section: "bar" }],
+				},
+			});
+		} else if (message.method === "shutdown") {
+			respond(message.id, null);
+		} else if (message.method === "exit") {
+			process.exit(0);
+		}
+		return;
+	}
+
+	if (scenario === "oversized-frame") {
+		if (message.method === "initialize") {
+			respond(message.id, { capabilities: {} });
+		} else if (message.method === "textDocument/didOpen") {
+			process.stdout.write("Content-Length: 100000000\r\n\r\n");
+		} else if (message.method === "shutdown") {
+			respond(message.id, null);
+		} else if (message.method === "exit") {
+			process.exit(0);
+		}
+		return;
+	}
+
 	if (message.method === "initialize") {
 		respond(message.id, { capabilities: {} });
 		return;
 	}
-	if (message.method === "textDocument/didOpen") {
-		const uri = message.params?.textDocument?.uri;
-		if (typeof uri === "string") {
-			const firstMessage =
-				process.env.FAKE_LSP_MESSAGE ?? "Cannot find name 'x'.";
-			send({
-				jsonrpc: "2.0",
-				method: "textDocument/publishDiagnostics",
-				params: {
-					uri,
-					diagnostics: [
-						{
-							range: {
-								start: { line: 0, character: 0 },
-								end: { line: 0, character: 5 },
-							},
-							severity: 1,
-							message: firstMessage,
-							source: "fake-lsp",
-						},
-						{
-							range: {
-								start: { line: 2, character: 4 },
-								end: { line: 2, character: 8 },
-							},
-							severity: 2,
-							message: "Unused variable 'y'.",
-							source: "fake-lsp",
-						},
-					],
-				},
-			});
-		}
+	if (
+		message.method === "textDocument/didOpen" ||
+		message.method === "textDocument/didChange"
+	) {
+		publishFor(message.params?.textDocument?.uri);
 		return;
 	}
 	if (message.method === "shutdown") {
