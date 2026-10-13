@@ -36,16 +36,21 @@ unless the client advertises `workspaceFolders` and the `textDocument.publishDia
 capability, and it rejects a language id of `ts` (it needs `typescript`). All three are fixed and
 locked by tests. Not yet done: auto-run diagnostics after edits, and LSP for rob/team.
 
+## Image input and semantic search (landed)
+
+- **Image input.** `UserMessage` gained an optional `images?: ImagePart[]`, with
+  `ImagePart = { type: "image"; mediaType: string; data: string }` (base64). The provider expands it
+  to OpenAI `image_url` data URLs; sessions persist it. Attach with `my-agent run --image <path>`
+  or the TUI `/image <path>`. Not done: web composer image input, paste into the TUI, and images in
+  tool results. Vision needs a model that supports it.
+- **Semantic search.** A top-level `embeddings` block (`baseURL`, `model`, `apiKeyEnv`, optional
+  `dimensions`) registers a read-only `semantic_search` tool. It builds a line-chunked vector index
+  at `~/.local/share/my-agent/index/<project-slug>/index.json`, reuses unchanged files, and returns
+  the top-k chunks. The embedder is a seam so tests inject a deterministic fake. Retrieval quality
+  is unmeasured here, which is the top follow-up.
+
 ## Multi-week design programs still open
 
-- **image / multimodal input.** Data shape first: change `UserMessage.content` from `string` to
-  `(TextPart | ImagePart)[]`, add an `ImagePart { type:"image"; mediaType; dataBase64 }`, teach the
-  provider to emit OpenAI image parts, and add paste/drop in the TUI and web composer. DeepSeek's
-  vision model (`deepseek-v4-flash-vision-exp`) is the target. Largest risk is provider/gateway
-  support; prototype one screenshot round-trip before the UI work.
-- **Semantic code index.** Embed file chunks into a local store, add a `semantic_search` tool.
-  Needs an embedding provider decision (local vs API). Prototype on a mid-size repo and measure
-  whether it beats grep before building it.
 - **Plugin system.** Define a plugin contract (a module exporting tools, hooks, providers, and
   commands), a loader from config, and a trust/permission story. Hooks + custom commands + MCP
   already cover most of the extension surface, so scope the plugin API to what those cannot do.

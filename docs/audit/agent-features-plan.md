@@ -76,8 +76,7 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
 
 ### Design programs still open
 
-- **image / multimodal input**, **semantic code index**, **plugin system**,
-  **native Anthropic adapter**, **MCP HTTP/SSE transport**.
+- **plugin system**, **native Anthropic adapter**, **MCP HTTP/SSE transport**.
 
 ### Landed after the first write-up
 
@@ -86,6 +85,12 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
   `typescript-language-server`: a type error came back as
   `file.ts:1:7 error Type 'string' is not assignable to type 'number'.`
   Follow-ups: auto-run diagnostics after `write_file`/`edit_file`, and wire LSP into rob/team.
+- **Image input.** `UserMessage` gained an optional `images[]`; the provider emits OpenAI
+  `image_url` data URLs. `my-agent run --image <path>` and the TUI `/image <path>` attach an image;
+  sessions round-trip it. Web composer image input and paste-into-TUI are follow-ups.
+- **Semantic search.** An `embeddings` block plus a `semantic_search` tool over a local vector
+  index of line-chunked files. Embedder is a seam, so tests run offline. Retrieval quality is
+  unmeasured here (no embeddings key, no general internet).
 
 ### Smaller follow-ups
 
