@@ -1,19 +1,12 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import {
-	chmod,
-	mkdir,
-	readdir,
-	readFile,
-	rename,
-	unlink,
-	writeFile,
-} from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type { Message } from "../providers/types.js";
 import { errorMessage } from "../util/errors.js";
+import { writeJsonAtomic } from "./atomic.js";
 
 export const SESSION_VERSION = 1;
 
@@ -34,7 +27,7 @@ const imagePartSchema = z.object({
 	data: z.string(),
 });
 
-const messageSchema = z.discriminatedUnion("role", [
+export const messageSchema = z.discriminatedUnion("role", [
 	z.object({ role: z.literal("system"), content: z.string() }),
 	z.object({
 		role: z.literal("user"),
@@ -139,25 +132,15 @@ export function withoutSystem(messages: Message[]): Message[] {
 export async function saveSession(
 	session: StoredSession,
 ): Promise<SaveSessionResult> {
-	const dir = sessionDir(session.workspaceRoot);
-	const filePath = path.join(dir, `${session.id}.json`);
-	const tempPath = path.join(dir, `${session.id}.${randomUUID()}.tmp`);
+	const filePath = sessionPath(session.workspaceRoot, session.id);
 	const payload: StoredSession = {
 		...session,
 		messages: withoutSystem(session.messages),
 	};
 
 	try {
-		await mkdir(dir, { recursive: true, mode: 0o700 });
-		await chmod(dir, 0o700);
-		await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, {
-			encoding: "utf8",
-			mode: 0o600,
-		});
-		await rename(tempPath, filePath);
-		await chmod(filePath, 0o600);
+		await writeJsonAtomic(filePath, payload);
 	} catch (error) {
-		await unlink(tempPath).catch(() => undefined);
 		return {
 			ok: false,
 			error: `Failed to write ${filePath}: ${errorMessage(error)}`,
