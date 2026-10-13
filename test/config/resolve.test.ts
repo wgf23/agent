@@ -438,6 +438,49 @@ describe("resolveConfig embeddings", () => {
 	});
 });
 
+describe("resolveConfig plugins", () => {
+	it("defaults to no plugins", async () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.plugins).toEqual([]);
+	});
+
+	it("merges project and global plugins and dedupes by spec", async () => {
+		await writeGlobal({ plugins: ["plugin-a", "plugin-b"] });
+		await writeProject({ plugins: ["plugin-b", "plugin-c"] });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.plugins).toEqual(["plugin-a", "plugin-b", "plugin-c"]);
+	});
+
+	it("rejects a non-array plugins value and names the file", async () => {
+		await writeProject({ plugins: "plugin-a" });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Invalid plugins");
+		expect(result.error).toContain(path.join(workspaceRoot, "my-agent.json"));
+	});
+
+	it("rejects a non-string entry and names the file", async () => {
+		await writeProject({ plugins: ["plugin-a", 7] });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Invalid plugins");
+		expect(result.error).toContain(path.join(workspaceRoot, "my-agent.json"));
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({
