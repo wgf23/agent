@@ -131,6 +131,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			permissions,
 			providerEnv: { [settings.apiKeyEnv]: apiKey },
 			extraTools: mcp.tools,
+			hooks: resolved.config.hooks,
 			authorizerFactory: (rob) =>
 				createAuthorizer({
 					workspaceRoot: options.workspaceRoot,

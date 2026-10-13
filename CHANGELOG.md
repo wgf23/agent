@@ -30,6 +30,7 @@
 
 - Rob `opencode` backends now run isolated under `~/.config/my-agent/opencode/<name>/` and receive the configured provider key as its environment variable, so rob sessions stay out of your own opencode data and a key stored with `my-agent setup` authenticates the child without exporting anything.
 - An `opencode` action is exposed as a blanket `allow` only when its rules cannot resolve any subject to something else: a scalar `allow`, or a list of catch-all `allow` entries. A pattern-specific, `deny`, or `ask` entry gates the action as `ask` instead, closing a bypass where `[{ "pattern": "rm *", "action": "deny" }, { "pattern": "*", "action": "allow" }]` was translated to an unconditional allow. `write_file` and `edit_file` share opencode's `edit` action and merge most-restrictively.
+- Tool-lifecycle hooks now fire on rob and team turns, not only the solo paths. A native rob applies the project hooks to its own tool calls and to the sub-agents it starts through `delegate`; a `cli` rob runs its own external registry and keeps its own hooks.
 
 ### Fixed
 

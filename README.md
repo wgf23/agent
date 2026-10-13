@@ -236,6 +236,8 @@ Each entry has a `match` glob against the tool name (`*` matches every tool, exa
 
 A `preToolUse` hook that exits zero lets the call proceed. A non-zero exit blocks the tool, and the tool result becomes `ok: false` whose reason is the hook's trimmed stdout, or a default message when stdout is empty. Pre hooks run before authorization, so a hook denial is reported even for a call that also needs approval. A `postToolUse` hook runs after the tool finishes and its output is ignored, so it never changes the result. A hook that cannot be spawned blocks the pre case and is ignored for the post case. Hooks come only from the project file; the global config does not accept them.
 
+Team robs run the same hooks as the solo agent. A native rob applies the project hooks to its own tool calls and to the sub-agents it starts through `delegate`. A `cli` rob runs its own external process and tool registry, so it does not receive these hooks.
+
 ## AGENTS.md
 
 If `<project root>/AGENTS.md` exists, its contents are added to the system prompt. It is read from the project root only. `my-agent init` drafts one for you from a scan of the workspace; it refuses to overwrite an existing file unless you pass `--force`.

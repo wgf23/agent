@@ -47,6 +47,7 @@ export class TeamHub extends EventBus implements Hub {
 			permissions: this.options.permissions,
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
+			hooks: this.options.hooks,
 			authorizerFactory: ({ name, rules, approval }) =>
 				createAuthorizer({
 					workspaceRoot: this.options.workspaceRoot,

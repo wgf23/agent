@@ -108,6 +108,7 @@ export async function runTeamCommand(
 		permissions,
 		providerEnv: { [settings.apiKeyEnv]: apiKey },
 		extraTools: mcp.tools,
+		hooks: resolved.config.hooks,
 		authorizerFactory: (rob) =>
 			createAuthorizer({
 				workspaceRoot,
