@@ -37,6 +37,27 @@ const invocations: Array<{
 	body: unknown;
 }> = [
 	{
+		name: "loadAgents",
+		run: (api) => api.loadAgents(),
+		path: "/api/agents",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "installAgent",
+		run: (api) => api.installAgent("pi"),
+		path: "/api/agents/install",
+		method: "POST",
+		body: { id: "pi", confirm: true },
+	},
+	{
+		name: "cancelAgent",
+		run: (api) => api.cancelAgent("pi"),
+		path: "/api/agents/cancel",
+		method: "POST",
+		body: { id: "pi" },
+	},
+	{
 		name: "send",
 		run: (api) => api.send("b", "hi"),
 		path: "/api/send",

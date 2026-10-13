@@ -2,10 +2,8 @@ import { useCallback, useEffect, useReducer } from "react";
 import { createApi } from "./api";
 import { readToken } from "./auth";
 import type {
-	AgentListResponse,
 	ApprovalChoice,
 	BotDraft,
-	InstallAgentStartResponse,
 	SaveProviderBody,
 	ServerEvent,
 } from "./protocol";
@@ -136,53 +134,22 @@ export function useHub(): Hub {
 	}, []);
 
 	const loadAgents = useCallback(async () => {
-		const response = await fetch("/api/agents");
-		if (!response.ok) {
-			throw new Error(`GET /api/agents failed: ${response.status}`);
-		}
-		const body = (await response.json()) as AgentListResponse;
+		const body = await api.loadAgents();
 		dispatch({ type: "agents_loaded", agents: body.agents });
 	}, []);
 
 	const installAgent = useCallback(async (id: string) => {
-		const response = await fetch("/api/agents/install", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ id, confirm: true }),
-		});
-		let payload:
-			| InstallAgentStartResponse
-			| { ok: false; error?: string }
-			| null = null;
-		try {
-			payload = (await response.json()) as
-				| InstallAgentStartResponse
-				| { ok: false; error?: string };
-		} catch {
-			payload = null;
-		}
-		if (!response.ok || payload === null || payload.ok !== true) {
-			// Surface the server's reason (unknown id, not loopback, busy) and fall
-			// back to a generic message when the body is missing or malformed.
-			const message =
-				payload !== null &&
-				payload.ok === false &&
-				typeof payload.error === "string" &&
-				payload.error !== ""
-					? payload.error
-					: `安装失败 (${response.status})`;
-			throw new Error(message);
-		}
+		const result = await api.installAgent(id);
 		// The server also streams an `agent_job`, but apply it now so the row
 		// reacts to the click without waiting for the round trip.
 		dispatch({
 			type: "server",
-			event: { type: "agent_job", job: payload.job },
+			event: { type: "agent_job", job: result.job },
 		});
 	}, []);
 
 	const cancelInstall = useCallback((id: string) => {
-		return post("/api/agents/cancel", { id }).catch(() => undefined);
+		return api.cancelAgent(id).catch(() => undefined);
 	}, []);
 
 	return {
