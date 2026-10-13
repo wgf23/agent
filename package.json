@@ -1,0 +1,55 @@
+{
+	"name": "my-agent",
+	"version": "0.1.0",
+	"packageManager": "pnpm@12.11.2",
+	"type": "module",
+	"private": true,
+	"license": "UNLICENSED",
+	"main": "dist/index.js",
+	"bin": {
+		"my-agent": "dist/index.js"
+	},
+	"files": [
+		"dist",
+		"web/dist",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"dev": "tsx src/index.ts",
+		"build": "tsup && node scripts/postbuild.mjs && pnpm --filter my-agent-web build",
+		"web:dev": "pnpm --filter my-agent-web dev",
+		"web:build": "pnpm --filter my-agent-web build",
+		"serve": "tsx src/index.ts serve",
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"smoke:provider": "tsx scripts/smoke-provider.ts",
+		"e2e": "tsx scripts/e2e.ts",
+		"e2e:team": "tsx scripts/e2e-team.ts"
+	},
+	"dependencies": {
+		"@fastify/static": "^10.1.6",
+		"commander": "^15.0.0",
+		"diff": "^9.0.0",
+		"fast-glob": "^3.3.3",
+		"fastify": "^5.12.5",
+		"ignore": "^7.0.12",
+		"ink": "^8.0.0",
+		"openai": "^7.32.0",
+		"react": "^19.3.0",
+		"zod": "^4.6.5"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.15",
+		"@types/node": "^26.6.5",
+		"@types/react": "^19.3.0",
+		"ink-testing-library": "^4.0.0",
+		"tsup": "^8.5.1",
+		"tsx": "^4.23.15",
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.3"
+	}
+}
