@@ -74,10 +74,18 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
   credentials here, so a successful real turn is unverified. Interactive approval is also not
   bridged (only `allow` tools are exposed via `--allowedTools`).
 
-### Multi-week design programs (proposal below, not this run)
+### Design programs still open
 
-- **image / multimodal input**, **LSP diagnostics**, **semantic code index**, **plugin system**,
+- **image / multimodal input**, **semantic code index**, **plugin system**,
   **native Anthropic adapter**, **MCP HTTP/SSE transport**.
+
+### Landed after the first write-up
+
+- **LSP diagnostics** (v1). A top-level `lsp` block starts language servers by file extension and
+  exposes a read-only `diagnostics` tool. Verified end to end against the real
+  `typescript-language-server`: a type error came back as
+  `file.ts:1:7 error Type 'string' is not assignable to type 'number'.`
+  Follow-ups: auto-run diagnostics after `write_file`/`edit_file`, and wire LSP into rob/team.
 
 ### Smaller follow-ups
 

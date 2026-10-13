@@ -21,16 +21,28 @@ Each entry names the smallest first step and the unblocking condition. Nothing h
   read-only-binds the FS and denies network, mirroring the bubblewrap plan. Windows: a Job Object
   with a restricted token, or accept "no sandbox, warn" (current behavior).
 
-## Multi-week design programs
+## LSP diagnostics (landed, v1)
+
+Implemented on `feat/lsp` and merged. A top-level `lsp` block:
+
+```json
+{ "lsp": { "servers": { "typescript": { "command": ["typescript-language-server", "--stdio"], "extensions": [".ts", ".tsx"] } } } }
+```
+
+starts that server lazily on the first matching file and exposes a read-only `diagnostics` tool
+returning `<path>:<line>:<col> <severity> <message>`. Verified against the real
+`typescript-language-server`, which surfaced a real bug the fake server hid: it publishes nothing
+unless the client advertises `workspaceFolders` and the `textDocument.publishDiagnostics`
+capability, and it rejects a language id of `ts` (it needs `typescript`). All three are fixed and
+locked by tests. Not yet done: auto-run diagnostics after edits, and LSP for rob/team.
+
+## Multi-week design programs still open
 
 - **image / multimodal input.** Data shape first: change `UserMessage.content` from `string` to
   `(TextPart | ImagePart)[]`, add an `ImagePart { type:"image"; mediaType; dataBase64 }`, teach the
   provider to emit OpenAI image parts, and add paste/drop in the TUI and web composer. DeepSeek's
   vision model (`deepseek-v4-flash-vision-exp`) is the target. Largest risk is provider/gateway
   support; prototype one screenshot round-trip before the UI work.
-- **LSP diagnostics.** Add an `lsp` config block, one client per language server, and a `diagnostics`
-  tool (or a post-edit hook) that returns file diagnostics. Start with a single server (tsserver)
-  and one tool returning `file:line: message`. Hooks (shipped this run) are the natural attach point.
 - **Semantic code index.** Embed file chunks into a local store, add a `semantic_search` tool.
   Needs an embedding provider decision (local vs API). Prototype on a mid-size repo and measure
   whether it beats grep before building it.
