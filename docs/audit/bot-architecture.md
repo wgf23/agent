@@ -59,36 +59,61 @@ time; only the docs unit can run in parallel.
 | 2026-10-13 | frame | Parked the in-flight agent-management feature (no commits on `feat/agent-management`); its two arena designs stay in `/tmp/opencode/arena-agents/`. | `git worktree list` |
 | 2026-10-13 | design | Arena over two structurally distinct designs; base is Candidate 2 (bot ledger, session label, workspace swap). Cross-judge agreed. | `.audit/arena-synthesis.md` |
 | 2026-10-13 | unit 1 | Landed the ledger: one atomic file per bot holding memory and turns, pure folds, global `bots/<name>.json`. | commit 317f268; 817 tests green, typecheck+lint green |
-| 2026-10-13 | unit 1 verify | Driven against a real temp dir, not only tests: file bytes match, mode 0600, a fresh store instance reloads the memory, and replay for another workspace returns `[]`. | `pnpm exec tsx /tmp/opencode/verify-ledger.mts` -> `mode=600`, `memory=fact: the user's name is X`, `betaReplay=[]` |
+| 2026-10-13 | unit 1 verify | Driven against a real temp dir, not only tests: file bytes match, mode 0600, a fresh store instance reloads the memory, and replay for another workspace returns `[]`. | superseded: the cited `/tmp/opencode/verify-ledger.mts` was never committed; the reproducible drive is `scripts/bot-e2e.ts` |
 | 2026-10-13 | unit 2 | Wired the ledger into `Rob`: reads memory each turn, commits in `finally` even on throw, native `remember`/`forget` tools allowed by `robToolRules`. | commit bcd83a2; `test/rob/rob.test.ts` + `memory-tools.test.ts` |
 | 2026-10-13 | unit 3 | Made a bot session an ephemeral in-memory channel whose past history replays from the ledger turns; open/close routes. | commit 78ef60b; `test/serve/sessions-http.test.ts` |
 | 2026-10-13 | unit 4 | Gave a bot a proactive interval wake through an injected clock and timer; the schedule is config-owned and a turn records `wake: "interval"`. | commit a5c88dd; `test/bot/wake.test.ts` asserts the literal `[wake:interval]` text |
 | 2026-10-13 | unit 5 | Retired the fake bot (`BotKind`, `BotInfo.kind`, workspace-as-a-bot) and made the workspace a swappable disposable scope. | commit 37b7c74; `test/serve/workspaces-http.test.ts` |
 | 2026-10-13 | unit 6 | Workspace selection: `openWorkspace` scope, `WorkspaceHub`, `workspaces.json`, `--workspace`. | commit 37b7c74; real server switch to `/tmp/ws-b` |
 | 2026-10-13 | unit 7 | Web UI: the chat is a plain session list, the bot roster is separate, and a workspace picker drives the switch. | commit a4b54d1; `test/web/state.test.ts`; 928 tests, typecheck+lint+vite build green |
-| 2026-10-13 | unit 8 | `scripts/bot-e2e.ts` drives the real server against the real DeepSeek API and proves the four-part predicate; README/CHANGELOG/audit updated. | this commit; `pnpm bot:e2e` -> five PASS lines; 928 tests, typecheck+lint green |
+| 2026-10-13 | unit 8 | `scripts/bot-e2e.ts` drives the real server against the real DeepSeek API and prints a PASS per predicate phase; README/CHANGELOG/audit updated. | this commit; `pnpm bot:e2e` -> five PASS lines; 928 tests, typecheck+lint green |
+| 2026-10-13 | review | Independent cross-model review found the e2e asserted only the `active` flag (no scope-dependent request, no switch-back), accepted any fresh turn matching `Zed`, and matched any memory `kind`. Hardened the script, sharpened verdict 4, and added the limits section. | independent review findings; strengthened `pnpm bot:e2e` and sharpened the verdicts |
 
 ## Verdicts
 
 Proven on the real artifact (a real `node` server, real HTTP, real disk, real DeepSeek turns):
 
 1. **Cross-session, cross-restart continuity.** `scripts/bot-e2e.ts` tells `atlas` a fact, destroys the
-   session, kills the server, starts it again, opens a new session, and asks the fact back; the bot
-   answers `Zed` from the ledger's memory. This is the predicate's core.
+   session, kills the server, starts it again, opens a new session, and asks the fact back. It
+   selects the `wake: "user"` turn whose messages record the ask, and asserts that turn's answer
+   names `Zed`; the matching memory entry must be a real entry (`kind !== "digest"`), so an evicted
+   turn's digest cannot stand in for the fact. This is the predicate's core.
 2. **Ledger bytes intact.** The ledger is byte-identical across the restart and parses against
    `botRecordSchema`; `POST /api/sessions/new` never writes memory.
 3. **Interval wake.** With no `POST /api/send`, the configured 3000 ms wake commits a turn whose
    `wake` is `"interval"`.
 4. **Workspace swap.** `POST /api/workspaces { "root": <other> }` marks the new root active and the
-   previous one inactive, and the server answers from the new scope.
+   previous one inactive. The scope-dependent read is a fresh `hello` off `/api/events`: its
+   `workspaceRoot` comes from the scope the server is bound to, and its `sessions` are that root's.
+   After the switch the hello's root is `<other>` and it carries only the other root's sessions;
+   switching back restores `<first>`, its root, and its session list. The rendered picker and the
+   click-through stay unverified (see below); the server-side swap is what is proven.
 
-Unverified, and named rather than assumed:
+## Known limits and what stays unverified
+
+Named rather than assumed:
 
 - **The rendered web UI.** The chat layout and the workspace picker are covered by
   `test/web/state.test.ts` and the Vite build, but no browser exists in this environment, so the
   pixels on screen and the click-through were not exercised. The server side of the switch above is
   what is proven.
+- **Memory is global by design.** The ledger is one file per bot name, not per workspace, so a fact
+  one workspace teaches a bot reaches that bot's context in every other workspace. This is the
+  owner's decision, not a bug; there is no per-workspace memory.
+- **The interval wake is the only trigger.** A bot wakes only on its configured `wake.everyMs`,
+  re-armed from `my-agent.json` on every start; there is no cron, no file-watch, and no
+  event-driven wake.
+- **External-CLI backends do not receive the `remember` tool.** The native backend exposes
+  `remember`/`forget`; the `pi`, `opencode`, and `claude` backends do not, so long-term memory is
+  only written through the native path. Those backends were not driven here at all.
+- **A workspace switch is refused while a turn is in flight.** `POST /api/workspaces` answers `409`
+  if any bot or the workspace chat is mid-turn, by the owner's choice; the e2e retries through the
+  gaps rather than interrupting. A switch therefore cannot be used to cancel work.
+- **Two `serve` processes on one bots directory are last-writer-wins.** The ledger has one writer
+  per process and no lock, so two servers sharing `MY_AGENT_BOTS_DIR` overwrite each other's
+  commits; the layout assumes a single server per data root.
+- **Replay matches `workspaceRoot` by exact string.** `replay(turns, workspaceRoot)` compares the
+  root literally, so a symlinked or trailing-slash variant of a root orphans turns: they stay in the
+  ledger but are filtered out of a replay keyed on the canonical form.
 - **Long-run memory pressure.** The e2e run is short; digest eviction under the 128-entry /
   24 000-char caps and the 24-turn ring is covered by unit tests, not by a long real run.
-- **The external CLI backends.** `pi`, `opencode`, and `claude` rob backends were not driven here;
-  the e2e uses the native backend only.

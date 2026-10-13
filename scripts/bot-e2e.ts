@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ServerEvent } from "../shared/protocol.js";
 import {
 	type BotRecord,
 	botRecordSchema,
@@ -12,6 +13,7 @@ import {
 	type Turn,
 } from "../src/bot/schema.js";
 import { PRESETS } from "../src/providers/presets.js";
+import { newSession, saveSession } from "../src/session/store.js";
 
 // The whole point of this script is a real DeepSeek turn, so an absent key is a
 // skip, not a failure: it runs in CI without secrets the same way the other
@@ -66,6 +68,14 @@ try {
 		"utf8",
 	);
 
+	// Seed one persisted workspace-chat session per root through the real store,
+	// so the switch has a session list to swap. The server reads the same env
+	// override and the same project slug, exactly as test/serve/workspaces-http
+	// seeds its sessions.
+	process.env.MY_AGENT_SESSIONS_DIR = sessionsDir;
+	const sessionOne = await seedSession(workspace, "workspace one");
+	const sessionTwo = await seedSession(workspaceTwo, "workspace two");
+
 	server = await startServer(options);
 
 	// Phase 1: tell the bot a fact and wait for its ledger to remember it.
@@ -80,8 +90,14 @@ try {
 		MEMORY_NEEDLE,
 		MEMORY_TIMEOUT_MS,
 	);
+	// The digest of an evicted turn carries the raw user message too, so a
+	// matching entry only proves memory when it is a real fact.
+	assert(
+		remembered.entry.kind !== "digest",
+		`the entry matching ${JSON.stringify(MEMORY_NEEDLE)} is a ${remembered.entry.kind}, not a remembered fact`,
+	);
 	console.log(
-		`PASS phase 1 remember: memory[${remembered.index}] ${JSON.stringify(remembered.entry.text)} seen after ${remembered.ms} ms`,
+		`PASS phase 1 remember: memory[${remembered.index}] kind=${remembered.entry.kind} ${JSON.stringify(remembered.entry.text)} seen after ${remembered.ms} ms`,
 	);
 
 	// Phase 2: destroy the session and the server, then prove the bytes survive.
@@ -128,9 +144,14 @@ try {
 		text: PHASE3_TEXT,
 	});
 	assert(asked.status === 200, `POST /api/send returned ${asked.status}`);
-	const answer = await waitForAnswer(ledgerPath, baseline, ANSWER_TIMEOUT_MS);
+	const answer = await waitForAnswer(
+		ledgerPath,
+		baseline,
+		PHASE3_TEXT,
+		ANSWER_TIMEOUT_MS,
+	);
 	console.log(
-		`PASS phase 3 continuity: after restart + new session a new turn (wake=${answer.wake}) answered ${JSON.stringify(answer.text.trim())} after ${answer.ms} ms`,
+		`PASS phase 3 continuity: after restart + new session the turn that recorded the ask (wake=${answer.wake}) answered ${JSON.stringify(answer.text.trim())} after ${answer.ms} ms`,
 	);
 
 	// Phase 4: the configured interval woke the bot with no send involved.
@@ -142,25 +163,62 @@ try {
 		`PASS phase 4 interval wake: ${interval.count} interval turn(s), observed after ${interval.ms} ms, with no POST /api/send (${userTurns} user turn(s) from the two sends)`,
 	);
 
-	// Phase 5: switching the active workspace swaps the server's scope.
+	// Phase 5: switching the active workspace swaps the server's scope. The
+	// scope-dependent read is a fresh hello off /api/events: its workspaceRoot
+	// comes from the scope the server is bound to, so it can only be right if
+	// the switch took effect. Switching back must restore the first scope and
+	// its session list.
 	phase = 5;
-	await switchWorkspace(server.port, workspaceTwo, SWITCH_TIMEOUT_MS);
-	const workspaces = await listWorkspaces(server.port);
-	const active = workspaces.find((workspace) => workspace.active);
-	const previous = workspaces.find(
-		(workspace) => workspace.root === options.workspace,
-	);
-	assert(
-		active?.root === workspaceTwo,
-		`active workspace is ${active?.root ?? "none"}, expected ${workspaceTwo}`,
-	);
-	assert(
-		previous !== undefined && previous.active === false,
-		"the previous root is not listed as inactive",
-	);
-	console.log(
-		`PASS phase 5 workspace switch: active=${active.root} (previous ${previous.root} active=${previous.active})`,
-	);
+	const events = openEvents(server.port);
+	try {
+		await switchWorkspace(server.port, workspaceTwo, SWITCH_TIMEOUT_MS);
+		const helloTwo = await events.next(
+			(event) => event.type === "hello" && event.workspaceRoot === workspaceTwo,
+		);
+		assert(helloTwo.type === "hello", "the switch did not emit a hello");
+		const twoSessions = helloTwo.sessions.map((session) => session.id);
+		assert(
+			twoSessions.includes(sessionTwo),
+			`the ${workspaceTwo} hello is missing its seeded session (${JSON.stringify(twoSessions)})`,
+		);
+		assert(
+			!twoSessions.includes(sessionOne),
+			`the ${workspaceTwo} hello leaked ${workspace} sessions`,
+		);
+		const workspaces = await listWorkspaces(server.port);
+		const active = workspaces.find((workspace) => workspace.active);
+		const previous = workspaces.find(
+			(workspace) => workspace.root === options.workspace,
+		);
+		assert(
+			active?.root === workspaceTwo,
+			`active workspace is ${active?.root ?? "none"}, expected ${workspaceTwo}`,
+		);
+		assert(
+			previous !== undefined && previous.active === false,
+			"the previous root is not listed as inactive",
+		);
+
+		await switchWorkspace(server.port, workspace, SWITCH_TIMEOUT_MS);
+		const helloOne = await events.next(
+			(event) => event.type === "hello" && event.workspaceRoot === workspace,
+		);
+		assert(helloOne.type === "hello", "the switch back did not emit a hello");
+		const oneSessions = helloOne.sessions.map((session) => session.id);
+		assert(
+			oneSessions.includes(sessionOne),
+			`the restored ${workspace} hello is missing its session list (${JSON.stringify(oneSessions)})`,
+		);
+		assert(
+			!oneSessions.includes(sessionTwo),
+			`the restored ${workspace} hello leaked ${workspaceTwo} sessions`,
+		);
+		console.log(
+			`PASS phase 5 workspace switch: hello scope ${workspaceTwo} -> ${workspace}, sessions [${twoSessions.length}->${oneSessions.length}], active=${active.root}, previous ${previous.root} active=${previous.active}`,
+		);
+	} finally {
+		events.abort();
+	}
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);
 	if (server !== undefined) console.error(server.output());
@@ -183,6 +241,17 @@ function projectFile(): unknown {
 			},
 		],
 	};
+}
+
+// Persists one workspace-chat session through the real store, mirroring
+// test/serve/workspaces-http.test.ts. MY_AGENT_SESSIONS_DIR is already set, so
+// the server and the script resolve the same slug directory.
+async function seedSession(root: string, text: string): Promise<string> {
+	const session = newSession(root, PRESETS.deepseek.defaultModel);
+	session.messages = [{ role: "user", content: text }];
+	const saved = await saveSession(session);
+	if (!saved.ok) throw new Error(saved.error);
+	return session.id;
 }
 
 // Resolves the workspace's own tsx so the child runs the same source as the
@@ -310,6 +379,63 @@ async function listWorkspaces(
 	return body.workspaces;
 }
 
+// Reads /api/events, framing on blank lines and buffering across reads, and
+// resolves the first event a predicate accepts. Used for the hello a workspace
+// switch emits: its workspaceRoot and session list come from the live scope.
+interface EventStream {
+	next(predicate: (event: ServerEvent) => boolean): Promise<ServerEvent>;
+	abort(): void;
+}
+
+function openEvents(port: number): EventStream {
+	const controller = new AbortController();
+	const readerPromise = fetch(`${baseUrl(port)}/api/events`, {
+		signal: controller.signal,
+	}).then((response) => {
+		assert(
+			response.status === 200,
+			`GET /api/events returned ${response.status}`,
+		);
+		const reader = response.body?.getReader();
+		if (reader === undefined) {
+			throw new Error("GET /api/events returned no body");
+		}
+		return reader;
+	});
+	const decoder = new TextDecoder();
+	let buffer = "";
+
+	const next = async (
+		predicate: (event: ServerEvent) => boolean,
+	): Promise<ServerEvent> => {
+		const reader = await readerPromise;
+		while (true) {
+			const frameEnd = buffer.indexOf("\n\n");
+			if (frameEnd !== -1) {
+				const frame = buffer.slice(0, frameEnd);
+				buffer = buffer.slice(frameEnd + 2);
+				const dataLine = frame
+					.split("\n")
+					.find((line) => line.startsWith("data: "));
+				if (dataLine === undefined) continue;
+				const event = JSON.parse(dataLine.slice(6)) as ServerEvent;
+				if (predicate(event)) return event;
+				continue;
+			}
+			if (controller.signal.aborted) {
+				throw new Error("event stream aborted before the expected event");
+			}
+			const { value, done } = await reader.read();
+			if (done) {
+				throw new Error("event stream ended before the expected event");
+			}
+			buffer += decoder.decode(value, { stream: true });
+		}
+	};
+
+	return { next, abort: () => controller.abort() };
+}
+
 async function waitForMemory(
 	filePath: string,
 	needle: string,
@@ -322,8 +448,8 @@ async function waitForMemory(
 		const record = await readRecord(filePath);
 		if (record !== undefined) {
 			seen = record.memory.length;
-			const index = record.memory.findIndex((entry) =>
-				entry.text.includes(needle),
+			const index = record.memory.findIndex(
+				(entry) => entry.kind !== "digest" && entry.text.includes(needle),
 			);
 			const entry = index === -1 ? undefined : record.memory[index];
 			if (entry !== undefined) {
@@ -333,15 +459,18 @@ async function waitForMemory(
 		await delay(POLL_MS);
 	}
 	throw new Error(
-		`no memory entry containing ${JSON.stringify(needle)} within ${timeoutMs} ms (last ledger had ${seen} memory entries)`,
+		`no non-digest memory entry containing ${JSON.stringify(needle)} within ${timeoutMs} ms (last ledger had ${seen} memory entries)`,
 	);
 }
 
-// The interval wake interleaves its own turns, so poll every new turn until one
-// answers with Zed rather than trusting whichever turn is newest.
+// The interval wake interleaves its own turns, so poll every new turn for the
+// user turn that recorded the ask and then assert its answer names Zed. Picking
+// the turn by the ask text, not by Zed, keeps an interleaved interval turn that
+// happens to mention Zed from being mistaken for the answer.
 async function waitForAnswer(
 	filePath: string,
 	baseline: ReadonlySet<string>,
+	askText: string,
 	timeoutMs: number,
 ): Promise<{ text: string; wake: Turn["wake"]; ms: number }> {
 	const start = Date.now();
@@ -356,17 +485,34 @@ async function waitForAnswer(
 			for (let index = fresh.length - 1; index >= 0; index -= 1) {
 				const turn = fresh[index];
 				if (turn === undefined) continue;
+				if (turn.wake !== "user") continue;
+				if (!turnHasText(turn, askText)) continue;
 				const text = assistantText(turn);
-				if (/zed/i.test(text)) {
-					return { text, wake: turn.wake, ms: Date.now() - start };
-				}
+				assert(
+					/zed/i.test(text),
+					`the turn that recorded ${JSON.stringify(askText)} did not answer with Zed: ${JSON.stringify(text)}`,
+				);
+				return { text, wake: turn.wake, ms: Date.now() - start };
 			}
 		}
 		await delay(POLL_MS);
 	}
 	throw new Error(
-		`no turn newer than the ask answered with Zed within ${timeoutMs} ms (newest assistant text: ${JSON.stringify(last)})`,
+		`no wake=user turn recording ${JSON.stringify(askText)} appeared within ${timeoutMs} ms (newest assistant text: ${JSON.stringify(last)})`,
 	);
+}
+
+function turnHasText(turn: Turn, needle: string): boolean {
+	const lower = needle.toLowerCase();
+	for (const message of turn.messages) {
+		if (
+			typeof message.content === "string" &&
+			message.content.toLowerCase().includes(lower)
+		) {
+			return true;
+		}
+	}
+	return false;
 }
 
 // Waits for the scheduler to fire the configured interval, which is the whole
