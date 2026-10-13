@@ -120,6 +120,13 @@ const invocations: Array<{
 		method: "POST",
 		body: { preset: "deepseek", model: "m" },
 	},
+	{
+		name: "switchWorkspace",
+		run: (api) => api.switchWorkspace("/tmp/ws"),
+		path: "/api/workspaces",
+		method: "POST",
+		body: { root: "/tmp/ws" },
+	},
 ];
 
 describe("eventsUrl", () => {

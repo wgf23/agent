@@ -36,7 +36,6 @@ export type AgentEvent =
 			steps: number;
 	  };
 
-export type BotKind = "workspace" | "rob";
 export type BotStatus = "idle" | "working" | "waiting_approval" | "stopped";
 export type BackendKind = "native" | "cli";
 export type ApprovalChoice = "allow_once" | "allow_always" | "deny";
@@ -45,10 +44,18 @@ export const WORKSPACE_BOT = "assistant";
 
 export interface BotInfo {
 	name: string;
-	kind: BotKind;
 	role: string;
 	model: string;
 	backend: BackendKind;
+}
+
+// One entry in the workspace picker. `active` marks the scope the server is
+// currently bound to; `lastOpenedAt` orders the recent list newest first.
+export interface WorkspaceOption {
+	root: string;
+	label: string;
+	lastOpenedAt: number;
+	active: boolean;
 }
 
 export type BotBackendDraft =
@@ -228,6 +235,7 @@ export type ServerEvent =
 			provider: ProviderView;
 			bots: BotInfo[];
 			states: BotState[];
+			workspaces: WorkspaceOption[];
 			sessions: SessionSummaryInfo[];
 			activeSessionId: string | null;
 			transcript: TranscriptMessage[];
@@ -277,6 +285,11 @@ export interface SessionNewBody {
 }
 
 export interface SessionOpenBody {
+	bot: string;
+	id: string;
+}
+
+export interface SessionCloseBody {
 	bot: string;
 	id: string;
 }

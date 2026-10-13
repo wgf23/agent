@@ -8,8 +8,19 @@ import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
-import { isLivePhase, robBots, workspaceBot } from "./state";
+import type { BotInfo } from "./protocol";
+import { WORKSPACE_BOT } from "./protocol";
+import { isLivePhase, robBots } from "./state";
 import { useHub } from "./useHub";
+
+// The chat has no roster entry any more; this stands in for its header while
+// the send/session routes keep talking to WORKSPACE_BOT.
+const CHAT_BOT: BotInfo = {
+	name: WORKSPACE_BOT,
+	role: "工作区对话",
+	model: "",
+	backend: "native",
+};
 
 export default function App() {
 	const hub = useHub();
@@ -19,21 +30,26 @@ export default function App() {
 	const [selectedBot, setSelectedBot] = useState<string | null>(null);
 	const [dialogOpen, setDialogOpen] = useState(false);
 
-	const bots = state.bots;
-	const workspace = workspaceBot(bots);
-	const robs = robBots(bots);
-	const botName = selectedBot ?? workspace?.name ?? bots[0]?.name ?? null;
+	const robs = robBots(state.bots);
+	const selectedRob =
+		selectedBot === null
+			? undefined
+			: robs.find((bot) => bot.name === selectedBot);
+	const currentBot: BotInfo = selectedRob ?? {
+		...CHAT_BOT,
+		model: state.model,
+	};
 
-	// Keep the selection valid as the bot roster (re)loads.
+	// Keep the selection valid as the bot roster (re)loads; an unknown name
+	// falls back to the workspace chat rather than an empty page.
 	useEffect(() => {
-		if (selectedBot === null || !bots.some((bot) => bot.name === selectedBot)) {
-			setSelectedBot(workspace?.name ?? bots[0]?.name ?? null);
+		if (selectedBot !== null && selectedRob === undefined) {
+			setSelectedBot(null);
 		}
-	}, [bots, selectedBot, workspace?.name]);
+	}, [selectedBot, selectedRob]);
 
-	const currentBot = bots.find((bot) => bot.name === botName) ?? null;
-	const messages = botName !== null ? (state.transcripts[botName] ?? []) : [];
-	const botState = botName !== null ? state.botStates[botName] : undefined;
+	const messages = state.transcripts[currentBot.name] ?? [];
+	const botState = state.botStates[currentBot.name];
 	const approval = state.approvals[0] ?? null;
 	// Treat "unknown" (before hello) as usable so we never lock the UI early.
 	const configured = state.provider?.configured !== false;
@@ -65,7 +81,7 @@ export default function App() {
 		loadAgents().catch(() => {});
 	}, [settledJobs, loadAgents]);
 
-	const openBot = (name: string) => {
+	const openBot = (name: string | null) => {
 		setSelectedBot(name);
 		setView("chat");
 	};
@@ -75,12 +91,14 @@ export default function App() {
 			<Sidebar
 				view={view}
 				onViewChange={setView}
-				workspace={workspace ?? null}
 				robs={robs}
 				botStates={state.botStates}
+				workspaces={state.workspaces}
+				workspaceRoot={state.workspaceRoot}
+				onSwitchWorkspace={hub.switchWorkspace}
 				sessions={state.sessions}
 				activeSessionId={state.activeSessionId}
-				selectedBot={botName}
+				selectedBot={selectedBot}
 				onSelectBot={openBot}
 				allowAll={state.allowAll}
 				onToggleAllowAll={hub.setAllowAll}
@@ -120,30 +138,6 @@ export default function App() {
 						onInstall={hub.installAgent}
 						onCancel={hub.cancelInstall}
 					/>
-				) : currentBot === null ? (
-					<div className="empty-page">
-						<p className="empty-title">
-							{state.connection === "connecting"
-								? "正在连接…"
-								: configured
-									? "没有可用的 Bot"
-									: "还没有配置模型"}
-						</p>
-						{!configured && state.connection !== "connecting" && (
-							<>
-								<p className="empty-desc">
-									Agent 需要提供方与 API Key 才能运行。
-								</p>
-								<button
-									type="button"
-									className="btn primary"
-									onClick={hub.openSettings}
-								>
-									配置模型
-								</button>
-							</>
-						)}
-					</div>
 				) : (
 					<section className="chat">
 						{!configured && (

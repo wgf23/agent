@@ -15,7 +15,9 @@ import type {
 	ToolCallView,
 	TranscriptMessage,
 	UsageTotals,
+	WorkspaceOption,
 } from "./protocol";
+import { WORKSPACE_BOT } from "./protocol";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -32,6 +34,9 @@ export interface ClientState {
 	presets: PresetInfo[];
 	bots: BotInfo[];
 	botStates: Record<string, BotState>;
+	// Recent workspaces with the active one marked; replaced wholesale by every
+	// hello, so a switch is a full reset rather than a client-side merge.
+	workspaces: WorkspaceOption[];
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
 	transcripts: Record<string, TranscriptMessage[]>;
@@ -69,6 +74,7 @@ export function initialState(): ClientState {
 		presets: [],
 		bots: [],
 		botStates: {},
+		workspaces: [],
 		sessions: [],
 		activeSessionId: null,
 		transcripts: {},
@@ -86,12 +92,10 @@ export function initialState(): ClientState {
 	};
 }
 
-export function workspaceBot(bots: BotInfo[]): BotInfo | undefined {
-	return bots.find((bot) => bot.kind === "workspace");
-}
-
+// The workspace chat is no longer a roster entry: it is addressed by
+// WORKSPACE_BOT, and the roster carries robs only.
 export function robBots(bots: BotInfo[]): BotInfo[] {
-	return bots.filter((bot) => bot.kind === "rob");
+	return bots.filter((bot) => bot.name !== WORKSPACE_BOT);
 }
 
 // Mirrors isLive in src/agents/job.ts: only these phases have a process behind
@@ -169,13 +173,8 @@ export function clientReducer(
 function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 	switch (event.type) {
 		case "hello": {
-			// hello.transcript is the workspace bot's transcript; robs start empty
-			// and fill in via agent_event.
-			const transcripts: Record<string, TranscriptMessage[]> = {};
-			const workspace = workspaceBot(event.bots);
-			if (workspace !== undefined) {
-				transcripts[workspace.name] = event.transcript;
-			}
+			// hello.transcript is the workspace chat's transcript, addressed by
+			// WORKSPACE_BOT; robs start empty and fill in via agent_event.
 			return {
 				...state,
 				workspaceRoot: event.workspaceRoot,
@@ -185,9 +184,10 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 				botStates: Object.fromEntries(
 					event.states.map((s) => [s.bot, s] as const),
 				),
+				workspaces: event.workspaces,
 				sessions: event.sessions,
 				activeSessionId: event.activeSessionId,
-				transcripts,
+				transcripts: { [WORKSPACE_BOT]: event.transcript },
 				approvals: event.approvals,
 				allowAll: event.allowAll,
 				usage: { input: 0, output: 0 },

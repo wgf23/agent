@@ -1,4 +1,14 @@
 import type { AgentEvent } from "../agent/events.js";
+import { ChannelRegistry, type ChannelSession } from "../bot/channel.js";
+import { replay } from "../bot/record.js";
+import { type BotStore, createBotStore } from "../bot/store.js";
+import {
+	type Clock,
+	systemClock,
+	systemTimer,
+	type Timer,
+	type Wake,
+} from "../bot/wake.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type {
 	ApprovalChoice,
@@ -6,7 +16,7 @@ import type {
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
-import type { Provider } from "../providers/types.js";
+import type { Message, Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 import { ApprovalQueue } from "./approvals.js";
 import type { TeamEvent, TeamListener } from "./events.js";
@@ -59,7 +69,16 @@ export interface TeamOptions {
 	// Native robs receive these; cli backends run their own tool registry.
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
+	// Optional so existing callers keep compiling; a team without an injected
+	// store still gets the durable global ledger.
+	store?: BotStore;
+	clock?: Clock;
+	timer?: Timer;
 }
+
+export type LoadChannelResult =
+	| { ok: true; messages: Message[] }
+	| { ok: false; error: string };
 
 export class Team implements TeamPort {
 	private readonly options: TeamOptions;
@@ -69,11 +88,23 @@ export class Team implements TeamPort {
 	private readonly subagents: SubagentEntry[] = [];
 	private readonly approvals = new ApprovalQueue();
 	private readonly listeners = new Set<TeamListener>();
+	private readonly store: BotStore;
+	// One registry for the whole team, so every rob shares the same channel
+	// bookkeeping and a bot can only ever be current in one place.
+	private readonly channels: ChannelRegistry;
+	private readonly clock: Clock;
+	private readonly timer: Timer;
+	// One cancel per armed interval, keyed by rob, so stop() can disarm them all.
+	private readonly wakeTimers = new Map<RobName, () => void>();
 	private started = false;
 	private stopping = false;
 
 	constructor(options: TeamOptions) {
 		this.options = options;
+		this.store = options.store ?? createBotStore();
+		this.clock = options.clock ?? systemClock;
+		this.timer = options.timer ?? systemTimer;
+		this.channels = new ChannelRegistry({ clock: () => this.clock.now() });
 		for (const config of options.robs) {
 			this.robs.set(config.name, this.createRob(config));
 		}
@@ -89,6 +120,7 @@ export class Team implements TeamPort {
 		this.robs.set(config.name, rob);
 		if (this.started && !this.stopping) {
 			this.loops.set(config.name, rob.run());
+			this.armWake(config);
 		}
 	}
 
@@ -106,6 +138,9 @@ export class Team implements TeamPort {
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
 			hooks: this.options.hooks,
+			store: this.store,
+			channels: this.channels,
+			clock: () => this.clock.now(),
 		});
 	}
 
@@ -122,6 +157,33 @@ export class Team implements TeamPort {
 		for (const [name, rob] of this.robs) {
 			this.loops.set(name, rob.run());
 		}
+		for (const config of this.options.robs) {
+			this.armWake(config);
+		}
+	}
+
+	// The timer only knows a bot name and a prompt; the wake reaches the rob as
+	// an ordinary inbound, so the turn plumbing is untouched.
+	private armWake(config: RobConfig): void {
+		const wake = config.wake;
+		if (wake === undefined) return;
+		const cancel = this.timer.schedule(
+			{ bot: config.name, everyMs: wake.everyMs, text: wake.prompt },
+			(interval) => this.onWake(interval),
+		);
+		this.wakeTimers.set(config.name, cancel);
+	}
+
+	private onWake(wake: Wake): void {
+		const rob = this.robs.get(wake.bot);
+		if (rob === undefined) return;
+		this.emitNotice(wake.bot, "woke on interval");
+		rob.deliver({
+			kind: "interval",
+			from: "scheduler",
+			text: wake.text,
+			at: wake.at,
+		});
 	}
 
 	dispatch(name: string, text: string): void {
@@ -152,6 +214,10 @@ export class Team implements TeamPort {
 
 	async stop(): Promise<void> {
 		this.stopping = true;
+		for (const cancel of this.wakeTimers.values()) {
+			cancel();
+		}
+		this.wakeTimers.clear();
 		this.approvals.denyAll(TEAM_STOPPED_REASON);
 		for (const rob of this.robs.values()) {
 			rob.stop();
@@ -168,6 +234,61 @@ export class Team implements TeamPort {
 
 	hasRob(name: string): boolean {
 		return this.robs.has(name);
+	}
+
+	// Opens a fresh session for the named rob: the live transcript is dropped and
+	// the next committed turn carries the new channel id. Memory is untouched.
+	openChannel(name: string): ChannelSession {
+		const rob = this.requireRob(name);
+		rob.openChannel();
+		const session = this.channels.current(name);
+		this.emit({ kind: "channel", bot: name, session });
+		return session;
+	}
+
+	// Closes the named session when it is the rob's current one, then opens a
+	// fresh one. Returns whether the id matched.
+	closeChannel(name: string, id: string): boolean {
+		const rob = this.requireRob(name);
+		if (this.channels.current(name).id !== id) return false;
+		rob.closeCurrentChannel();
+		this.emit({
+			kind: "channel",
+			bot: name,
+			session: this.channels.current(name),
+		});
+		return true;
+	}
+
+	listChannels(name: string): readonly ChannelSession[] {
+		this.requireRob(name);
+		return this.channels.list(name);
+	}
+
+	// Loads the ledger, replays the named session into the rob's live transcript,
+	// and makes it current so the next turn continues the same session id. The
+	// store is the only durable source; the registry only holds the label.
+	async loadChannel(name: string, id: string): Promise<LoadChannelResult> {
+		const rob = this.requireRob(name);
+		const loaded = await this.store.load(name, {
+			role: rob.role,
+			model: rob.model,
+		});
+		if (!loaded.ok) return loaded;
+		const turns = loaded.record.turns.filter((turn) => turn.sessionId === id);
+		if (turns.length === 0) {
+			return { ok: false, error: `Unknown session: ${id}` };
+		}
+		rob.loadChannelHistory(turns);
+		this.emit({
+			kind: "channel",
+			bot: name,
+			session: this.channels.current(name),
+		});
+		return {
+			ok: true,
+			messages: replay(turns, this.options.workspaceRoot, id),
+		};
 	}
 
 	postDm(from: RobName, to: RobName, text: string): void {

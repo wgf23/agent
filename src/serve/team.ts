@@ -3,10 +3,20 @@ import type {
 	BotInfo,
 	BotState,
 	ServerEvent,
+	SessionSummaryInfo,
 } from "../../shared/protocol.js";
+import type { Turn } from "../bot/schema.js";
+import { type BotStore, createBotStore } from "../bot/store.js";
+import {
+	type Clock,
+	systemClock,
+	systemTimer,
+	type Timer,
+} from "../bot/wake.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
+import type { Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
-import { Team, UnknownRobError } from "../rob/team.js";
+import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import {
@@ -15,21 +25,30 @@ import {
 	type RuntimeSnapshot,
 	UNCONFIGURED_MESSAGE,
 } from "./runtime.js";
+import { toTranscript } from "./solo.js";
 
 export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
 	providerEnv: Record<string, string>;
+	// Optional so existing test literals keep compiling; production shares the
+	// one durable global ledger.
+	store?: BotStore;
+	clock?: Clock;
+	timer?: Timer;
 }
 
 export class TeamHub extends EventBus implements Hub {
 	private readonly options: TeamHubOptions;
 	private team: Team;
 	private readonly roster: RobConfig[];
+	// Built once so reconfigure reuses the same ledger handle.
+	private readonly store: BotStore;
 
 	constructor(options: TeamHubOptions) {
 		super();
 		this.options = options;
 		this.roster = [...options.robs];
+		this.store = options.store ?? createBotStore();
 		this.team = this.createTeam();
 		this.team.subscribe((event) => this.handle(event));
 		this.team.start();
@@ -48,6 +67,9 @@ export class TeamHub extends EventBus implements Hub {
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
 			hooks: this.options.hooks,
+			store: this.store,
+			clock: this.options.clock ?? systemClock,
+			timer: this.options.timer ?? systemTimer,
 			authorizerFactory: ({ name, rules, approval }) =>
 				createAuthorizer({
 					workspaceRoot: this.options.workspaceRoot,
@@ -102,6 +124,7 @@ export class TeamHub extends EventBus implements Hub {
 				fallbackProviderView(this.options.settings),
 			bots: this.bots(),
 			states: this.states(),
+			workspaces: [],
 			sessions: [],
 			activeSessionId: null,
 			transcript: [],
@@ -152,19 +175,66 @@ export class TeamHub extends EventBus implements Hub {
 	}
 
 	async newSession(bot: string): Promise<void> {
-		this.emit({
-			type: "error",
-			bot,
-			message: "Sessions are not saved in team mode yet.",
-		});
+		try {
+			const session = this.team.openChannel(bot);
+			this.emit({
+				type: "session_opened",
+				bot,
+				sessionId: session.id,
+				messages: [],
+			});
+			await this.emitSessions(bot);
+		} catch (error) {
+			this.reportError(bot, error);
+		}
 	}
 
-	async openSession(bot: string, _id: string): Promise<void> {
+	async openSession(bot: string, id: string): Promise<void> {
+		let loaded: LoadChannelResult;
+		try {
+			loaded = await this.team.loadChannel(bot, id);
+		} catch (error) {
+			this.reportError(bot, error);
+			return;
+		}
+		if (!loaded.ok) {
+			this.emit({ type: "error", bot, message: loaded.error });
+			return;
+		}
 		this.emit({
-			type: "error",
+			type: "session_opened",
 			bot,
-			message: "Sessions are not saved in team mode yet.",
+			sessionId: id,
+			messages: toTranscript(loaded.messages),
 		});
+		await this.emitSessions(bot);
+	}
+
+	async closeSession(bot: string, id: string): Promise<void> {
+		try {
+			this.team.closeChannel(bot, id);
+		} catch (error) {
+			this.reportError(bot, error);
+			return;
+		}
+		await this.emitSessions(bot);
+	}
+
+	// The bot's session list is a read-side projection over its ledger, so it
+	// survives a restart with no extra store.
+	private async emitSessions(bot: string): Promise<void> {
+		const sessions = await this.sessionSummaries(bot);
+		this.emit({ type: "sessions", sessions });
+	}
+
+	private async sessionSummaries(bot: string): Promise<SessionSummaryInfo[]> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return [];
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		return loaded.ok ? summarizeSessions(loaded.record.turns) : [];
 	}
 
 	async dispose(): Promise<void> {
@@ -207,6 +277,9 @@ export class TeamHub extends EventBus implements Hub {
 				return;
 			case "subagent":
 				return;
+			case "channel":
+				this.emitBotStatus(event.bot);
+				return;
 		}
 	}
 
@@ -218,7 +291,6 @@ export class TeamHub extends EventBus implements Hub {
 	bots(): BotInfo[] {
 		return this.roster.map((rob) => ({
 			name: rob.name,
-			kind: "rob",
 			role: rob.role,
 			model: rob.model ?? this.options.settings.model,
 			backend:
@@ -237,6 +309,40 @@ export class TeamHub extends EventBus implements Hub {
 				: errorMessage(error);
 		this.emit({ type: "error", bot, message });
 	}
+}
+
+// A bot's "sessions" are a read-side projection over its ledger turns: the
+// distinct session ids, newest first, with the same summary shape the workspace
+// chat uses.
+export function summarizeSessions(
+	turns: readonly Turn[],
+): SessionSummaryInfo[] {
+	const summaries = new Map<string, SessionSummaryInfo>();
+	for (const turn of [...turns].sort((a, b) => a.seq - b.seq)) {
+		const existing = summaries.get(turn.sessionId);
+		if (existing === undefined) {
+			summaries.set(turn.sessionId, {
+				id: turn.sessionId,
+				updatedAt: turn.at,
+				messageCount: turn.messages.length,
+				firstUserText: firstUserMessageText(turn.messages),
+			});
+			continue;
+		}
+		existing.updatedAt = turn.at;
+		existing.messageCount += turn.messages.length;
+		if (existing.firstUserText === "") {
+			existing.firstUserText = firstUserMessageText(turn.messages);
+		}
+	}
+	return [...summaries.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function firstUserMessageText(messages: readonly Message[]): string {
+	for (const message of messages) {
+		if (message.role === "user") return message.content;
+	}
+	return "";
 }
 
 function toBotState(entry: RobStatusEntry): BotState {

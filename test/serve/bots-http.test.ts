@@ -70,7 +70,7 @@ describe("POST /api/bots", () => {
 		expect(created.status).toBe(200);
 		expect(await created.json()).toMatchObject({
 			ok: true,
-			bot: { name: "writer", kind: "rob", backend: "native" },
+			bot: { name: "writer", backend: "native" },
 		});
 
 		const duplicate = await post({ name: "writer", role: "again" });

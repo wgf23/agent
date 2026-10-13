@@ -27,9 +27,14 @@ export interface ApiClient {
 	loadAgents(): Promise<AgentListResponse>;
 	installAgent(id: string): Promise<InstallAgentStartResponse>;
 	cancelAgent(id: string): Promise<void>;
+	// Server-driven switch: the POST only names the root; the server emits a
+	// fresh hello that the reducer treats as a full reset.
+	switchWorkspace(root: string): Promise<SwitchWorkspaceResult>;
 }
 
 export type SavedProvider = Extract<SaveProviderResponse, { ok: true }>;
+
+export type SwitchWorkspaceResult = { ok: true } | { ok: false; error: string };
 
 type ApiInit = Omit<RequestInit, "headers"> & {
 	headers?: Record<string, string>;
@@ -173,6 +178,31 @@ export function createApi(options: {
 		});
 	}
 
+	async function switchWorkspace(root: string): Promise<SwitchWorkspaceResult> {
+		// Switching is refused rather than merged: a rejected root (unknown path,
+		// busy turn) comes back as ok:false with the server's reason, which the
+		// picker shows inline. Success is silent; the server's hello resets state.
+		const response = await request("/api/workspaces", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ root }),
+		});
+		let payload: { ok?: boolean; error?: string } | null = null;
+		try {
+			payload = (await response.json()) as { ok?: boolean; error?: string };
+		} catch {
+			payload = null;
+		}
+		if (!response.ok || payload?.ok !== true) {
+			const message =
+				typeof payload?.error === "string" && payload.error !== ""
+					? payload.error
+					: `切换工作区失败 (${response.status})`;
+			return { ok: false, error: message };
+		}
+		return { ok: true };
+	}
+
 	return {
 		eventsUrl: () => eventsUrl(token),
 		send: (bot, text) => post("/api/send", { bot, text }),
@@ -188,5 +218,6 @@ export function createApi(options: {
 		loadAgents,
 		installAgent,
 		cancelAgent,
+		switchWorkspace,
 	};
 }

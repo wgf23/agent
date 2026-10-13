@@ -73,17 +73,16 @@ describe("CompositeHub.createBot", () => {
 		});
 		expect(created).toEqual({
 			name: "writer",
-			kind: "rob",
 			role: "drafts prose",
 			model: "deepseek-flash",
 			backend: "native",
 		});
 
 		const hello = hub.hello();
-		expect(hello.bots.map((bot) => `${bot.kind}:${bot.name}`)).toEqual([
-			"workspace:assistant",
-			"rob:writer",
-		]);
+		// The workspace chat is not a roster entry: bots are robs only, while its
+		// state is still merged so the client keeps a status dot for the chat.
+		expect(hello.bots.map((bot) => bot.name)).toEqual(["writer"]);
+		expect(hello.states.map((state) => state.bot)).toContain("assistant");
 		expect(events.some((event) => event.type === "bots")).toBe(true);
 		expect(readRobs()).toEqual([{ name: "writer", role: "drafts prose" }]);
 		await hub.dispose();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer } from "react";
-import { createApi } from "./api";
+import { createApi, type SwitchWorkspaceResult } from "./api";
 import { readToken } from "./auth";
 import type {
 	ApprovalChoice,
@@ -37,6 +37,9 @@ export interface Hub {
 	loadAgents: () => Promise<void>;
 	installAgent: (id: string) => Promise<void>;
 	cancelInstall: (id: string) => Promise<void>;
+	// Resolves with the server's refusal (busy turn, unopenable root) so the
+	// picker can show it; success stays silent while the fresh hello resets state.
+	switchWorkspace: (root: string) => Promise<SwitchWorkspaceResult>;
 }
 
 export function useHub(): Hub {
@@ -152,6 +155,11 @@ export function useHub(): Hub {
 		return api.cancelAgent(id).catch(() => undefined);
 	}, []);
 
+	const switchWorkspace = useCallback(
+		(root: string) => api.switchWorkspace(root),
+		[],
+	);
+
 	return {
 		state,
 		send,
@@ -168,5 +176,6 @@ export function useHub(): Hub {
 		loadAgents,
 		installAgent,
 		cancelInstall,
+		switchWorkspace,
 	};
 }

@@ -3,6 +3,7 @@ import type {
 	BotDraft,
 	BotInfo,
 	ServerEvent,
+	WorkspaceOption,
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
 import type { ProviderSettings } from "../config/resolve.js";
@@ -48,11 +49,22 @@ export interface Hub {
 	setAllowAll(on: boolean): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
+	closeSession?(bot: string, id: string): Promise<void>;
 	// Only a hub that manages a rob roster can create one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;
+	// A hub that owns a workspace scope implements these. listWorkspaces is
+	// synchronous so the hello snapshot and the route read the same list; busy
+	// lets the route tell a 409 (a turn is live) from a 400 (a bad root).
+	listWorkspaces?(): WorkspaceOption[];
+	busy?(): boolean;
+	// Swaps the active workspace. It refuses with {ok:false} while any bot or
+	// the chat is mid-turn.
+	switchWorkspace?(
+		root: string,
+	): Promise<{ ok: true } | { ok: false; error: string }>;
 	dispose(): Promise<void>;
 }
 

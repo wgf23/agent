@@ -252,6 +252,7 @@ h3 {
 .sidebar-brand {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 9px;
 	padding: 16px 14px 10px 16px;
 }
@@ -591,6 +592,128 @@ input.switch:checked::before {
 
 .connection-dot.closed {
 	background: var(--red);
+}
+
+/* ---------- Workspace picker ---------- */
+
+.workspace-picker {
+	position: relative;
+	flex-basis: 100%;
+}
+
+.workspace-trigger {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding: 5px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--text-2);
+	font-size: 12.5px;
+	text-align: left;
+	transition:
+		border-color 0.12s,
+		color 0.12s;
+}
+
+.workspace-trigger:hover {
+	border-color: var(--border-strong);
+	color: var(--text);
+}
+
+.workspace-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workspace-caret {
+	flex: none;
+	font-size: 10px;
+	color: var(--text-3);
+}
+
+.workspace-menu {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	right: 0;
+	z-index: 30;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 320px;
+	overflow-y: auto;
+	padding: 6px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: var(--shadow-md);
+}
+
+.workspace-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 13px;
+	text-align: left;
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+.workspace-item:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.workspace-item.active {
+	background: var(--surface-2);
+	color: var(--text);
+	font-weight: 550;
+}
+
+.workspace-item-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workspace-item-mark {
+	flex: none;
+	color: var(--accent-text);
+}
+
+.workspace-form {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+	padding-top: 6px;
+	border-top: 1px solid var(--border);
+}
+
+.workspace-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.workspace-error {
+	margin: 4px 2px 0;
+	font-size: 11.5px;
+	color: var(--red);
+	overflow-wrap: anywhere;
 }
 
 /* ---------- Status ---------- */

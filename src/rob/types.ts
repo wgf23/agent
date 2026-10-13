@@ -41,8 +41,23 @@ export const robBackendSchema = z.discriminatedUnion("kind", [
 ]);
 export type RobBackendConfig = z.infer<typeof robBackendSchema>;
 
-// send_message and delegate are native-only; external CLIs have no equivalent.
-const CLI_UNSUPPORTED_TOOLS = ["send_message", "delegate"] as const;
+// send_message, delegate, remember, and forget are native-only; external CLIs
+// have no equivalent.
+const CLI_UNSUPPORTED_TOOLS = [
+	"send_message",
+	"delegate",
+	"remember",
+	"forget",
+] as const;
+
+// The schedule is configuration, not ledger state: the timer re-arms from this
+// on every start, while a turn only records that an interval woke it.
+const wakeConfigSchema = z
+	.object({
+		everyMs: z.number().int().min(1000),
+		prompt: z.string().min(1),
+	})
+	.strict();
 
 export const robConfigSchema = z
 	.object({
@@ -51,6 +66,7 @@ export const robConfigSchema = z
 		model: z.string().min(1).optional(),
 		permissions: permissionRulesSchema.optional(),
 		backend: robBackendSchema.optional(),
+		wake: wakeConfigSchema.optional(),
 	})
 	.superRefine((rob, ctx) => {
 		if (rob.name === WORKSPACE_BOT) {
@@ -94,7 +110,7 @@ export const robConfigSchema = z
 	});
 export type RobConfig = z.infer<typeof robConfigSchema>;
 
-export type InboundKind = "user" | "dm" | "subagent_result";
+export type InboundKind = "user" | "dm" | "subagent_result" | "interval";
 
 export interface Inbound {
 	kind: InboundKind;

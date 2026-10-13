@@ -62,8 +62,11 @@ export class CompositeHub extends EventBus implements Hub {
 			workspaceRoot: workspace.workspaceRoot,
 			model: workspace.model,
 			provider: workspace.provider,
-			bots: [...workspace.bots, ...this.robs.bots()],
+			// The chat is not a roster entry: it is addressed by WORKSPACE_BOT and
+			// keeps a state, but only the robs appear in the bot list.
+			bots: this.robs.bots(),
 			states: [...workspace.states, ...this.robs.states()],
+			workspaces: [],
 			sessions: workspace.sessions,
 			activeSessionId: workspace.activeSessionId,
 			transcript: workspace.transcript,
@@ -108,11 +111,20 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 
 	newSession(bot: string): Promise<void> {
-		return this.workspace.newSession(bot);
+		if (bot === WORKSPACE_BOT) return this.workspace.newSession(bot);
+		return this.robs.newSession(bot);
 	}
 
 	openSession(bot: string, id: string): Promise<void> {
-		return this.workspace.openSession(bot, id);
+		if (bot === WORKSPACE_BOT) return this.workspace.openSession(bot, id);
+		return this.robs.openSession(bot, id);
+	}
+
+	closeSession(bot: string, id: string): Promise<void> {
+		// A workspace chat session is a file with its own lifecycle; only a rob
+		// keeps an in-memory channel to close.
+		if (bot === WORKSPACE_BOT) return Promise.resolve();
+		return this.robs.closeSession(bot, id);
 	}
 
 	async createBot(draft: BotDraft): Promise<BotInfo> {

@@ -26,7 +26,7 @@ my-agent            # interactive TUI
 ## Modes
 
 - `my-agent` opens the TUI.
-- `my-agent serve` starts the local web UI in a browser (see [Web UI](#web-ui)).
+- `my-agent serve [--workspace <root>]` starts the local web UI in a browser (see [Web UI](#web-ui)).
 - `my-agent run "list the ts files and summarize package.json"` runs headlessly and streams the answer to stdout.
 - `my-agent "..."` does the same as `run`.
 - `--yes` auto-approves every tool call. Without it, headless mode denies any tool that needs approval and keeps going.
@@ -74,8 +74,10 @@ my-agent serve --open     # also open the browser
 ```
 
 ```bash
-my-agent serve [--port <port>] [--host <host>] [--open] [-m <model>] [--max-steps <n>]
+my-agent serve [--port <port>] [--host <host>] [--open] [-m <model>] [--max-steps <n>] [--workspace <root>]
 ```
+
+`--workspace <root>` sets the initial workspace; the default is the current directory.
 
 The server binds `127.0.0.1` by default and has no authentication. When you bind a non-loopback host (`my-agent serve --host 0.0.0.0`), it generates a random token at startup, requires it on every `/api/*` request (as a `?token=` query parameter or an `Authorization: Bearer` header), and answers a missing or wrong token with `401`. The startup line prints the URL with the token appended, so you can open the UI on another machine. Loopback binds keep their no-auth behavior. The client streams answers token by token, renders Markdown and tool cards, folds reasoning, and shows the same permission dialog (`Allow once` / `Always allow` / `Deny`) and allow-all switch as the TUI. `Stop` cancels the running turn without ending the session, and a message sent mid-turn is queued and injected at the next step.
 
@@ -416,6 +418,32 @@ Typing `/greet Ada` sends `Say hello to Ada.`. `$ARGUMENTS` is replaced by the t
 
 The `task` tool lets the solo agent delegate one self-contained sub-task to a fresh sub-agent and receive only its final text. The sub-agent inherits the parent's provider, model, workspace, permissions, and thinking, and it gets the standard tools but no `task` tool, so it cannot recurse. Its events never stream to your transcript; only the final text returns, capped at 4000 characters. `task` is available in headless runs, the TUI, and the web UI, and it asks for approval by default like `bash`.
 
+## Bots
+
+A rob is a bot: a durable teammate, not a mode you switch into. A bot keeps long-term memory and a turn log in one JSON ledger at `<data root>/bots/<name>.json`, where `<data root>` is `~/.local/share/my-agent` by default and `MY_AGENT_BOTS_DIR` overrides it. The ledger is keyed by name alone, so **one bot name is one subject across every workspace**: the `atlas` you talk to in one project is the same `atlas` in the next, memory and all. A transcript is still scoped, though: every turn records its `workspaceRoot`, so a bot never replays one project's messages into another.
+
+A session is a temporary channel over that ledger. Opening one drops the live transcript, the next committed turn starts a new session id, and the bot's memory is untouched. Reopening a past session replays it from the ledger's turns, and a session summary is a read-side projection of those turns, so a bot's history and its session list survive a restart with no extra files. The ledger is the single durable record; a session is a label with no writer and no path.
+
+A bot can wake itself on an interval instead of waiting for a message. Add a `wake` block to its entry:
+
+```json
+{
+  "robs": [
+    {
+      "name": "atlas",
+      "role": "remember what the user tells you",
+      "wake": { "everyMs": 3000, "prompt": "Say the single word: tick" }
+    }
+  ]
+}
+```
+
+`everyMs` is the wall-clock period (minimum 1000 ms) and `prompt` is the text the bot receives on each wake. The committed turn is attributed `wake: "interval"`, so a transcript can tell a proactive turn from a user one. The schedule is configuration, not ledger state: it re-arms from `my-agent.json` on every start and is never persisted.
+
+The workspace chat is an ordinary session list, not a bot. It is the default assistant (`assistant` is reserved and cannot be a bot name), it is saved under `~/.local/share/my-agent/sessions/`, and its sessions are listed exactly like the TUI's. A bot is a separate roster entry beside it, so creating one never replaces the chat and no mode switch is involved.
+
+The active workspace can be switched at runtime. `my-agent serve --workspace <root>` picks the initial root, and `POST /api/workspaces { "root": "<root>" }` (or the web picker) opens a fresh scope for another one and disposes the old one, so no mutable state is ever rebound across roots. A switch is refused while any bot or the chat is mid-turn, and a root the server cannot open answers `400`. Recent workspaces are remembered in `<data root>/sessions/workspaces.json`.
+
 ## Robs
 
 A `my-agent.json` can define a team of robs. Each rob runs its own agent with its own role, permissions, and history. In the TUI, `@name <task>` dispatches work, and `@name <text>` sent while the rob is busy interjects mid-turn.
@@ -427,6 +455,7 @@ A `my-agent.json` can define a team of robs. Each rob runs its own agent with it
     {
       "name": "reviewer",
       "role": "review code",
+      "wake": { "everyMs": 60000, "prompt": "Check for new review requests." },
       "backend": {
         "kind": "cli",
         "command": "opencode",
@@ -438,6 +467,8 @@ A `my-agent.json` can define a team of robs. Each rob runs its own agent with it
   ]
 }
 ```
+
+The `role` is the bot's identity and is remembered in the ledger; `wake` is the optional interval schedule described in [Bots](#bots).
 
 A rob is `native` by default. A `cli` rob hands each turn to an external agent program:
 
@@ -465,6 +496,9 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm lsp:smoke      # run the real typescript-language-server and print diagnostics
+pnpm bot:e2e        # drive the real server against the real DeepSeek API
 ```
 
 `pnpm lsp:smoke` starts the real `typescript-language-server` against a throwaway TypeScript workspace that contains one type error, runs the `diagnostics` tool, and prints the result. It prints `skipped: ...` and exits 0 when the binary is not on `PATH`.
+
+`pnpm bot:e2e` starts the real `my-agent serve` on a throwaway workspace and bots directory, tells a bot a fact, destroys the session, kills the server, restarts it, asks the fact back, waits for a configured interval wake, and switches the active workspace, printing one `PASS` line per phase. It prints `skipped: ...` and exits 0 when `DEEPSEEK_API_KEY` is not set, and exits 1 on the first failed phase.
