@@ -76,7 +76,7 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
 
 ### Design programs still open
 
-- **plugin system**, **native Anthropic adapter**, **MCP HTTP/SSE transport**.
+- **native Anthropic adapter**, **MCP HTTP/SSE transport**.
 
 ### Landed after the first write-up
 
@@ -91,6 +91,13 @@ The batch grew to nine units, all merged onto `feat/agent-capabilities` with the
 - **Semantic search.** An `embeddings` block plus a `semantic_search` tool over a local vector
   index of line-chunked files. Embedder is a seam, so tests run offline. Retrieval quality is
   unmeasured here (no embeddings key, no general internet).
+- **Plugin system.** A top-level `plugins` array loads in-process ESM modules that contribute
+  tools, custom commands, and system-prompt text. Collisions with built-ins are rejected and a bad
+  plugin is skipped into an `errors` list. Plugins are trusted code; documented as such.
+- **Windows sandbox** (unverified). A win32 backend that runs commands through a PowerShell Job
+  Object helper for process-tree lifecycle and a child-process cap. It does NOT isolate the
+  filesystem or block network, and `require` refuses on Windows. The plan layer is unit-tested with
+  injected probes, but the helper has never run on a real Windows host; the user tests it.
 
 ### Smaller follow-ups
 

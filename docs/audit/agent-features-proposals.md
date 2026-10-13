@@ -49,11 +49,19 @@ locked by tests. Not yet done: auto-run diagnostics after edits, and LSP for rob
   the top-k chunks. The embedder is a seam so tests inject a deterministic fake. Retrieval quality
   is unmeasured here, which is the top follow-up.
 
+## Plugin system and Windows sandbox (landed)
+
+- **Plugin system.** A top-level `plugins` array of specs (relative path or package name) loads
+  in-process ESM modules exporting `{ name, tools?, commands?, systemPrompt?, dispose? }`. Tool
+  names that collide with a built-in are rejected; a malformed or throwing plugin is reported in
+  `errors` and skipped. Plugins are trusted code with full process privileges.
+- **Windows sandbox (unverified).** win32 detection picks `pwsh` then `powershell.exe`. The plan
+  runs commands through a PowerShell Job Object helper for process-tree cleanup and a process cap.
+  It does not isolate filesystem or network, so `require` refuses on Windows and `auto` warns. The
+  helper has not run on a real Windows host.
+
 ## Multi-week design programs still open
 
-- **Plugin system.** Define a plugin contract (a module exporting tools, hooks, providers, and
-  commands), a loader from config, and a trust/permission story. Hooks + custom commands + MCP
-  already cover most of the extension surface, so scope the plugin API to what those cannot do.
 - **native Anthropic adapter.** A second provider implementing the same `Provider` interface with
   Anthropic message/tool blocks and SSE. The interface is already provider-neutral, so this is
   additive. Prototype the tool-call round trip first.
