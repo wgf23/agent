@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 import { runAgent, type UsageTotals } from "../agent/agent.js";
 import { estimateCost, formatCost } from "../agent/cost.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
@@ -13,7 +14,12 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
-import type { Message, Provider, TextBlock } from "../providers/types.js";
+import type {
+	ImagePart,
+	Message,
+	Provider,
+	TextBlock,
+} from "../providers/types.js";
 import { chooseSession } from "../session/chooser.js";
 import {
 	latestSession,
@@ -25,11 +31,13 @@ import {
 	withoutSystem,
 } from "../session/store.js";
 import { createTaskTool } from "../tools/task.js";
+import { readImage } from "../util/image.js";
 
 export type OutputFormat = "text" | "json";
 
 export interface RunHeadlessOptions {
 	prompt: string;
+	imagePaths?: string[];
 	model?: string;
 	maxSteps?: number;
 	maxCost?: number;
@@ -74,6 +82,19 @@ export async function runHeadless(
 	const env = options.env ?? process.env;
 	const homeDir = options.homeDir ?? os.homedir();
 	const outputFormat = options.outputFormat ?? "text";
+
+	// Attachments are read before any config resolution or provider work so a
+	// bad path fails fast and never reaches the network.
+	const images: ImagePart[] = [];
+	for (const imagePath of options.imagePaths ?? []) {
+		const result = await readImage(path.resolve(workspaceRoot, imagePath));
+		if (!result.ok) {
+			console.error(result.error);
+			return 1;
+		}
+		images.push(result.image);
+	}
+
 	const resolved = resolveConfig({
 		cliModel: options.model,
 		cliMaxSteps: options.maxSteps,
@@ -171,6 +192,7 @@ export async function runHeadless(
 			model: settings.model,
 			workspaceRoot,
 			prompt: options.prompt,
+			images,
 			history: session.messages,
 			maxSteps: settings.maxSteps,
 			maxCost: options.maxCost,

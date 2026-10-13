@@ -30,6 +30,7 @@ interface RunOptions {
 	continue?: boolean;
 	session?: string;
 	outputFormat?: string;
+	image?: string[];
 }
 
 interface TeamOptions {
@@ -91,6 +92,7 @@ function collect(value: string, previous: string[]): string[] {
 async function run(prompt: string, options: RunOptions): Promise<void> {
 	process.exitCode = await runHeadless({
 		prompt,
+		imagePaths: options.image,
 		model: options.model,
 		maxSteps: parseMaxSteps(options.maxSteps),
 		maxCost: parseMaxCost(options.maxCost),
@@ -117,6 +119,12 @@ program
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
 	.option("--output-format <format>", "output format: text or json", "text")
+	.option(
+		"--image <path>",
+		"attach an image to the prompt (repeatable)",
+		collect,
+		[],
+	)
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
@@ -144,6 +152,12 @@ program
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
 	.option("--output-format <format>", "output format: text or json", "text")
+	.option(
+		"--image <path>",
+		"attach an image to the prompt (repeatable)",
+		collect,
+		[],
+	)
 	.action(async (prompt: string, options: RunOptions) => {
 		await run(prompt, options);
 	});
