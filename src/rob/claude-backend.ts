@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
@@ -17,8 +17,10 @@ import {
 import type { Inbound, RobName } from "./types.js";
 
 const CLAUDE_COMMAND = "claude";
+const DEFAULT_TURN_TIMEOUT_MS = 600_000;
 const SUMMARY_MAX_CHARS = 200;
 const UI_OUTPUT_MAX_CHARS = 4000;
+const MAX_STDERR_CHARS = 1000;
 
 export const CLAUDE_CONFIG_DIR_ENV = "MY_AGENT_CLAUDE_CONFIG_DIR";
 
@@ -31,6 +33,7 @@ const CLAUDE_TOOLS: ReadonlyArray<readonly [string, string]> = [
 	["grep", "Grep"],
 	["bash", "Bash"],
 	["web_fetch", "WebFetch"],
+	["web_search", "WebSearch"],
 ];
 
 const CLAUDE_TO_OURS = new Map(
@@ -47,6 +50,8 @@ export interface ClaudeBackendOptions {
 	configDir?: string;
 	// Env the child needs beyond process.env, such as the provider key.
 	extraEnv?: Record<string, string>;
+	// Kills a stuck claude after this many milliseconds (default 10 minutes).
+	timeoutMs?: number;
 }
 
 // The one place that resolves the claude config dir, mirroring skillsRoot so a
@@ -75,16 +80,30 @@ export function claudeToolAllowlist(rules: PermissionRules): {
 	const allowed: string[] = [];
 	const disallowed: string[] = [];
 	for (const [tool, claudeTool] of CLAUDE_TOOLS) {
-		const action = resolveAction(rules, tool, "*");
-		if (action === "allow") allowed.push(claudeTool);
+		if (toolBlanketAllows(rules, tool)) allowed.push(claudeTool);
 		else disallowed.push(claudeTool);
 	}
 	return { allowed, disallowed };
 }
 
+// A tool is blanket-allowed only when its rules cannot resolve to anything but
+// allow for any subject, the same rule opencode-backend.ts uses. A scalar
+// "allow" allows; a list of only { pattern: "*", action: "allow" } allows; any
+// specific pattern, deny, or ask entry gates the tool instead.
+function toolBlanketAllows(rules: PermissionRules, tool: string): boolean {
+	const rule = rules[tool];
+	if (rule === undefined) return resolveAction(rules, tool, "*") === "allow";
+	if (typeof rule === "string") return rule === "allow";
+	return (
+		rule.length > 0 &&
+		rule.every((entry) => entry.action === "allow" && entry.pattern === "*")
+	);
+}
+
 export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 	const command = options.command ?? CLAUDE_COMMAND;
 	const configDir = options.configDir ?? defaultClaudeConfigDir(options.rob);
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
 	// One session per rob, kept across turns so the rob remembers its history.
 	let sessionID: string | null = null;
 
@@ -111,14 +130,14 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 					? ["--model", options.model]
 					: []),
 			];
-			if (sessionID === null) {
-				sessionID = randomUUID();
-				args.push("--session-id", sessionID);
-			} else {
-				args.push("--resume", sessionID);
-			}
+			// Only resume a session claude actually created: the id is remembered
+			// after a turn returns ok, never before. A failed first turn must not
+			// make later turns resume a session that claude never persisted.
+			const resume = sessionID;
+			const nextSessionID = resume ?? randomUUID();
+			args.push(resume === null ? "--session-id" : "--resume", nextSessionID);
 
-			return runClaude({
+			const result = await runClaude({
 				command,
 				args,
 				cwd: turn.workspaceRoot,
@@ -131,7 +150,11 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 				onEvent: turn.onEvent,
 				history: turn.history,
 				inbound: turn.inbound,
+				timeoutMs,
 			});
+
+			if (result.ok) sessionID = nextSessionID;
+			return result;
 		},
 	};
 }
@@ -145,6 +168,7 @@ interface RunClaudeOptions {
 	onEvent: (event: AgentEvent) => void;
 	history: readonly Message[];
 	inbound: readonly Inbound[];
+	timeoutMs: number;
 }
 
 function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
@@ -157,12 +181,17 @@ function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
 	const toolNames = new Map<string, string>();
 	let lastText = "";
 	let failure: string | null = null;
+	let stderr = "";
 	let steps = 0;
 	let ended = false;
+	let timedOut = false;
 	let buffer = "";
 
 	const child = spawn(options.command, options.args, {
 		cwd: options.cwd,
+		// detached puts the child in its own process group so a timeout can kill
+		// it and any descendants together, mirroring the bash tool.
+		detached: process.platform !== "win32",
 		stdio: ["ignore", "pipe", "pipe"],
 		env: options.env,
 	});
@@ -170,18 +199,25 @@ function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
 	return new Promise<TurnResult>((resolve) => {
 		let settled = false;
 
+		const abort = (): void => {
+			killProcessGroup(child);
+		};
+
 		const finish = (result: TurnResult): void => {
 			if (settled) return;
 			settled = true;
+			clearTimeout(timer);
 			options.signal.removeEventListener("abort", abort);
 			resolve(result);
 		};
 
-		const abort = (): void => {
-			child.kill("SIGKILL");
-		};
 		if (options.signal.aborted) abort();
 		else options.signal.addEventListener("abort", abort, { once: true });
+
+		const timer = setTimeout(() => {
+			timedOut = true;
+			killProcessGroup(child);
+		}, options.timeoutMs);
 
 		const conclude = (): void => {
 			if (options.signal.aborted) {
@@ -190,9 +226,10 @@ function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
 				return;
 			}
 			if (failure !== null) {
-				emit({ type: "error", message: failure });
+				const error = `${failure}${stderrDiagnostics(stderr)}`;
+				emit({ type: "error", message: error });
 				emit({ type: "done", reason: "error", steps });
-				finish({ ok: false, error: failure, usage, messages });
+				finish({ ok: false, error, usage, messages });
 				return;
 			}
 			if (lastText !== "") {
@@ -292,6 +329,13 @@ function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
 			}
 		});
 
+		// claude can write enough stderr to fill the pipe and deadlock; consume
+		// it and capture the text so a failure can report what claude printed.
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+
 		child.on("error", (error) => {
 			if (options.signal.aborted) {
 				emit({ type: "done", reason: "aborted", steps });
@@ -307,12 +351,33 @@ function runClaude(options: RunClaudeOptions): Promise<TurnResult> {
 		child.on("close", (code) => {
 			if (settled) return;
 			if (buffer !== "") handleLine(buffer);
-			if (!ended && code !== 0 && options.signal.aborted !== true) {
+			if (timedOut) {
+				failure = `claude: timed out after ${options.timeoutMs}ms`;
+			} else if (!ended && code !== 0 && !options.signal.aborted) {
 				failure = `claude exited with code ${String(code)}.`;
+			} else if (!ended && !options.signal.aborted) {
+				failure = "claude ended without a result";
 			}
 			conclude();
 		});
 	});
+}
+
+function killProcessGroup(child: ChildProcess): void {
+	if (child.pid === undefined) return;
+	// Windows has no process group here; taskkill walks the child tree.
+	if (process.platform === "win32") {
+		const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+			stdio: "ignore",
+		});
+		killer.on("error", () => child.kill());
+		return;
+	}
+	try {
+		process.kill(-child.pid, "SIGKILL");
+	} catch {
+		child.kill("SIGKILL");
+	}
 }
 
 function recordUsage(
@@ -383,6 +448,17 @@ function summarize(text: string): string {
 function capOutput(text: string): string {
 	return text.length > UI_OUTPUT_MAX_CHARS
 		? `${text.slice(0, UI_OUTPUT_MAX_CHARS)}[truncated]`
+		: text;
+}
+
+function stderrDiagnostics(stderr: string): string {
+	const detail = stderr.trim();
+	return detail === "" ? "" : `\n${capStderr(detail)}`;
+}
+
+function capStderr(text: string): string {
+	return text.length > MAX_STDERR_CHARS
+		? text.slice(0, MAX_STDERR_CHARS)
 		: text;
 }
 

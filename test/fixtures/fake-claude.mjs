@@ -35,6 +35,26 @@ if (scenario === "sleep") {
 		session_id: session,
 	});
 	process.exitCode = 1;
+} else if (scenario === "stderr") {
+	// Large enough to overflow the 64KB pipe buffer and deadlock a consumer
+	// with no stderr listener.
+	process.stderr.write("X".repeat(200 * 1024));
+	emit({
+		type: "result",
+		usage: {
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_read_input_tokens: 0,
+			cache_creation_input_tokens: 0,
+		},
+		total_cost_usd: 0,
+		is_error: true,
+		result: "boom",
+		session_id: session,
+	});
+	process.exitCode = 1;
+} else if (scenario === "empty") {
+	// Exits cleanly without emitting a result line.
 } else {
 	emit({
 		type: "system",

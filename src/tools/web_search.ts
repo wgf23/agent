@@ -73,6 +73,9 @@ export const webSearchTool: Tool<typeof schema> = {
 				signal: ctx.signal,
 			});
 		} catch (error) {
+			if (ctx.signal?.aborted || namedError(error, "AbortError")) {
+				return { ok: false, error: "web_search: request aborted" };
+			}
 			return { ok: false, error: `web_search: ${errorMessage(error)}` };
 		}
 		if (!response.ok) {
@@ -86,7 +89,12 @@ export const webSearchTool: Tool<typeof schema> = {
 			return { ok: false, error: `web_search: ${errorMessage(error)}` };
 		}
 
-		const results = extractResults(search.config.provider, data);
+		// A provider may return more than `count`; cap the mapped list so every
+		// provider honors the requested count regardless of the upstream API.
+		const results = extractResults(search.config.provider, data).slice(
+			0,
+			args.count,
+		);
 		return { ok: true, output: truncateOutput(formatResults(results)).text };
 	},
 };
@@ -163,6 +171,8 @@ function buildRequest(
 			url.pathname = `${url.pathname.replace(/\/+$/, "")}/search`;
 			url.searchParams.set("q", query);
 			url.searchParams.set("format", "json");
+			// SearXNG's search API has no per-request result-count parameter, so
+			// the requested count is applied by slicing the mapped results.
 			return { url: url.toString() };
 		}
 	}
@@ -205,6 +215,10 @@ function formatResults(results: SearchResult[]): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function namedError(error: unknown, name: string): boolean {
+	return error instanceof Error && error.name === name;
 }
 
 function stringValue(value: unknown): string {

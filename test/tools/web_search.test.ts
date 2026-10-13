@@ -252,4 +252,80 @@ describe("web_search", () => {
 
 		expect(result).toEqual({ ok: false, error: "web_search: fetch failed" });
 	});
+
+	it("caps the result list at count", async () => {
+		await writeSearch({ search: { provider: "brave" } });
+		vi.stubEnv("BRAVE_API_KEY", "brave-key");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				async (_url: RequestInfo | URL, _init?: RequestInit) =>
+					new Response(
+						JSON.stringify({
+							web: {
+								results: [
+									{
+										title: "One",
+										url: "https://1.example",
+										description: "first",
+									},
+									{
+										title: "Two",
+										url: "https://2.example",
+										description: "second",
+									},
+									{
+										title: "Three",
+										url: "https://3.example",
+										description: "third",
+									},
+								],
+							},
+						}),
+						{ status: 200 },
+					),
+			),
+		);
+
+		const result = await execute(
+			"web_search",
+			{ query: "test", count: 2 },
+			{ workspaceRoot: workspace },
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			output:
+				"1. One\n   https://1.example\n   first\n2. Two\n   https://2.example\n   second",
+		});
+	});
+
+	it("returns a clear message when the request is aborted", async () => {
+		await writeSearch({ search: { provider: "brave" } });
+		vi.stubEnv("BRAVE_API_KEY", "brave-key");
+		const controller = new AbortController();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				(_url: RequestInfo | URL, init?: RequestInit) =>
+					new Promise((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () =>
+							reject(new DOMException("aborted", "AbortError")),
+						);
+					}),
+			),
+		);
+
+		const promise = execute(
+			"web_search",
+			{ query: "test" },
+			{ workspaceRoot: workspace, signal: controller.signal },
+		);
+		controller.abort();
+
+		expect(await promise).toEqual({
+			ok: false,
+			error: "web_search: request aborted",
+		});
+	});
 });

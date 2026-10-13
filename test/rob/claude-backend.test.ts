@@ -48,7 +48,7 @@ describe("claudeToolAllowlist", () => {
 			}),
 		).toEqual({
 			allowed: ["Read", "Write"],
-			disallowed: ["Edit", "Glob", "Grep", "Bash", "WebFetch"],
+			disallowed: ["Edit", "Glob", "Grep", "Bash", "WebFetch", "WebSearch"],
 		});
 	});
 
@@ -65,8 +65,41 @@ describe("claudeToolAllowlist", () => {
 			}),
 		).toEqual({
 			allowed: ["Read", "Glob", "Grep"],
-			disallowed: ["Write", "Edit", "Bash", "WebFetch"],
+			disallowed: ["Write", "Edit", "Bash", "WebFetch", "WebSearch"],
 		});
+	});
+
+	it("blanket-allows a scalar allow and a list of only * allows", () => {
+		expect(
+			claudeToolAllowlist({
+				write_file: "allow",
+				bash: [{ pattern: "*", action: "allow" }],
+			}),
+		).toEqual({
+			allowed: ["Read", "Write", "Glob", "Grep", "Bash"],
+			disallowed: ["Edit", "WebFetch", "WebSearch"],
+		});
+	});
+
+	it("does not blanket-allow a tool with any specific pattern, deny, or ask entry", () => {
+		expect(
+			claudeToolAllowlist({
+				write_file: [{ pattern: "docs/**", action: "allow" }],
+				read_file: [
+					{ pattern: "*", action: "allow" },
+					{ pattern: "src/**", action: "deny" },
+				],
+			}),
+		).toEqual({
+			allowed: ["Glob", "Grep"],
+			disallowed: ["Read", "Write", "Edit", "Bash", "WebFetch", "WebSearch"],
+		});
+	});
+
+	it("exposes web_search as claude's WebSearch allowlist tool", () => {
+		expect(claudeToolAllowlist({ web_search: "allow" }).allowed).toContain(
+			"WebSearch",
+		);
 	});
 });
 
@@ -148,7 +181,7 @@ describe("claude backend", () => {
 			"--allowedTools",
 			"Read,Write",
 			"--disallowedTools",
-			"Edit,Glob,Grep,Bash,WebFetch",
+			"Edit,Glob,Grep,Bash,WebFetch,WebSearch",
 			"--session-id",
 			sid,
 		]);
@@ -337,6 +370,87 @@ describe("claude backend", () => {
 				return true;
 			}
 		}, "the child process to exit");
+	});
+
+	it("does not resume a session after a failed first turn", async () => {
+		const argvFile = path.join(workspace, "argv.json");
+		process.env.FAKE_CLAUDE_ARGV_FILE = argvFile;
+		process.env.FAKE_CLAUDE_SCENARIO = "error";
+
+		const backend = createClaudeBackend({
+			rob: "reviewer",
+			role: "review code",
+			command: FIXTURE,
+			configDir: path.join(workspace, "cfg"),
+		});
+		const turn = (text: string): Parameters<typeof backend.run>[0] => ({
+			history: [],
+			inbound: [{ kind: "user", from: "user", text, at: 0 }],
+			workspaceRoot: workspace,
+			rules: {},
+			signal: new AbortController().signal,
+			onEvent: () => {},
+		});
+
+		await backend.run(turn("hello"));
+		await backend.run(turn("again"));
+		const second = JSON.parse(await readFile(argvFile, "utf8"));
+		expect(second).toContain("--session-id");
+		expect(second).not.toContain("--resume");
+	});
+
+	it("consumes a large stderr stream and reports it on failure", async () => {
+		process.env.FAKE_CLAUDE_SCENARIO = "stderr";
+		const { result } = await runTurn({ rules: {} });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe(`boom\n${"X".repeat(1000)}`);
+	});
+
+	it("times out a stuck claude and kills its process group", async () => {
+		const pidFile = path.join(workspace, "pid.txt");
+		process.env.FAKE_CLAUDE_SCENARIO = "sleep";
+		process.env.FAKE_CLAUDE_PID_FILE = pidFile;
+
+		const backend = createClaudeBackend({
+			rob: "reviewer",
+			role: "review code",
+			command: FIXTURE,
+			configDir: path.join(workspace, "cfg"),
+			timeoutMs: 100,
+		});
+		const result = await backend.run({
+			history: [],
+			inbound: [{ kind: "user", from: "user", text: "sleep", at: 0 }],
+			workspaceRoot: workspace,
+			rules: {},
+			signal: new AbortController().signal,
+			onEvent: () => {},
+		});
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe("claude: timed out after 100ms");
+
+		const pid = Number(await readFile(pidFile, "utf8"));
+		await waitFor(() => {
+			try {
+				process.kill(pid, 0);
+				return false;
+			} catch {
+				return true;
+			}
+		}, "the child process to exit");
+	});
+
+	it("reports a clean exit without a result as an error", async () => {
+		process.env.FAKE_CLAUDE_SCENARIO = "empty";
+		const { result } = await runTurn({ rules: {} });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe("claude ended without a result");
 	});
 });
 
