@@ -32,7 +32,8 @@ export interface NativeBackendOptions {
 	provider: Provider;
 	model: string;
 	authorize: Authorize;
-	systemInstructions: string;
+	// Called once per run so memory committed since the last turn is included.
+	systemInstructions: () => string;
 	team: TeamPort;
 	drain: () => Inbound[];
 	runSubagent: (task: string, signal?: AbortSignal) => Promise<string>;
@@ -53,6 +54,8 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				};
 			}
 
+			const systemInstructions = options.systemInstructions();
+
 			// runAgent appends one prompt user message; the rest of the batch and any
 			// interjection that lands mid-run flow through drainInput before each step.
 			let queued = rest.map(toUserMessage);
@@ -70,7 +73,7 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				history: [...turn.history],
 				signal: turn.signal,
 				authorize: options.authorize,
-				extraInstructions: options.systemInstructions,
+				extraInstructions: systemInstructions,
 				drainInput,
 				extraTools: [
 					createSendMessageTool({ team: options.team, from: options.name }),

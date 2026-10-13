@@ -4,6 +4,7 @@ import type {
 	BotState,
 	ServerEvent,
 } from "../../shared/protocol.js";
+import { type BotStore, createBotStore } from "../bot/store.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import type { TeamEvent } from "../rob/events.js";
 import { Team, UnknownRobError } from "../rob/team.js";
@@ -19,17 +20,24 @@ import {
 export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
 	providerEnv: Record<string, string>;
+	// Optional so existing test literals keep compiling; production shares the
+	// one durable global ledger.
+	store?: BotStore;
+	clock?: () => number;
 }
 
 export class TeamHub extends EventBus implements Hub {
 	private readonly options: TeamHubOptions;
 	private team: Team;
 	private readonly roster: RobConfig[];
+	// Built once so reconfigure reuses the same ledger handle.
+	private readonly store: BotStore;
 
 	constructor(options: TeamHubOptions) {
 		super();
 		this.options = options;
 		this.roster = [...options.robs];
+		this.store = options.store ?? createBotStore();
 		this.team = this.createTeam();
 		this.team.subscribe((event) => this.handle(event));
 		this.team.start();
@@ -48,6 +56,8 @@ export class TeamHub extends EventBus implements Hub {
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
 			hooks: this.options.hooks,
+			store: this.store,
+			clock: this.options.clock,
 			authorizerFactory: ({ name, rules, approval }) =>
 				createAuthorizer({
 					workspaceRoot: this.options.workspaceRoot,

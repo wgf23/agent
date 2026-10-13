@@ -46,8 +46,14 @@ export const robBackendSchema = z.discriminatedUnion("kind", [
 ]);
 export type RobBackendConfig = z.infer<typeof robBackendSchema>;
 
-// send_message and delegate are native-only; external CLIs have no equivalent.
-const CLI_UNSUPPORTED_TOOLS = ["send_message", "delegate"] as const;
+// send_message, delegate, remember, and forget are native-only; external CLIs
+// have no equivalent.
+const CLI_UNSUPPORTED_TOOLS = [
+	"send_message",
+	"delegate",
+	"remember",
+	"forget",
+] as const;
 
 export const robConfigSchema = z
 	.object({

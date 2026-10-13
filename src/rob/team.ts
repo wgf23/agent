@@ -1,4 +1,5 @@
 import type { AgentEvent } from "../agent/events.js";
+import { type BotStore, createBotStore } from "../bot/store.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type {
 	ApprovalChoice,
@@ -59,6 +60,10 @@ export interface TeamOptions {
 	// Native robs receive these; cli backends run their own tool registry.
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
+	// Optional so existing callers keep compiling; a team without an injected
+	// store still gets the durable global ledger.
+	store?: BotStore;
+	clock?: () => number;
 }
 
 export class Team implements TeamPort {
@@ -106,6 +111,8 @@ export class Team implements TeamPort {
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
 			hooks: this.options.hooks,
+			store: this.options.store ?? createBotStore(),
+			clock: this.options.clock,
 		});
 	}
 

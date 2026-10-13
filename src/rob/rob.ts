@@ -1,6 +1,14 @@
+import { randomBytes } from "node:crypto";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
+import { emptyDelta, type MemoryDelta, renderMemory } from "../bot/record.js";
+import {
+	BOT_RECORD_VERSION,
+	type BotRecord,
+	type Turn,
+} from "../bot/schema.js";
+import type { BotStore } from "../bot/store.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
@@ -15,6 +23,7 @@ import {
 import { createClaudeBackend } from "./claude-backend.js";
 import { createCliBackend } from "./cli-backend.js";
 import { AsyncQueue } from "./inbox.js";
+import { createMemoryTools } from "./memory-tools.js";
 import { createOpencodeBackend } from "./opencode-backend.js";
 import type {
 	Inbound,
@@ -49,6 +58,8 @@ export interface RobOptions {
 	// MCP tools are native-only; a cli backend runs its own tool registry.
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
+	store: BotStore;
+	clock?: () => number;
 }
 
 export class Rob {
@@ -65,6 +76,14 @@ export class Rob {
 	private readonly inbox = new AsyncQueue<Inbound>();
 	private readonly events: AgentEvent[] = [];
 	private readonly hooks?: HooksConfig;
+	private readonly store: BotStore;
+	private readonly clock: () => number;
+
+	// The channel id is ephemeral for now; a later unit makes it openable. The
+	// memory tools capture this.delta by reference, so reset it in place.
+	private readonly channelId = `chs_${randomBytes(8).toString("hex")}`;
+	private readonly delta: MemoryDelta = emptyDelta();
+	private memoryBlock = "";
 
 	private history: Message[] = [];
 	private status: RobStatus = "idle";
@@ -82,6 +101,8 @@ export class Rob {
 		this.workspaceRoot = options.workspaceRoot;
 		this.team = options.team;
 		this.hooks = options.hooks;
+		this.store = options.store;
+		this.clock = options.clock ?? Date.now;
 		this.authorize = options.authorizerFactory({
 			name: options.name,
 			rules: options.rules,
@@ -123,11 +144,18 @@ export class Rob {
 						provider: options.provider,
 						model: options.model,
 						authorize: this.authorize,
-						systemInstructions: this.systemInstructions(),
+						systemInstructions: () => this.systemInstructions(),
 						team: options.team,
 						drain: () => this.inbox.drain(),
 						runSubagent: (task, signal) => this.runSubagent(task, signal),
-						extraTools: options.extraTools,
+						extraTools: [
+							...createMemoryTools({
+								name: options.name,
+								delta: this.delta,
+								clock: this.clock,
+							}),
+							...(options.extraTools ?? []),
+						],
 						hooks: options.hooks,
 					});
 	}
@@ -208,18 +236,72 @@ export class Rob {
 	}
 
 	private async runOnce(batch: Inbound[], signal: AbortSignal): Promise<void> {
-		const result = await this.backend.run({
-			history: this.history,
-			inbound: batch,
-			workspaceRoot: this.workspaceRoot,
-			rules: this.rules,
-			signal,
-			onEvent: (event) => this.handleEvent(event),
-		});
+		const first = batch[0];
+		if (first === undefined) return;
 
-		this.history = result.messages.filter(
-			(message) => message.role !== "system",
-		);
+		const record = await this.loadRecord();
+		this.memoryBlock = renderMemory(record.memory);
+		this.delta.upsert.length = 0;
+		this.delta.drop.length = 0;
+
+		const before = this.history.length;
+		let result: Awaited<ReturnType<RobBackend["run"]>> | undefined;
+		let thrown: unknown;
+
+		try {
+			result = await this.backend.run({
+				history: this.history,
+				inbound: batch,
+				workspaceRoot: this.workspaceRoot,
+				rules: this.rules,
+				signal,
+				onEvent: (event) => this.handleEvent(event),
+			});
+		} catch (error) {
+			thrown = error;
+		} finally {
+			const produced =
+				result === undefined
+					? this.history
+					: result.messages.filter((message) => message.role !== "system");
+			const turn: Turn = {
+				id: `trn_${randomBytes(8).toString("hex")}`,
+				seq: record.seq + 1,
+				sessionId: this.channelId,
+				workspaceRoot: this.workspaceRoot,
+				at: this.clock(),
+				wake: first.kind,
+				messages: produced.slice(before),
+			};
+			this.stampMemorySource(turn);
+			if (thrown !== undefined) {
+				this.team.emitNotice(this.name, errorMessage(thrown));
+			}
+			const committed = await this.store.commit(record, turn, this.delta);
+			if (!committed.ok) this.team.emitNotice(this.name, committed.error);
+			this.history = produced;
+		}
+
+		if (thrown !== undefined) throw thrown;
+	}
+
+	// A load failure must not end the run loop: report it and carry on with an
+	// empty record, which the next commit overwrites.
+	private async loadRecord(): Promise<BotRecord> {
+		const identity = { role: this.role, model: this.model };
+		const loaded = await this.store.load(this.name, identity);
+		if (loaded.ok) return loaded.record;
+		this.team.emitNotice(this.name, loaded.error);
+		return emptyRecord(this.name, identity);
+	}
+
+	// Memory written by a tool this turn inherits the turn's provenance; entries
+	// created outside a turn keep the null source the tool sets.
+	private stampMemorySource(turn: Turn): void {
+		for (const entry of this.delta.upsert) {
+			if (entry.source.sessionId !== null) continue;
+			entry.source = { sessionId: turn.sessionId, turnSeq: turn.seq };
+		}
 	}
 
 	private handleEvent(event: AgentEvent): void {
@@ -281,12 +363,34 @@ export class Rob {
 	}
 
 	private systemInstructions(): string {
-		return [
+		const base = [
 			`You are rob "${this.name}", one member of a team of robs.`,
 			"Use send_message to talk to another rob, and delegate to hand one self-contained task to a sub-agent.",
 			this.role,
 		].join("\n");
+		return this.memoryBlock === "" ? base : `${base}\n${this.memoryBlock}`;
 	}
+}
+
+// A fresh ledger borrows the bot's identity from the caller, exactly as the
+// store's own synthesized record does on a missing file.
+function emptyRecord(
+	bot: RobName,
+	identity: { role: string; model: string },
+): BotRecord {
+	return {
+		version: BOT_RECORD_VERSION,
+		bot,
+		role: identity.role,
+		model: identity.model,
+		createdAt: 0,
+		updatedAt: 0,
+		seq: 0,
+		usage: { input: 0, output: 0 },
+		memory: [],
+		turns: [],
+		wakeRule: { kind: "manual" },
+	};
 }
 
 function abortBatch(signal: AbortSignal): Promise<Inbound[]> {
