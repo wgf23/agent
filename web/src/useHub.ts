@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useReducer } from "react";
-import { authHeaders, eventsUrl, readToken } from "./auth";
+import { createApi } from "./api";
+import { readToken } from "./auth";
 import type {
 	ApprovalChoice,
 	BotDraft,
 	SaveProviderBody,
-	SaveProviderResponse,
 	ServerEvent,
-	SettingsResponse,
 } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
@@ -16,28 +15,9 @@ import { type ClientState, clientReducer, initialState } from "./state";
 const token =
 	typeof window === "undefined" ? null : readToken(window.location.search);
 
-type ApiInit = Omit<RequestInit, "headers"> & {
-	headers?: Record<string, string>;
-};
-
-function apiFetch(path: string, init: ApiInit = {}): Promise<Response> {
-	const { headers, ...rest } = init;
-	return fetch(path, {
-		...rest,
-		headers: { ...authHeaders(token), ...headers },
-	});
-}
-
-async function post(path: string, body: unknown): Promise<void> {
-	const response = await apiFetch(path, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(body),
-	});
-	if (!response.ok) {
-		throw new Error(`POST ${path} failed: ${response.status}`);
-	}
-}
+// Built once; every request (and the SSE URL) goes through the token-aware
+// client, which keeps the request construction testable outside React.
+const api = createApi({ token });
 
 export interface Hub {
 	state: ClientState;
@@ -60,7 +40,7 @@ export function useHub(): Hub {
 	const [state, dispatch] = useReducer(clientReducer, undefined, initialState);
 
 	useEffect(() => {
-		const source = new EventSource(eventsUrl(token));
+		const source = new EventSource(api.eventsUrl());
 
 		source.onopen = () => dispatch({ type: "connection", status: "open" });
 		// EventSource reconnects automatically; "closed" just dims the status dot
@@ -81,11 +61,11 @@ export function useHub(): Hub {
 
 	const send = useCallback((bot: string, text: string) => {
 		dispatch({ type: "submit", bot, text });
-		post("/api/send", { bot, text }).catch(() => {});
+		api.send(bot, text).catch(() => {});
 	}, []);
 
 	const interrupt = useCallback((bot: string) => {
-		post("/api/interrupt", { bot }).catch(() => {});
+		api.interrupt(bot).catch(() => {});
 	}, []);
 
 	const respondApproval = useCallback(
@@ -93,52 +73,30 @@ export function useHub(): Hub {
 			// Drop the modal immediately; the server echoes approval_resolved, which
 			// is a no-op once the id is gone.
 			dispatch({ type: "approval_removed", id });
-			post("/api/approval", { id, decision }).catch(() => {});
+			api.respondApproval(id, decision).catch(() => {});
 		},
 		[],
 	);
 
 	const setAllowAll = useCallback((on: boolean) => {
 		dispatch({ type: "server", event: { type: "allow_all", on } });
-		post("/api/allow-all", { on }).catch(() => {});
+		api.setAllowAll(on).catch(() => {});
 	}, []);
 
 	const newSession = useCallback((bot: string) => {
-		post("/api/sessions/new", { bot }).catch(() => {});
+		api.newSession(bot).catch(() => {});
 	}, []);
 
 	const openSession = useCallback((bot: string, id: string) => {
-		post("/api/sessions/open", { bot, id }).catch(() => {});
+		api.openSession(bot, id).catch(() => {});
 	}, []);
 
 	const createBot = useCallback(async (draft: BotDraft) => {
-		const response = await apiFetch("/api/bots", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(draft),
-		});
-		if (!response.ok) {
-			// Surface the server's human-readable error so the dialog can show it
-			// inline; fall back to a generic message if the body is not JSON.
-			let message = `创建 Bot 失败 (${response.status})`;
-			try {
-				const body = (await response.json()) as { error?: string };
-				if (typeof body.error === "string" && body.error !== "") {
-					message = body.error;
-				}
-			} catch {
-				// keep the fallback message
-			}
-			throw new Error(message);
-		}
+		await api.createBot(draft);
 	}, []);
 
 	const loadSettings = useCallback(async () => {
-		const response = await apiFetch("/api/settings");
-		if (!response.ok) {
-			throw new Error(`GET /api/settings failed: ${response.status}`);
-		}
-		const body = (await response.json()) as SettingsResponse;
+		const body = await api.loadSettings();
 		dispatch({ type: "settings_presets", presets: body.presets });
 		dispatch({ type: "settings_provider", provider: body.provider });
 	}, []);
@@ -155,36 +113,21 @@ export function useHub(): Hub {
 	}, []);
 
 	const saveProvider = useCallback(async (body: SaveProviderBody) => {
-		const response = await apiFetch("/api/settings", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-		});
-		let payload: SaveProviderResponse | null = null;
 		try {
-			payload = (await response.json()) as SaveProviderResponse;
-		} catch {
-			payload = null;
-		}
-		if (!response.ok || payload === null || payload.ok !== true) {
+			const saved = await api.saveProvider(body);
+			dispatch({ type: "settings_error", error: null });
+			// Apply immediately; the server also broadcasts a `settings` event,
+			// which is a no-op replacement once this lands.
+			dispatch({ type: "settings_provider", provider: saved.provider });
+			return saved.warning;
+		} catch (error) {
 			// Surface the server's human-readable error so the dialog can show it
 			// inline (and offer "save anyway" for a verify failure); fall back to a
 			// generic message if the body is missing or malformed.
-			const message =
-				payload !== null &&
-				payload.ok === false &&
-				typeof payload.error === "string" &&
-				payload.error !== ""
-					? payload.error
-					: `保存设置失败 (${response.status})`;
+			const message = error instanceof Error ? error.message : String(error);
 			dispatch({ type: "settings_error", error: message });
-			throw new Error(message);
+			throw error;
 		}
-		dispatch({ type: "settings_error", error: null });
-		// Apply immediately; the server also broadcasts a `settings` event, which
-		// is a no-op replacement once this lands.
-		dispatch({ type: "settings_provider", provider: payload.provider });
-		return payload.warning;
 	}, []);
 
 	return {
