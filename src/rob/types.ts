@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+	agentByCommand,
+	unsupportedCommandMessage,
+} from "../../shared/agents.js";
 import { WORKSPACE_BOT } from "../../shared/protocol.js";
 import type { AgentEvent } from "../agent/events.js";
 import type {
@@ -16,15 +20,6 @@ export const robNameSchema = z
 		"Rob names must start with a lowercase letter and contain only lowercase letters, digits, and dashes (at most 32 characters).",
 	);
 export type RobName = z.infer<typeof robNameSchema>;
-
-export const PI_CLI_COMMAND = "pi";
-export const OPENCODE_CLI_COMMAND = "opencode";
-export const CLAUDE_CLI_COMMAND = "claude";
-const CLI_COMMANDS = [
-	PI_CLI_COMMAND,
-	OPENCODE_CLI_COMMAND,
-	CLAUDE_CLI_COMMAND,
-] as const;
 
 const nativeBackendSchema = z.object({ kind: z.literal("native") }).strict();
 
@@ -67,24 +62,23 @@ export const robConfigSchema = z
 		}
 		const backend = rob.backend;
 		if (backend === undefined || backend.kind !== "cli") return;
-		if (
-			!CLI_COMMANDS.includes(backend.command as (typeof CLI_COMMANDS)[number])
-		) {
+		const agent = agentByCommand(backend.command);
+		if (agent === undefined || agent.rob !== true) {
 			ctx.addIssue({
 				code: "custom",
 				path: ["backend", "command"],
-				message: `Unsupported CLI command "${backend.command}". Only "pi", "opencode", and "claude" are supported.`,
+				message: unsupportedCommandMessage(backend.command),
 			});
 			return;
 		}
 		if (
-			backend.command === PI_CLI_COMMAND &&
+			agent.needsProviderAndModel === true &&
 			(backend.provider === undefined || backend.model === undefined)
 		) {
 			ctx.addIssue({
 				code: "custom",
 				path: ["backend"],
-				message: `A "pi" cli backend requires "provider" and "model".`,
+				message: `A "${backend.command}" cli backend requires "provider" and "model".`,
 			});
 		}
 		const unsupported = CLI_UNSUPPORTED_TOOLS.filter(

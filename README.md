@@ -439,7 +439,7 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 - Context compaction summarizes the older messages with one extra model call when the estimate exceeds the threshold. Reasoning blocks are not part of the estimate because the provider drops them from outbound requests.
 - Sessions are saved so `--continue` resumes them. The compaction summary is a `user` message tagged `[compacted summary]`; it persists, but the model must keep the facts it needs in that summary.
 - Robs that use a `cli` backend (`pi`, `opencode`, or `claude`) cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing either tool in their `permissions` is a config error. The `pi` and `opencode` backends route `ask`-level tools through the rob's authorizer and the shared approval queue; the `claude` backend has no approval bridge, so its `ask` tools are denied instead. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook those tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask.
-- CLI backends are `pi`, `opencode`, and `claude`. `codex` and `kimi` are not implemented.
+- The external CLI backends are the rows with `rob: true` in the agent catalog (`shared/agents.ts`): `pi`, `opencode`, and `claude`. The same catalog also recognizes `codex` and `gemini`, but their rows are `rob: false` with a `robBlockedReason`, so they cannot back a rob yet.
 
 ## Development
 

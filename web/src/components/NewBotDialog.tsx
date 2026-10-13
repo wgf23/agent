@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
-import type { BotBackendDraft, BotDraft } from "../protocol";
+import type { BotBackendDraft, BotDraft, RobCommand } from "../protocol";
+import { agentById, ROB_COMMANDS } from "../protocol";
 
 interface Props {
 	model: string;
@@ -7,7 +8,15 @@ interface Props {
 	onClose: () => void;
 }
 
-type BackendChoice = "native" | "pi" | "opencode" | "claude";
+type BackendChoice = "native" | RobCommand;
+
+const BACKEND_CHOICES: readonly { value: BackendChoice; label: string }[] = [
+	{ value: "native", label: "内置" },
+	...ROB_COMMANDS.map((command) => ({
+		value: command,
+		label: agentById(command)?.label ?? command,
+	})),
+];
 
 const NAME_RULE = /^[a-z][a-z0-9-]{0,31}$/;
 
@@ -23,8 +32,10 @@ export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 
 	const nameValid = NAME_RULE.test(name);
 	const roleValid = role.trim() !== "";
-	// pi drives an external CLI that needs an explicit provider + model.
-	const piNeedsFields = backend === "pi";
+	// pi (and any future catalog row that asks for it) needs an explicit
+	// provider + model; the other CLI agents resolve them from the user's setup.
+	const piNeedsFields =
+		backend !== "native" && agentById(backend)?.needsProviderAndModel === true;
 	const providerValid = !piNeedsFields || provider.trim() !== "";
 	const backendModelValid = !piNeedsFields || backendModel.trim() !== "";
 
@@ -111,14 +122,7 @@ export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 						<div className="field">
 							<span className="field-label">后端</span>
 							<div className="backend-options" role="radiogroup">
-								{(
-									[
-										["native", "内置"],
-										["pi", "pi"],
-										["opencode", "opencode"],
-										["claude", "claude"],
-									] as const
-								).map(([value, label]) => (
+								{BACKEND_CHOICES.map(({ value, label }) => (
 									<button
 										key={value}
 										type="button"

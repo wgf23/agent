@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { missingCommandMessage } from "../../shared/agents.js";
 import {
 	type ApprovalChoice,
 	type BotDraft,
@@ -120,7 +121,7 @@ export class CompositeHub extends EventBus implements Hub {
 			!commandExists(parsed.data.backend.command)
 		) {
 			throw new BotDraftError(
-				`Cannot use the "${parsed.data.backend.command}" backend: the command is not on PATH. Install it first, or choose the built-in backend.`,
+				missingCommandMessage(parsed.data.backend.command),
 			);
 		}
 		if (this.robs.bots().some((bot) => bot.name === parsed.data.name)) {
