@@ -34,7 +34,7 @@ my-agent            # interactive TUI
 - `--max-steps <n>` caps the agent loop.
 - `--max-cost <usd>` stops a run once the accumulated dollar cost exceeds the cap, in both headless mode and the TUI. No cap by default.
 - `--output-format json` writes one JSON object per agent event plus a final `summary` object to stdout for scripting and CI; the default `text` streams the answer as before.
-- `--image <path>` attaches an image to the prompt, as a base64 `image_url` content part the model receives alongside your text. Repeatable. Supports `.png`, `.jpg`, `.jpeg`, `.gif`, and `.webp`, and rejects a missing file, an unsupported extension, or a file over 8 MiB before the run starts.
+- `--image <path>` attaches an image to the prompt, as a base64 `image_url` content part the model receives alongside your text. Repeatable. Supports `.png`, `.jpg`, `.jpeg`, `.gif`, and `.webp`, and rejects a missing file, an unsupported extension, or a file over 8 MiB before the run starts. A message is capped at 8 images and 20 MiB of base64 data, so an over-cap attachment is rejected before the provider is called.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
 - `my-agent sessions fork <id>` copies a saved session into a new one and prints the new id. `--at <n>` keeps only the first `n` messages of the fork.
 - `my-agent --version` prints the version.
@@ -184,7 +184,8 @@ The project file overrides the global file field by field, and both override the
 
 - `baseURL`, `model`, and `apiKeyEnv` are required; `dimensions` is optional.
 - The index lives at `~/.local/share/my-agent/index/<project>/index.json`, and `MY_AGENT_INDEX_DIR` overrides that base.
-- Files are chunked 40 lines with 10 lines of overlap, embedded in batches of 64 through `POST {baseURL}/embeddings`, and unchanged files are reused by mtime and size. A changed model or dimensions rebuilds the index, and writes are atomic.
+- Files are chunked 40 lines with 10 lines of overlap, embedded in batches of 64 through `POST {baseURL}/embeddings`, and unchanged files are reused by mtime and size. A changed model or dimensions rebuilds the index, the index is only written when a file was actually added, removed, or edited, and writes are atomic and serialized per index. The embeddings call has a 30 s timeout and honors the turn's abort signal.
+- The walk honors root and nested `.gitignore` files and always excludes a secret denylist (`.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `*.p12`, `.npmrc`, `credentials.json`, `*.kdbx`) before any text is embedded. When the workspace exceeds the 5000-file cap, the index keeps the first 5000 and the search output is prefixed with a truncation warning.
 - Search embeds the query and returns the top `k` (default 5, max 20) chunks as `<path>:<startLine>-<endLine> (score 0.xx)` with the chunk text. The tool defaults to `ask`, and a missing key names the `apiKeyEnv` variable.
 
 ## Tools

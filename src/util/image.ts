@@ -4,6 +4,8 @@ import type { ImagePart } from "../providers/types.js";
 import { errorMessage } from "./errors.js";
 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGES_PER_MESSAGE = 8;
+export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 const MEDIA_TYPES: Readonly<Record<string, string>> = {
 	".png": "image/png",
@@ -63,6 +65,39 @@ export async function readImage(filePath: string): Promise<ReadImageResult> {
 		ok: true,
 		image: { type: "image", mediaType, data: data.toString("base64") },
 	};
+}
+
+export type ReadImagesResult =
+	| { ok: true; images: ImagePart[] }
+	| { ok: false; error: string };
+
+// Reads and caps a message's attachments. The count cap bounds how many images
+// the session re-sends on every later turn, and the byte cap bounds the base64
+// that gets persisted and replayed.
+export async function readImages(
+	filePaths: string[],
+): Promise<ReadImagesResult> {
+	if (filePaths.length > MAX_IMAGES_PER_MESSAGE) {
+		return {
+			ok: false,
+			error: `Too many images: ${filePaths.length} (limit ${MAX_IMAGES_PER_MESSAGE})`,
+		};
+	}
+	const images: ImagePart[] = [];
+	let totalBytes = 0;
+	for (const filePath of filePaths) {
+		const result = await readImage(filePath);
+		if (!result.ok) return result;
+		totalBytes += result.image.data.length;
+		if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+			return {
+				ok: false,
+				error: "Images exceed the 20 MiB per-message limit",
+			};
+		}
+		images.push(result.image);
+	}
+	return { ok: true, images };
 }
 
 function isEnoent(error: unknown): boolean {

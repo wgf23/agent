@@ -2,7 +2,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Embedder } from "../../src/semantic/embedder.js";
 import {
+	buildIndex,
 	chunkLines,
 	cosineSimilarity,
 	type Index,
@@ -74,6 +76,95 @@ describe("cosineSimilarity", () => {
 
 	it("is 0 for a zero vector", () => {
 		expect(cosineSimilarity([0, 0], [1, 1])).toBe(0);
+	});
+
+	it("throws when the vectors differ in length", () => {
+		expect(() => cosineSimilarity([1, 0, 0], [1, 0])).toThrow(
+			"Vector dimension mismatch: 3 vs 2",
+		);
+	});
+});
+
+describe("buildIndex", () => {
+	it("rejects a vector whose length is not the configured dimension", async () => {
+		await writeFile(path.join(dir, "a.txt"), "line one\n", "utf8");
+		const embedder: Embedder = async () => [[1, 0, 0]];
+		await expect(
+			buildIndex({
+				workspaceRoot: dir,
+				model: "m",
+				dimensions: 4,
+				embedder,
+				existing: undefined,
+			}),
+		).rejects.toThrow("embeddings: vector 0 has length 3, expected 4");
+	});
+
+	it("rejects an empty vector", async () => {
+		await writeFile(path.join(dir, "a.txt"), "line one\n", "utf8");
+		const embedder: Embedder = async () => [[]];
+		await expect(
+			buildIndex({
+				workspaceRoot: dir,
+				model: "m",
+				dimensions: undefined,
+				embedder,
+				existing: undefined,
+			}),
+		).rejects.toThrow("embeddings: vector 0 is empty");
+	});
+
+	it("rejects an embedder that returns fewer vectors than chunks", async () => {
+		await writeFile(path.join(dir, "a.txt"), "one\ntwo\n", "utf8");
+		await writeFile(path.join(dir, "b.txt"), "three\nfour\n", "utf8");
+		const embedder: Embedder = async () => [[1, 0, 0, 0]];
+		await expect(
+			buildIndex({
+				workspaceRoot: dir,
+				model: "m",
+				dimensions: 4,
+				embedder,
+				existing: undefined,
+			}),
+		).rejects.toThrow("embeddings: expected 2 vectors, got 1");
+	});
+
+	it("marks the build unchanged when no file changed", async () => {
+		await writeFile(path.join(dir, "a.txt"), "one\ntwo\n", "utf8");
+		const embedder: Embedder = async (texts) => texts.map(() => [1, 0, 0, 0]);
+		const first = await buildIndex({
+			workspaceRoot: dir,
+			model: "m",
+			dimensions: 4,
+			embedder,
+			existing: undefined,
+		});
+		expect(first.changed).toBe(true);
+		const second = await buildIndex({
+			workspaceRoot: dir,
+			model: "m",
+			dimensions: 4,
+			embedder,
+			existing: first.index,
+		});
+		expect(second.changed).toBe(false);
+	});
+
+	it("reports truncation when the walk exceeds the file cap", async () => {
+		await writeFile(path.join(dir, "a.txt"), "a\n", "utf8");
+		await writeFile(path.join(dir, "b.txt"), "b\n", "utf8");
+		await writeFile(path.join(dir, "c.txt"), "c\n", "utf8");
+		const embedder: Embedder = async (texts) => texts.map(() => [1, 0, 0, 0]);
+		const result = await buildIndex({
+			workspaceRoot: dir,
+			model: "m",
+			dimensions: 4,
+			embedder,
+			existing: undefined,
+			maxFiles: 2,
+		});
+		expect(result.truncated).toBe(true);
+		expect(Object.keys(result.index.files)).toHaveLength(2);
 	});
 });
 

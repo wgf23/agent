@@ -384,6 +384,33 @@ describe("runHeadless images", () => {
 			errorSpy.mockRestore();
 		}
 	});
+
+	it("rejects more than 8 images before calling the provider", async () => {
+		const imagePaths: string[] = [];
+		for (let index = 0; index < 9; index += 1) {
+			const imagePath = path.join(workspaceRoot, `shot${index}.png`);
+			await writeFile(imagePath, "x", "utf8");
+			imagePaths.push(imagePath);
+		}
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const provider = createMockProvider([]);
+			const code = await runHeadless({
+				prompt: "hi",
+				imagePaths,
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith("Too many images: 9 (limit 8)");
+			expect(provider.requests).toHaveLength(0);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
 });
 
 describe("runHeadless with MCP servers", () => {

@@ -13,7 +13,7 @@ import fg from "fast-glob";
 import { z } from "zod";
 import { projectSlug } from "../session/store.js";
 import { errorMessage } from "../util/errors.js";
-import { loadGitignore, toPosix } from "../util/gitignore.js";
+import { isSecretPath, loadGitignore, toPosix } from "../util/gitignore.js";
 import type { Embedder } from "./embedder.js";
 
 export const INDEX_VERSION = 1;
@@ -114,11 +114,13 @@ export function chunkLines(lines: string[]): TextChunk[] {
 }
 
 export function cosineSimilarity(a: number[], b: number[]): number {
-	const length = Math.min(a.length, b.length);
+	if (a.length !== b.length) {
+		throw new Error(`Vector dimension mismatch: ${a.length} vs ${b.length}`);
+	}
 	let dot = 0;
 	let normA = 0;
 	let normB = 0;
-	for (let index = 0; index < length; index += 1) {
+	for (let index = 0; index < a.length; index += 1) {
 		dot += a[index] * b[index];
 		normA += a[index] * a[index];
 		normB += b[index] * b[index];
@@ -170,13 +172,24 @@ export interface BuildIndexInput {
 	dimensions: number | undefined;
 	embedder: Embedder;
 	existing: Index | undefined;
+	signal?: AbortSignal;
+	maxFiles?: number;
+}
+
+export interface BuildResult {
+	index: Index;
+	changed: boolean;
+	truncated: boolean;
 }
 
 // Walks the workspace, diffs against the existing index by mtimeMs+size, and
 // embeds only new or changed chunks. Unchanged files reuse their stored vectors,
 // deleted files drop out because only the fresh walk contributes chunks.
-export async function buildIndex(input: BuildIndexInput): Promise<Index> {
-	const files = await walkFiles(input.workspaceRoot);
+export async function buildIndex(input: BuildIndexInput): Promise<BuildResult> {
+	const { files, truncated } = await walkFiles(
+		input.workspaceRoot,
+		input.maxFiles ?? MAX_FILES,
+	);
 	const byPath = new Map<string, IndexChunk[]>();
 	if (input.existing !== undefined) {
 		for (const chunk of input.existing.chunks) {
@@ -229,14 +242,32 @@ export async function buildIndex(input: BuildIndexInput): Promise<Index> {
 	const embedded = await embedBatches(
 		input.embedder,
 		pending.map((c) => c.text),
+		input.signal,
 	);
-	for (let index = 0; index < pending.length; index += 1) {
+	// The embedder must return exactly one non-empty vector per chunk, each of
+	// the configured dimension, or the stored index would score garbage that a
+	// later query silently misreads.
+	if (embedded.length !== pending.length) {
+		throw new Error(
+			`embeddings: expected ${pending.length} vectors, got ${embedded.length}`,
+		);
+	}
+	for (let index = 0; index < embedded.length; index += 1) {
+		const vector = embedded[index];
+		if (vector.length === 0) {
+			throw new Error(`embeddings: vector ${index} is empty`);
+		}
+		if (input.dimensions !== undefined && vector.length !== input.dimensions) {
+			throw new Error(
+				`embeddings: vector ${index} has length ${vector.length}, expected ${input.dimensions}`,
+			);
+		}
 		chunks.push({
 			path: pendingPaths[index],
 			startLine: pending[index].startLine,
 			endLine: pending[index].endLine,
 			text: pending[index].text,
-			vector: embedded[index] ?? [],
+			vector,
 		});
 	}
 
@@ -246,26 +277,57 @@ export async function buildIndex(input: BuildIndexInput): Promise<Index> {
 	const dimensions = input.dimensions ?? chunks[0]?.vector.length ?? 0;
 
 	return {
-		version: INDEX_VERSION,
-		model: input.model,
-		dimensions,
-		files: fileMap,
-		chunks,
+		index: {
+			version: INDEX_VERSION,
+			model: input.model,
+			dimensions,
+			files: fileMap,
+			chunks,
+		},
+		changed:
+			input.existing === undefined ||
+			!filesEqual(fileMap, input.existing.files),
+		truncated,
 	};
+}
+
+function filesEqual(
+	a: Record<string, IndexFile>,
+	b: Record<string, IndexFile>,
+): boolean {
+	const entries = Object.entries(a);
+	if (entries.length !== Object.keys(b).length) return false;
+	for (const [key, file] of entries) {
+		const other = b[key];
+		if (
+			other === undefined ||
+			other.mtimeMs !== file.mtimeMs ||
+			other.size !== file.size
+		) {
+			return false;
+		}
+	}
+	return true;
 }
 
 async function embedBatches(
 	embedder: Embedder,
 	texts: string[],
+	signal?: AbortSignal,
 ): Promise<number[][]> {
 	const vectors: number[][] = [];
 	for (let start = 0; start < texts.length; start += EMBED_BATCH) {
-		vectors.push(...(await embedder(texts.slice(start, start + EMBED_BATCH))));
+		vectors.push(
+			...(await embedder(texts.slice(start, start + EMBED_BATCH), signal)),
+		);
 	}
 	return vectors;
 }
 
-async function walkFiles(workspaceRoot: string): Promise<string[]> {
+async function walkFiles(
+	workspaceRoot: string,
+	maxFiles: number,
+): Promise<{ files: string[]; truncated: boolean }> {
 	const matcher = await loadGitignore(workspaceRoot);
 	let matches: string[];
 	try {
@@ -280,13 +342,14 @@ async function walkFiles(workspaceRoot: string): Promise<string[]> {
 	} catch (error) {
 		throw new Error(`Failed to list workspace: ${errorMessage(error)}`);
 	}
-	return matches
+	const filtered = matches
 		.map((match) =>
 			toPosix(path.relative(workspaceRoot, path.resolve(workspaceRoot, match))),
 		)
-		.filter((relative) => !matcher.ignores(relative))
-		.sort()
-		.slice(0, MAX_FILES);
+		.filter((relative) => !isSecretPath(relative) && !matcher.ignores(relative))
+		.sort();
+	const truncated = filtered.length > maxFiles;
+	return { files: filtered.slice(0, maxFiles), truncated };
 }
 
 export type WriteIndexResult =

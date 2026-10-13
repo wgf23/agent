@@ -1,29 +1,42 @@
 import type { EmbeddingsSettings } from "../config/resolve.js";
+import { errorMessage } from "../util/errors.js";
 
 // The embedder seam keeps the index buildable and searchable without a network,
 // so tests inject a deterministic fake and production wraps the HTTP endpoint.
-export type Embedder = (texts: string[]) => Promise<number[][]>;
+export type Embedder = (
+	texts: string[],
+	signal?: AbortSignal,
+) => Promise<number[][]>;
+
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function createEmbedder(
 	config: EmbeddingsSettings,
 	apiKey: string,
+	timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Embedder {
 	const url = `${config.baseURL.replace(/\/+$/, "")}/embeddings`;
-	return async (texts) => {
-		const response = await fetch(url, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify({
-				model: config.model,
-				input: texts,
-				...(config.dimensions === undefined
-					? {}
-					: { dimensions: config.dimensions }),
-			}),
-		});
+	return async (texts, signal) => {
+		let response: Response;
+		try {
+			response = await fetch(url, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({
+					model: config.model,
+					input: texts,
+					...(config.dimensions === undefined
+						? {}
+						: { dimensions: config.dimensions }),
+				}),
+				signal: requestSignal(timeoutMs, signal),
+			});
+		} catch (error) {
+			throw new Error(embedErrorMessage(error, signal, timeoutMs));
+		}
 		if (!response.ok) {
 			throw new Error(`embeddings: HTTP ${response.status}`);
 		}
@@ -44,4 +57,28 @@ export function createEmbedder(
 		}
 		return vectors;
 	};
+}
+
+function requestSignal(timeoutMs: number, parent?: AbortSignal): AbortSignal {
+	const timeout = AbortSignal.timeout(timeoutMs);
+	if (parent === undefined) return timeout;
+	return AbortSignal.any([parent, timeout]);
+}
+
+function embedErrorMessage(
+	error: unknown,
+	parent: AbortSignal | undefined,
+	timeoutMs: number,
+): string {
+	if (parent?.aborted || namedError(error, "AbortError")) {
+		return "embeddings: request aborted";
+	}
+	if (namedError(error, "TimeoutError")) {
+		return `embeddings: request timed out after ${timeoutMs}ms`;
+	}
+	return `embeddings: ${errorMessage(error)}`;
+}
+
+function namedError(error: unknown, name: string): boolean {
+	return error instanceof Error && error.name === name;
 }

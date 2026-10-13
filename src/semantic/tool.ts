@@ -2,14 +2,17 @@ import { z } from "zod";
 import type { EmbeddingsSettings } from "../config/resolve.js";
 import type { Tool, ToolResult } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
+import { withFileLock } from "../util/file-lock.js";
 import { createEmbedder, type Embedder } from "./embedder.js";
 import {
+	type BuildResult,
 	buildIndex,
 	DEFAULT_K,
 	formatResults,
 	type Index,
 	indexDir,
 	indexPath,
+	MAX_FILES,
 	MAX_K,
 	readIndex,
 	searchIndex,
@@ -37,6 +40,7 @@ export interface SemanticSearchToolOptions {
 	workspaceRoot: string;
 	env: Record<string, string | undefined>;
 	embedder?: Embedder;
+	maxFiles?: number;
 }
 
 // One tool per run holds the built index in a closure so a second search reuses
@@ -80,32 +84,48 @@ export function createSemanticSearchTool(
 			const resolved = resolveEmbedder();
 			if (!resolved.ok) return { ok: false, error: resolved.error };
 
+			const maxFiles = options.maxFiles ?? MAX_FILES;
+			const filePath = indexPath(options.workspaceRoot, options.env);
+			type BuildOutcome =
+				| { ok: true; built: BuildResult }
+				| { ok: false; error: string };
 			try {
-				if (index === undefined) {
-					index = await readIndex(
-						indexPath(options.workspaceRoot, options.env),
-						{
+				// The read-build-write round-trip is serialized per index so two
+				// concurrent searches do not both re-embed the same changes.
+				const outcome = await withFileLock(
+					filePath,
+					async (): Promise<BuildOutcome> => {
+						if (index === undefined) {
+							index = await readIndex(filePath, {
+								model: options.config.model,
+								dimensions: options.config.dimensions,
+							});
+						}
+						const built = await buildIndex({
+							workspaceRoot: options.workspaceRoot,
 							model: options.config.model,
 							dimensions: options.config.dimensions,
-						},
-					);
-				}
-				const next = await buildIndex({
-					workspaceRoot: options.workspaceRoot,
-					model: options.config.model,
-					dimensions: options.config.dimensions,
-					embedder: resolved.embedder,
-					existing: index,
-				});
-				const written = await writeIndex(
-					indexDir(options.workspaceRoot, options.env),
-					indexPath(options.workspaceRoot, options.env),
-					next,
+							embedder: resolved.embedder,
+							existing: index,
+							signal: ctx.signal,
+							maxFiles,
+						});
+						if (!built.changed) return { ok: true, built };
+						const written = await writeIndex(
+							indexDir(options.workspaceRoot, options.env),
+							filePath,
+							built.index,
+						);
+						if (!written.ok) return { ok: false, error: written.error };
+						return { ok: true, built };
+					},
 				);
-				if (!written.ok) return { ok: false, error: written.error };
-				index = next;
+				if (!outcome.ok) return { ok: false, error: outcome.error };
+				index = outcome.built.index;
 
-				const queryVector = (await resolved.embedder([args.query]))[0];
+				const queryVector = (
+					await resolved.embedder([args.query], ctx.signal)
+				)[0];
 				if (queryVector === undefined) {
 					return {
 						ok: false,
@@ -113,9 +133,14 @@ export function createSemanticSearchTool(
 							"semantic_search: embeddings endpoint returned no vector for the query",
 					};
 				}
+				const results = formatResults(
+					searchIndex(outcome.built.index, queryVector, args.k),
+				);
 				return {
 					ok: true,
-					output: formatResults(searchIndex(index, queryVector, args.k)),
+					output: outcome.built.truncated
+						? `warning: workspace has more than ${maxFiles} files; only the first ${maxFiles} were indexed\n\n${results}`
+						: results,
 				};
 			} catch (error) {
 				return { ok: false, error: `semantic_search: ${errorMessage(error)}` };

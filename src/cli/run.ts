@@ -14,12 +14,7 @@ import {
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
-import type {
-	ImagePart,
-	Message,
-	Provider,
-	TextBlock,
-} from "../providers/types.js";
+import type { Message, Provider, TextBlock } from "../providers/types.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { chooseSession } from "../session/chooser.js";
 import {
@@ -32,7 +27,7 @@ import {
 	withoutSystem,
 } from "../session/store.js";
 import { createTaskTool } from "../tools/task.js";
-import { readImage } from "../util/image.js";
+import { readImages } from "../util/image.js";
 
 export type OutputFormat = "text" | "json";
 
@@ -86,14 +81,14 @@ export async function runHeadless(
 
 	// Attachments are read before any config resolution or provider work so a
 	// bad path fails fast and never reaches the network.
-	const images: ImagePart[] = [];
-	for (const imagePath of options.imagePaths ?? []) {
-		const result = await readImage(path.resolve(workspaceRoot, imagePath));
-		if (!result.ok) {
-			console.error(result.error);
-			return 1;
-		}
-		images.push(result.image);
+	const images = await readImages(
+		(options.imagePaths ?? []).map((imagePath) =>
+			path.resolve(workspaceRoot, imagePath),
+		),
+	);
+	if (!images.ok) {
+		console.error(images.error);
+		return 1;
 	}
 
 	const resolved = resolveConfig({
@@ -201,7 +196,7 @@ export async function runHeadless(
 			model: settings.model,
 			workspaceRoot,
 			prompt: options.prompt,
-			images,
+			images: images.images,
 			history: session.messages,
 			maxSteps: settings.maxSteps,
 			maxCost: options.maxCost,
