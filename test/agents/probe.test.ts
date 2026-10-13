@@ -1,4 +1,4 @@
-import { chmod, copyFile, readFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -64,10 +64,30 @@ describe("probeVersion", () => {
 		expect(result).toEqual({ ok: true, version: null, path: agent });
 	});
 
-	it("reads only stdout, not stderr", async () => {
+	it("falls back to the first non-empty stderr line when stdout is empty", async () => {
 		process.env.FAKE_AGENT_SCENARIO = "stderr-only";
 		const result = await probeVersion(agent, { timeoutMs: 2000 });
-		expect(result).toEqual({ ok: true, version: null, path: agent });
+		expect(result).toEqual({ ok: true, version: "9.9.9", path: agent });
+	});
+
+	it("resolves a command that is only in the npm global bin dir", async () => {
+		const globalBin = path.join(workspace, "globalbin");
+		const emptyPath = path.join(workspace, "empty");
+		await mkdir(globalBin, { recursive: true });
+		await copyFile(AGENT_FIXTURE, path.join(globalBin, "agent"));
+		await chmod(path.join(globalBin, "agent"), 0o755);
+
+		const result = await probeVersion("agent", {
+			pathEnv: emptyPath,
+			globalBinDir: async () => globalBin,
+			timeoutMs: 2000,
+		});
+
+		expect(result).toEqual({
+			ok: true,
+			version: "1.2.3",
+			path: path.join(globalBin, "agent"),
+		});
 	});
 
 	it("kills a hung binary and resolves timeout instead of throwing", async () => {

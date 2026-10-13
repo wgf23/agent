@@ -1,10 +1,20 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmod, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { detectAgents } from "../../src/agents/detect.js";
 import type { InstallJob } from "../../src/agents/job.js";
-import type { Probe, ProbeResult } from "../../src/agents/probe.js";
+import {
+	type Probe,
+	type ProbeResult,
+	probeVersion,
+} from "../../src/agents/probe.js";
+
+const AGENT_FIXTURE = fileURLToPath(
+	new URL("../fixtures/fake-agent.mjs", import.meta.url),
+);
 
 const originalPath = process.env.PATH;
 
@@ -41,6 +51,35 @@ describe("detectAgents", () => {
 			path: binary,
 			onPath: false,
 			version: "1.0.0",
+			error: null,
+		});
+	});
+
+	it("keeps a probe resolved only through the global bin fallback off PATH", async () => {
+		const globalBin = mkdtempSync(path.join(tmpdir(), "my-agent-globalbin-"));
+		// PATH must let the fixture's `#!/usr/bin/env node` shebang work without
+		// exposing `pi`, so put only a node link on it.
+		const nodeBin = mkdtempSync(path.join(tmpdir(), "my-agent-nodebin-"));
+		symlinkSync(process.execPath, path.join(nodeBin, "node"));
+		withPath(nodeBin);
+
+		const binary = path.join(globalBin, "pi");
+		await copyFile(AGENT_FIXTURE, binary);
+		await chmod(binary, 0o755);
+
+		const states = await detectAgents((command) =>
+			probeVersion(command, {
+				pathEnv: nodeBin,
+				globalBinDir: async () => globalBin,
+				timeoutMs: 2000,
+			}),
+		);
+
+		expect(states.find((state) => state.id === "pi")?.presence).toEqual({
+			kind: "installed",
+			path: binary,
+			onPath: false,
+			version: "1.2.3",
 			error: null,
 		});
 	});
