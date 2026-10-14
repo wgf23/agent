@@ -133,6 +133,18 @@ export class CompositeHub extends EventBus implements Hub {
 		return this.robs.closeSession(bot, id);
 	}
 
+	deleteSession(bot: string, id: string): Promise<boolean> {
+		if (bot === WORKSPACE_BOT) return this.workspace.deleteSession(bot, id);
+		return this.robs.deleteSession(bot, id);
+	}
+
+	renameSession(bot: string, id: string, title: string): Promise<boolean> {
+		if (bot === WORKSPACE_BOT) {
+			return this.workspace.renameSession(bot, id, title);
+		}
+		return this.robs.renameSession(bot, id, title);
+	}
+
 	// The workspace chat is not a ledger bot, so every ledger route resolves
 	// against the rob roster only.
 	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {

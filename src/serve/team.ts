@@ -277,6 +277,40 @@ export class TeamHub extends EventBus implements Hub {
 		await this.emitSessions(bot);
 	}
 
+	// Drops one session from the bot's ledger. Deleting the current channel
+	// opens a fresh one, so the bot always has somewhere to write. False when
+	// the bot is unknown or the ledger has no such session (the route's 404).
+	async deleteSession(bot: string, id: string): Promise<boolean> {
+		if (!this.hasBot(bot)) return false;
+		const result = await this.store.removeSession(bot, id);
+		if (!result.ok) return false;
+		if (this.team.currentChannel(bot).id === id) {
+			const session = this.team.openChannel(bot);
+			this.emit({
+				type: "session_opened",
+				bot,
+				sessionId: session.id,
+				messages: [],
+			});
+		}
+		await this.emitSessions(bot);
+		return true;
+	}
+
+	// Relabels one session. A label change never touches the turns, so the
+	// projection's updatedAt is unchanged. False like deleteSession.
+	async renameSession(
+		bot: string,
+		id: string,
+		title: string,
+	): Promise<boolean> {
+		if (!this.hasBot(bot)) return false;
+		const result = await this.store.renameSession(bot, id, title);
+		if (!result.ok) return false;
+		await this.emitSessions(bot);
+		return true;
+	}
+
 	// The current session's transcript, replayed from the ledger so the read
 	// never consumes the rob's live history. Unknown bot is null (404).
 	async readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
@@ -372,7 +406,9 @@ export class TeamHub extends EventBus implements Hub {
 			role: rob.role,
 			model: rob.model ?? this.options.settings.model,
 		});
-		return loaded.ok ? summarizeSessions(loaded.record.turns) : [];
+		return loaded.ok
+			? summarizeSessions(loaded.record.turns, loaded.record.sessionTitles)
+			: [];
 	}
 
 	async dispose(): Promise<void> {
@@ -469,6 +505,7 @@ export class TeamHub extends EventBus implements Hub {
 // chat uses.
 export function summarizeSessions(
 	turns: readonly Turn[],
+	titles: Readonly<Record<string, string>> = {},
 ): SessionSummaryInfo[] {
 	const summaries = new Map<string, SessionSummaryInfo>();
 	for (const turn of [...turns].sort((a, b) => a.seq - b.seq)) {
@@ -479,6 +516,7 @@ export function summarizeSessions(
 				updatedAt: turn.at,
 				messageCount: turn.messages.length,
 				firstUserText: firstUserMessageText(turn.messages),
+				title: titles[turn.sessionId] ?? null,
 			});
 			continue;
 		}

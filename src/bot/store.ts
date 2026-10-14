@@ -35,6 +35,10 @@ export type SaveMemoryResult =
 	| { ok: true; record: BotRecord; path: string }
 	| { ok: false; error: string };
 
+export type MutateSessionResult =
+	| { ok: true; record: BotRecord; path: string }
+	| { ok: false; error: string };
+
 export interface BotStoreOptions {
 	// Stamped onto updatedAt by saveMemory; injected so a test can pin it.
 	clock?: () => number;
@@ -53,6 +57,16 @@ export interface BotStore {
 	memory(bot: string): Promise<MemoryEntry[]>;
 	// Deletes the bot's durable record. A missing file is a no-op.
 	remove(bot: string): Promise<void>;
+	// Drops one session's turns and its title. An absent session is reported as
+	// an error so the route can 404 rather than claim a no-op success.
+	removeSession(bot: string, sessionId: string): Promise<MutateSessionResult>;
+	// Sets one session's title and keeps every turn. An absent session is an
+	// error for the same reason.
+	renameSession(
+		bot: string,
+		sessionId: string,
+		title: string,
+	): Promise<MutateSessionResult>;
 }
 
 // A bot's experience is global across workspaces, so the ledger is keyed by
@@ -213,6 +227,74 @@ export function createBotStore(
 		});
 	}
 
+	// Drops one session's turns and its title and rewrites the whole record
+	// through the same atomic writer commit uses. An id the record has no turn
+	// or title for is an error, not a silent no-op, so the route answers 404.
+	async function removeSession(
+		bot: string,
+		sessionId: string,
+	): Promise<MutateSessionResult> {
+		return enqueue(bot, async () => {
+			const filePath = botPath(bot);
+			const existing = await readRecord(filePath, bot);
+			if (!existing.ok) return existing;
+			if (!hasSession(existing.record, sessionId)) {
+				return { ok: false, error: `Unknown session: ${sessionId}` };
+			}
+			const sessionTitles = { ...existing.record.sessionTitles };
+			delete sessionTitles[sessionId];
+			const next: BotRecord = {
+				...existing.record,
+				turns: existing.record.turns.filter(
+					(turn) => turn.sessionId !== sessionId,
+				),
+				sessionTitles,
+			};
+			try {
+				await writeJsonAtomic(filePath, next);
+			} catch (error) {
+				return {
+					ok: false,
+					error: `Failed to write ${filePath}: ${errorMessage(error)}`,
+				};
+			}
+			return { ok: true, record: next, path: filePath };
+		});
+	}
+
+	// Sets one session's title. Only the title map changes, so the turns (and
+	// the updatedAt derivation) are untouched. An absent session is an error.
+	async function renameSession(
+		bot: string,
+		sessionId: string,
+		title: string,
+	): Promise<MutateSessionResult> {
+		return enqueue(bot, async () => {
+			const filePath = botPath(bot);
+			const existing = await readRecord(filePath, bot);
+			if (!existing.ok) return existing;
+			if (!hasSession(existing.record, sessionId)) {
+				return { ok: false, error: `Unknown session: ${sessionId}` };
+			}
+			const next: BotRecord = {
+				...existing.record,
+				sessionTitles: {
+					...existing.record.sessionTitles,
+					[sessionId]: title,
+				},
+			};
+			try {
+				await writeJsonAtomic(filePath, next);
+			} catch (error) {
+				return {
+					ok: false,
+					error: `Failed to write ${filePath}: ${errorMessage(error)}`,
+				};
+			}
+			return { ok: true, record: next, path: filePath };
+		});
+	}
+
 	// Best-effort read for callers that only want the memory and can tolerate a
 	// missing ledger. Corruption is reported by load(), not swallowed here.
 	async function memory(bot: string): Promise<MemoryEntry[]> {
@@ -232,7 +314,15 @@ export function createBotStore(
 		return parsed.success ? parsed.data.memory : [];
 	}
 
-	return { load, commit, saveMemory, memory, remove };
+	return {
+		load,
+		commit,
+		saveMemory,
+		memory,
+		remove,
+		removeSession,
+		renameSession,
+	};
 }
 
 // A bot's identity and role live in the workspace project file, never here, so
@@ -248,6 +338,7 @@ function emptyRecord(bot: string, identity: BotIdentity): BotRecord {
 		seq: 0,
 		usage: { input: 0, output: 0 },
 		memory: [],
+		sessionTitles: {},
 		turns: [],
 	};
 }
@@ -297,5 +388,14 @@ function isEnoent(error: unknown): boolean {
 		error !== null &&
 		"code" in error &&
 		(error as { code?: unknown }).code === "ENOENT"
+	);
+}
+
+// A session exists in the record if it owns a turn or carries a title, so a
+// rename of a turn-less session is still addressable.
+function hasSession(record: BotRecord, sessionId: string): boolean {
+	return (
+		record.turns.some((turn) => turn.sessionId === sessionId) ||
+		record.sessionTitles[sessionId] !== undefined
 	);
 }

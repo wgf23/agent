@@ -51,6 +51,7 @@ function record(overrides: Partial<BotRecord> = {}): BotRecord {
 		seq: 0,
 		usage: { input: 0, output: 0 },
 		memory: [],
+		sessionTitles: {},
 		turns: [],
 		...overrides,
 	};

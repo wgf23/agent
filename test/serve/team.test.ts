@@ -83,6 +83,31 @@ function collect(hub: TeamHub): ServerEvent[] {
 	return events;
 }
 
+// Seeds one ledger turn for a bot session so the projection has something to
+// summarize; the caller names the session so a test can address it.
+async function seedSession(
+	sessionId: string,
+	text: string,
+	seq: number,
+): Promise<void> {
+	const store = createBotStore();
+	const loaded = await store.load("alpha", {
+		role: "a test rob",
+		model: "deepseek-flash",
+	});
+	if (!loaded.ok) throw new Error(loaded.error);
+	const committed = await store.commit(loaded.record, {
+		id: `trn_${seq.toString(16).padStart(32, "0")}`,
+		seq,
+		sessionId,
+		workspaceRoot,
+		at: seq,
+		wake: "user",
+		messages: [{ role: "user", content: text }],
+	});
+	if (!committed.ok) throw new Error(committed.error);
+}
+
 async function waitFor(
 	predicate: () => boolean,
 	label: string,
@@ -410,8 +435,20 @@ describe("TeamHub", () => {
 		] satisfies Turn[];
 
 		expect(summarizeSessions(turns)).toEqual([
-			{ id: "chs_a", updatedAt: 30, messageCount: 4, firstUserText: "hi a" },
-			{ id: "chs_b", updatedAt: 20, messageCount: 3, firstUserText: "hi b" },
+			{
+				id: "chs_a",
+				updatedAt: 30,
+				messageCount: 4,
+				firstUserText: "hi a",
+				title: null,
+			},
+			{
+				id: "chs_b",
+				updatedAt: 20,
+				messageCount: 3,
+				firstUserText: "hi b",
+				title: null,
+			},
 		]);
 	});
 
@@ -705,6 +742,69 @@ describe("TeamHub", () => {
 		expect(() => hub.replaceBot("ghost", { name: "ghost", role: "x" })).toThrow(
 			"Unknown rob: ghost",
 		);
+		await hub.dispose();
+	});
+
+	it("renames and deletes a bot session through the ledger", async () => {
+		await seedSession("chs_a", "hi a", 1);
+		await seedSession("chs_b", "hi b", 2);
+		const hub = createHub(slowProvider());
+		const events = collect(hub);
+
+		expect(await hub.renameSession("ghost", "chs_a", "x")).toBe(false);
+		expect(await hub.renameSession("alpha", "chs_missing", "x")).toBe(false);
+		expect(await hub.renameSession("alpha", "chs_a", "First")).toBe(true);
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "bot_sessions",
+				bot: "alpha",
+				sessions: expect.arrayContaining([
+					expect.objectContaining({ id: "chs_a", title: "First" }),
+				]),
+			}),
+		);
+
+		// Deleting a non-current session drops it from the projection and never
+		// emits the chat's own event.
+		expect(await hub.deleteSession("alpha", "chs_missing")).toBe(false);
+		expect(await hub.deleteSession("alpha", "chs_b")).toBe(true);
+		const afterDelete = events
+			.filter((event) => event.type === "bot_sessions")
+			.at(-1);
+		const listed =
+			afterDelete?.type === "bot_sessions" ? afterDelete.sessions : [];
+		expect(listed.map((session) => session.id)).toEqual(["chs_a"]);
+		expect(events.some((event) => event.type === "sessions")).toBe(false);
+		await hub.dispose();
+	});
+
+	it("opens a fresh channel when the deleted session is the current one", async () => {
+		await seedSession("chs_a", "hi a", 1);
+		await seedSession("chs_b", "hi b", 2);
+		const hub = createHub(slowProvider());
+		const events = collect(hub);
+
+		await hub.openSession("alpha", "chs_a");
+		const openedBefore = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(openedBefore).toMatchObject({ sessionId: "chs_a" });
+
+		expect(await hub.deleteSession("alpha", "chs_a")).toBe(true);
+
+		const openedAfter = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(openedAfter?.type).toBe("session_opened");
+		const newId =
+			openedAfter?.type === "session_opened" ? openedAfter.sessionId : "";
+		expect(newId).not.toBe("chs_a");
+		const afterDelete = events
+			.filter((event) => event.type === "bot_sessions")
+			.at(-1);
+		const listed =
+			afterDelete?.type === "bot_sessions" ? afterDelete.sessions : [];
+		expect(listed.map((session) => session.id)).toEqual(["chs_b"]);
 		await hub.dispose();
 	});
 });

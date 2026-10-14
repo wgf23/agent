@@ -425,6 +425,7 @@ function emptyRecord(
 		seq: 0,
 		usage: { input: 0, output: 0 },
 		memory: [],
+		sessionTitles: {},
 		turns: [],
 	};
 }

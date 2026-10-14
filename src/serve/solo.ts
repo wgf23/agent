@@ -19,9 +19,12 @@ import {
 import { defaultRules } from "../permissions/rules.js";
 import type { ImagePart, Message } from "../providers/types.js";
 import {
+	deleteSession as deleteStoredSession,
+	latestSession,
 	listSessions,
 	loadSession,
 	newSession,
+	renameSession as renameStoredSession,
 	type SessionSummary,
 	type StoredSession,
 	saveSession,
@@ -194,6 +197,49 @@ export class SoloHub extends EventBus implements Hub {
 		this.emit({ type: "bot_status", state: this.state() });
 	}
 
+	// Deletes one stored session. Deleting the live one adopts the newest
+	// remaining session, or starts a fresh one when none remains, and announces
+	// it with `session_opened`. False when the file is absent (the route's 404).
+	async deleteSession(bot: string, id: string): Promise<boolean> {
+		if (bot !== DEFAULT_BOT) return false;
+		const deleted = await deleteStoredSession(this.options.workspaceRoot, id);
+		if (!deleted.ok) return false;
+		if (this.session.id === id) {
+			const latest = await latestSession(this.options.workspaceRoot);
+			this.session =
+				latest ??
+				newSession(this.options.workspaceRoot, this.options.settings.model);
+			this.setStatus("idle");
+			this.emit({
+				type: "session_opened",
+				bot: DEFAULT_BOT,
+				sessionId: this.session.id,
+				messages: toTranscript(this.session.messages),
+			});
+		}
+		await this.refreshSessions();
+		return true;
+	}
+
+	// Relabels one stored session. A label change leaves updatedAt and the
+	// messages alone, so the list order does not move.
+	async renameSession(
+		bot: string,
+		id: string,
+		title: string,
+	): Promise<boolean> {
+		if (bot !== DEFAULT_BOT) return false;
+		const renamed = await renameStoredSession(
+			this.options.workspaceRoot,
+			id,
+			title,
+		);
+		if (!renamed.ok) return false;
+		if (this.session.id === id) this.session.title = title;
+		await this.refreshSessions();
+		return true;
+	}
+
 	async dispose(): Promise<void> {
 		this.disposed = true;
 		this.controller?.abort();
@@ -364,6 +410,7 @@ function toSessionSummaryInfo(summary: SessionSummary): SessionSummaryInfo {
 		updatedAt: summary.updatedAt,
 		messageCount: summary.messageCount,
 		firstUserText: summary.firstUserText,
+		title: summary.title,
 	};
 }
 

@@ -106,6 +106,7 @@ describe("load", () => {
 				seq: 0,
 				usage: { input: 0, output: 0 },
 				memory: [],
+				sessionTitles: {},
 				turns: [],
 			},
 		});
@@ -241,6 +242,86 @@ describe("remove", () => {
 				turns: [],
 				seq: 0,
 			}),
+		});
+	});
+});
+
+describe("removeSession and renameSession", () => {
+	it("drops exactly one session's turns and title and keeps the rest", async () => {
+		const store = createBotStore();
+		const first = makeTurn({
+			id: "trn_0000000000000000000000000000000a",
+			seq: 1,
+			sessionId: "ses_a",
+		});
+		const second = makeTurn({
+			id: "trn_0000000000000000000000000000000b",
+			seq: 2,
+			sessionId: "ses_b",
+			at: 1710000000001,
+		});
+		const seededA = await store.commit(await loadRecord("atlas"), first);
+		if (!seededA.ok) throw new Error(seededA.error);
+		const seededB = await store.commit(seededA.record, second);
+		if (!seededB.ok) throw new Error(seededB.error);
+		const titled = await store.renameSession("atlas", "ses_a", "First chat");
+		if (!titled.ok) throw new Error(titled.error);
+
+		const removed = await store.removeSession("atlas", "ses_a");
+
+		expect(removed.ok).toBe(true);
+		if (!removed.ok) return;
+		expect(removed.record.turns.map((turn) => turn.sessionId)).toEqual([
+			"ses_b",
+		]);
+		expect(removed.record.sessionTitles).toEqual({});
+
+		const reloaded = await loadRecord("atlas");
+		expect(reloaded.turns.map((turn) => turn.sessionId)).toEqual(["ses_b"]);
+		expect(reloaded.sessionTitles).toEqual({});
+	});
+
+	it("reports an absent session rather than accepting it silently", async () => {
+		const store = createBotStore();
+		const seeded = await store.commit(await loadRecord("atlas"), makeTurn());
+		if (!seeded.ok) throw new Error(seeded.error);
+		const before = await readFile(botFile("atlas"), "utf8");
+
+		expect(await store.removeSession("atlas", "ses_missing")).toEqual({
+			ok: false,
+			error: "Unknown session: ses_missing",
+		});
+		// The absent removal wrote nothing.
+		expect(await readFile(botFile("atlas"), "utf8")).toBe(before);
+	});
+
+	it("renames one session and keeps its turns", async () => {
+		const store = createBotStore();
+		const seeded = await store.commit(await loadRecord("atlas"), makeTurn());
+		if (!seeded.ok) throw new Error(seeded.error);
+
+		const renamed = await store.renameSession("atlas", "ses_a", "Renamed");
+
+		expect(renamed.ok).toBe(true);
+		if (!renamed.ok) return;
+		expect(renamed.record.sessionTitles).toEqual({ ses_a: "Renamed" });
+		expect(renamed.record.turns).toEqual([makeTurn()]);
+		const reloaded = await loadRecord("atlas");
+		expect(reloaded.sessionTitles).toEqual({ ses_a: "Renamed" });
+	});
+
+	it("reports an absent session and a missing record", async () => {
+		const store = createBotStore();
+		const seeded = await store.commit(await loadRecord("atlas"), makeTurn());
+		if (!seeded.ok) throw new Error(seeded.error);
+
+		expect(await store.renameSession("atlas", "ses_missing", "x")).toEqual({
+			ok: false,
+			error: "Unknown session: ses_missing",
+		});
+		expect(await store.renameSession("ghost", "ses_a", "x")).toEqual({
+			ok: false,
+			error: expect.stringContaining("No bot record"),
 		});
 	});
 });

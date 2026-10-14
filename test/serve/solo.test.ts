@@ -7,7 +7,11 @@ import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { SoloHub } from "../../src/serve/solo.js";
-import { latestSession, newSession } from "../../src/session/store.js";
+import {
+	latestSession,
+	newSession,
+	saveSession,
+} from "../../src/session/store.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
@@ -286,6 +290,75 @@ describe("SoloHub", () => {
 					event.type === "approval_resolved" && event.decision === "deny",
 			),
 		).toBe(true);
+	});
+
+	it("deletes a stored session and adopts the newest remaining or a fresh one", async () => {
+		const provider = createMockProvider([]);
+		const first = newSession(workspaceRoot, settings.model);
+		first.messages = [{ role: "user", content: "first" }];
+		first.updatedAt = 1000;
+		const second = newSession(workspaceRoot, settings.model);
+		second.messages = [{ role: "user", content: "second" }];
+		second.updatedAt = 2000;
+		await saveSession(first);
+		await saveSession(second);
+		const hub = new SoloHub(hubOptions(provider), {
+			session: second,
+			sessions: [],
+		});
+		const events = collect(hub);
+
+		// Deleting the live session adopts the newest remaining one, and the
+		// emitted session_opened names something other than what was deleted.
+		expect(await hub.deleteSession("assistant", second.id)).toBe(true);
+		expect(hub.hello().activeSessionId).toBe(first.id);
+		const adopted = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(adopted).toMatchObject({ sessionId: first.id });
+		const adoptedId =
+			adopted?.type === "session_opened" ? adopted.sessionId : "";
+		expect(adoptedId).not.toBe(second.id);
+
+		// Deleting the last one starts a fresh session.
+		expect(await hub.deleteSession("assistant", first.id)).toBe(true);
+		const fresh = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		const freshId = fresh?.type === "session_opened" ? fresh.sessionId : "";
+		expect(freshId).not.toBe(first.id);
+		expect(hub.hello().activeSessionId).toBe(freshId);
+		expect(hub.hello().sessions).toEqual([]);
+
+		// An unknown id is reported, not accepted.
+		expect(await hub.deleteSession("assistant", "ses_missing")).toBe(false);
+		await hub.dispose();
+	});
+
+	it("renames a stored session and carries the trimmed title in the list", async () => {
+		const provider = createMockProvider([]);
+		const session = newSession(workspaceRoot, settings.model);
+		session.messages = [{ role: "user", content: "hello" }];
+		await saveSession(session);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+		const events = collect(hub);
+
+		expect(await hub.renameSession("assistant", session.id, "Greeting")).toBe(
+			true,
+		);
+		const sessionsEvent = events
+			.filter((event) => event.type === "sessions")
+			.at(-1);
+		const listed =
+			sessionsEvent?.type === "sessions" ? sessionsEvent.sessions : [];
+		expect(listed).toEqual([
+			expect.objectContaining({ id: session.id, title: "Greeting" }),
+		]);
+
+		expect(await hub.renameSession("assistant", "ses_missing", "x")).toBe(
+			false,
+		);
+		await hub.dispose();
 	});
 });
 

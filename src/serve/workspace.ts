@@ -294,6 +294,16 @@ export class WorkspaceHub extends EventBus implements Hub {
 		return this.scope.hub.closeSession(bot, id);
 	}
 
+	deleteSession(bot: string, id: string): Promise<boolean> {
+		return this.scope.hub.deleteSession?.(bot, id) ?? Promise.resolve(false);
+	}
+
+	renameSession(bot: string, id: string, title: string): Promise<boolean> {
+		return (
+			this.scope.hub.renameSession?.(bot, id, title) ?? Promise.resolve(false)
+		);
+	}
+
 	createBot(draft: BotDraft): Promise<BotInfo> {
 		return this.scope.hub.createBot(draft);
 	}

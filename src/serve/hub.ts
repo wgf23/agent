@@ -57,6 +57,11 @@ export interface Hub {
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
 	closeSession?(bot: string, id: string): Promise<void>;
+	// A hub that owns durable sessions can drop or relabel one. False means the
+	// bot or the session is unknown, so the route answers 404. The implementations
+	// are on the two concrete hubs; the chat and the ledger branch on WORKSPACE_BOT.
+	deleteSession?(bot: string, id: string): Promise<boolean>;
+	renameSession?(bot: string, id: string, title: string): Promise<boolean>;
 	// Only a hub that manages a rob roster can create, edit, or delete one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
 	updateBot?(name: string, draft: UpdateBotBody): Promise<BotInfo>;

@@ -51,7 +51,8 @@ const WAKE_EVERY_MS = 3000;
 const WAKE_SET_EVERY_MS = 2500;
 const WAKE_SET_PROMPT = "Say the single word: tock";
 // Phase 10 replaces the bot's role and model and reads both back; phase 11
-// creates then deletes a throwaway bot.
+// creates then deletes a throwaway bot; phases 12 and 13 rename then delete a
+// bot session through the routes.
 const EDITED_ROLE = "You are the edited atlas. Keep every answer short.";
 const EDITED_MODEL = "deepseek-chat";
 const THROWAWAY_BOT = "throwaway";
@@ -517,6 +518,99 @@ try {
 	console.log(
 		`PASS phase 11 delete: created then deleted ${THROWAWAY_BOT}, fresh hello lists [${afterDelete.bots.map((bot) => bot.name).join(", ")}]`,
 	);
+
+	// Phase 12: rename a bot session that already has turns and read the title
+	// back off the next bot_sessions projection. A non-current session is picked
+	// so the rename does not disturb the live channel the interval is writing to.
+	phase = 12;
+	const currentSessionId = (await getTranscript(server.port, BOT)).sessionId;
+	const renameTarget = parseLedger(
+		await readFile(ledgerPath, "utf8"),
+	).turns.find((turn) => turn.sessionId !== currentSessionId);
+	assert(
+		renameTarget !== undefined,
+		`the ledger has no non-current session to rename (current ${currentSessionId})`,
+	);
+	const renameSessionId = renameTarget.sessionId;
+	const RENAME_TITLE = "e2e renamed session";
+	const renameEvents = openEvents(server.port);
+	try {
+		await renameEvents.next((event) => event.type === "hello");
+		const renamed = await postJson(server.port, "/api/sessions/rename", {
+			bot: BOT,
+			id: renameSessionId,
+			title: RENAME_TITLE,
+		});
+		assert(
+			renamed.status === 200,
+			`POST /api/sessions/rename returned ${renamed.status}`,
+		);
+		const projected = await renameEvents.next(
+			(event) =>
+				event.type === "bot_sessions" &&
+				event.bot === BOT &&
+				event.sessions.some((session) => session.id === renameSessionId),
+		);
+		assert(
+			projected.type === "bot_sessions",
+			"the rename emitted no bot_sessions",
+		);
+		const summary = projected.sessions.find(
+			(session) => session.id === renameSessionId,
+		);
+		assert(
+			summary?.title === RENAME_TITLE,
+			`the renamed summary carries title ${JSON.stringify(summary?.title)}, expected ${JSON.stringify(RENAME_TITLE)}`,
+		);
+		console.log(
+			`PASS phase 12 rename bot session: ${renameSessionId} carries title ${JSON.stringify(summary?.title)} in the bot_sessions projection`,
+		);
+	} finally {
+		renameEvents.abort();
+	}
+
+	// Phase 13: delete that session and prove both the projection and the ledger
+	// on disk dropped its turns and its title.
+	phase = 13;
+	const deleteEvents = openEvents(server.port);
+	try {
+		await deleteEvents.next((event) => event.type === "hello");
+		const deletedSession = await postJson(server.port, "/api/sessions/delete", {
+			bot: BOT,
+			id: renameSessionId,
+		});
+		assert(
+			deletedSession.status === 200,
+			`POST /api/sessions/delete returned ${deletedSession.status}`,
+		);
+		const projection = await deleteEvents.next(
+			(event) => event.type === "bot_sessions" && event.bot === BOT,
+		);
+		assert(
+			projection.type === "bot_sessions",
+			"the delete emitted no bot_sessions",
+		);
+		assert(
+			!projection.sessions.some((session) => session.id === renameSessionId),
+			`the projection still lists ${renameSessionId} after delete`,
+		);
+		const afterDelete = parseLedger(await readFile(ledgerPath, "utf8"));
+		assert(
+			afterDelete.turns.every((turn) => turn.sessionId !== renameSessionId),
+			`the ledger still holds turns for ${renameSessionId} after delete`,
+		);
+		assert(
+			afterDelete.sessionTitles[renameSessionId] === undefined,
+			`the ledger still holds a title for ${renameSessionId} after delete`,
+		);
+		const remaining = new Set(afterDelete.turns.map((turn) => turn.sessionId))
+			.size;
+		console.log(
+			`PASS phase 13 delete bot session: dropped ${renameSessionId}, the ledger keeps ${afterDelete.turns.length} turn(s) across ${remaining} session(s) and the projection lists ${projection.sessions.length} summary(ies)`,
+		);
+	} finally {
+		deleteEvents.abort();
+	}
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);
 	if (server !== undefined) console.error(server.output());
