@@ -30,7 +30,8 @@
 		"lsp:smoke": "tsx scripts/lsp-smoke.ts",
 		"e2e": "tsx scripts/e2e.ts",
 		"e2e:team": "tsx scripts/e2e-team.ts",
-		"bot:e2e": "tsx scripts/bot-e2e.ts"
+		"bot:e2e": "tsx scripts/bot-e2e.ts",
+		"files:e2e": "tsx scripts/files-e2e.ts"
 	},
 	"dependencies": {
 		"@fastify/multipart": "^9.4.0",

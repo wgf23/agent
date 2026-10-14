@@ -93,6 +93,22 @@ Build both the CLI and the web client with `pnpm build`. A `图片` button besid
 
 The permission dialog shows how much time is left before the server denies the request, counting down to a warning color in the last 30 seconds, and how many other requests are queued behind it. A request still waiting its turn has no deadline yet; the server sends it as soon as it reaches the front. The workspace chat arms no window and shows no countdown.
 
+### Files
+
+The right side of the window is a workspace file tree. It loads the active root with `GET /api/files` (relative posix `path`, plus `showHidden` and `showIgnored` flags), lists directories first, and reads each folder lazily on first expand, caching it; `刷新` drops the cache. The response carries the entries a filter held back, so `显示隐藏文件` and `显示被忽略的文件` reveal them without a second read. A path that escapes the workspace is a `400` and never reaches disk, and a missing or non-directory path is a `404`.
+
+A file row downloads through `GET /api/files/download`, which streams the bytes with an `attachment` name and a length and refuses a directory with `400`. Clicking a file row instead asks the workspace chat to read that path, so the file's contents land in the conversation.
+
+Dropping files on a directory row or the tree body streams them to disk with `POST /api/files/upload` (multipart). The stored name is always the basename, `path` chooses the target directory, and `overwrite` opts into replacing an existing name. The route carries its own body limit above the server's global 1 MiB one, so one file up to 100 MiB streams instead of being rejected, and a request is capped at 20 file parts. A name that already exists without `overwrite` comes back as `{ ok: false, failed: [{ name, reason: "exists" }] }` and the panel offers a per-file overwrite retry; a target that escapes the workspace is a `400`.
+
+The four structure writes answer `{ ok: true }` or `{ ok: false, error }`: `POST /api/files/mkdir` (新建文件夹), `POST /api/files/rename` (an inline 重命名), `POST /api/files/move` (a 移动到… picker that reuses the same bounded directory browse), and `POST /api/files/delete` (a 删除 the row arms first, naming a directory's entry count). A rename or delete of the root, a destination that already exists, and a move of a directory into its own subtree are `400`; a missing source is `404`; a directory delete needs `recursive: true`, so a non-empty directory without it is refused and left on disk.
+
+Any directory row has a `打包下载` that streams the subtree as a zip from `GET /api/files/archive` — names are posix and relative, subdirectories are empty trailing-slash entries, and a symlink is followed only when it stays inside the workspace. The workspace picker walks the disk with `GET /api/fs/dirs`, which lists one directory's subdirectories and is bounded to the home directory plus the active workspace root; `?path=` names an absolute target, `/etc` is a `400`, and a path outside every root never reaches disk.
+
+The tree stays live while the agent works: a `write_file` or `edit_file` emits a `files_changed` event carrying the workspace-relative paths, and the panel re-reads the directories it has open and pulses the named rows, so a file the agent just wrote appears without pressing `刷新`.
+
+Security boundaries: every workspace path goes through the workspace resolver, so a `..` or a symlink out of the root is refused before any read or write; the directory browser is bounded to the home directory plus the active workspace root; an upload keeps only the basename; and deletes and overwrites are confirmed in the UI.
+
 For hot-reload development, run `pnpm dev serve` in one terminal and `pnpm web:dev` in another, then open the Vite URL (`http://localhost:5173`), which proxies `/api` to the server on 4317.
 
 ## Configuration
