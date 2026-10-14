@@ -145,7 +145,11 @@ export async function runTeamCommand(
 		team.resolveApproval(event.request.id, decision);
 	});
 
-	const coordinator = options.coordinator;
+	// The coordinator is explicit when given; otherwise a lone dispatch to one
+	// rob out of several names that rob as the one coordinating the task, which
+	// is what "dispatch the task to the lead" means in practice.
+	const coordinator =
+		options.coordinator ?? inferCoordinator(parsed.dispatches, robs);
 	// A coordinator that is not on the roster would only fail later, inside the
 	// wrap-up dispatch; refuse it before any work starts.
 	if (coordinator !== undefined && !team.hasRob(coordinator)) {
@@ -232,6 +236,16 @@ export async function runTeamCommand(
 	} finally {
 		await mcp.dispose();
 	}
+}
+
+// Coordination needs teammates, so this only kicks in for a real team; a single
+// dispatched rob is the one that was handed the task, so it coordinates it.
+function inferCoordinator(
+	dispatches: readonly Dispatch[],
+	robs: readonly RobConfig[],
+): string | undefined {
+	if (robs.length <= 1 || dispatches.length !== 1) return undefined;
+	return dispatches[0]?.name;
 }
 
 // The coordinator's own dispatch names the work; without one the whole set of

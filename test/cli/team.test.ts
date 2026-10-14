@@ -57,9 +57,58 @@ describe("runTeamCommand", () => {
 			expect(code).toBe(0);
 			expect(lines).toContain("=== planner (idle) ===");
 			expect(lines.join("\n")).not.toContain("(stopped)");
+			// A solo rob is not a team, so no coordinator is inferred and no
+			// deliverable is written.
+			await expect(
+				readdir(join(workspace, "docs", "deliverables")),
+			).rejects.toThrow();
 		} finally {
 			logSpy.mockRestore();
 		}
+	});
+
+	it("treats a lone dispatch to one rob of several as the coordinator", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify(
+				{
+					robs: [
+						{ name: "planner", role: "plan" },
+						{ name: "foodie", role: "food" },
+						{ name: "navigator", role: "transit" },
+					],
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "planning" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "inferred deliverable" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const code = await runTeamCommand({
+			dispatch: ["planner=write it"],
+			waitMs: 2000,
+			yesAll: true,
+			workspaceRoot: workspace,
+			homeDir: home,
+			providerFactory: () => provider,
+		});
+
+		expect(code).toBe(0);
+		const dir = join(workspace, "docs", "deliverables");
+		const files = await readdir(dir);
+		expect(files).toHaveLength(1);
+		const doc = await readFile(join(dir, files[0]), "utf8");
+		expect(doc).toContain("Coordinator: planner");
+		expect(doc).toContain("inferred deliverable");
 	});
 
 	it("writes the coordinator deliverable and exits zero on convergence", async () => {
