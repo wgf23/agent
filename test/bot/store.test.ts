@@ -135,6 +135,32 @@ describe("load", () => {
 		if (result.ok) return;
 		expect(result.error).toContain(botFile("atlas"));
 	});
+
+	it("defaults sessionTitles to {} for a record written before titles existed", async () => {
+		// Every existing user's file has this shape: no `sessionTitles` key at
+		// all, and `.strict()` must still accept it with the default applied.
+		const legacy = {
+			version: 1,
+			bot: "atlas",
+			role: "helper",
+			model: "deepseek-flash",
+			createdAt: 1710000000000,
+			updatedAt: 1710000000000,
+			seq: 1,
+			usage: { input: 11, output: 22 },
+			memory: [memoryEntry()],
+			turns: [makeTurn()],
+		};
+		await writeFile(botFile("atlas"), JSON.stringify(legacy), "utf8");
+
+		const result = await createBotStore().load("atlas", identity);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.record.sessionTitles).toEqual({});
+		expect(result.record.turns).toEqual([makeTurn()]);
+		expect(result.record.memory).toEqual([memoryEntry()]);
+	});
 });
 
 describe("commit", () => {

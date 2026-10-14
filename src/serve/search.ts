@@ -46,8 +46,9 @@ export function snippet(text: string, query: string, radius: number): string {
 }
 
 // The bot half: every turn for the workspace grouped by session in turn order,
-// capped to MAX_SESSION_MATCHES. A turn from another workspace is filtered out,
-// the same rule replay uses, so a search never surfaces another workspace's
+// capped to MAX_SESSION_MATCHES newest-first (the chat half's direction, since a
+// search is for recent conversations). A turn from another workspace is filtered
+// out, the same rule replay uses, so a search never surfaces another workspace's
 // conversation.
 export function turnMatches(
 	turns: readonly Turn[],
@@ -56,10 +57,14 @@ export function turnMatches(
 	query: string,
 ): SessionMatch[] {
 	const bySession = new Map<string, SessionMatch>();
+	// The newest matching turn per session, recorded while iterating so the cap
+	// can keep the most recent sessions first like `SoloHub.search` does.
+	const newestSeq = new Map<string, number>();
 	for (const turn of [...turns].sort((a, b) => a.seq - b.seq)) {
 		if (turn.workspaceRoot !== workspaceRoot) continue;
 		const hits = messageHits(turn.messages, turn.at, query);
 		if (hits.length === 0) continue;
+		newestSeq.set(turn.sessionId, turn.seq);
 		const existing = bySession.get(turn.sessionId);
 		if (existing === undefined) {
 			bySession.set(turn.sessionId, {
@@ -75,10 +80,16 @@ export function turnMatches(
 			existing.firstUserText = firstUserMessageText(turn.messages);
 		}
 	}
-	return [...bySession.values()].slice(0, MAX_SESSION_MATCHES).map((match) => ({
-		...match,
-		hits: match.hits.slice(0, MAX_HITS_PER_SESSION),
-	}));
+	return [...bySession.values()]
+		.sort(
+			(a, b) =>
+				(newestSeq.get(b.sessionId) ?? 0) - (newestSeq.get(a.sessionId) ?? 0),
+		)
+		.slice(0, MAX_SESSION_MATCHES)
+		.map((match) => ({
+			...match,
+			hits: match.hits.slice(0, MAX_HITS_PER_SESSION),
+		}));
 }
 
 // The chat half: one workspace session, or null when nothing in it matches.

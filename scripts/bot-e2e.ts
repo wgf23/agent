@@ -11,6 +11,7 @@ import type {
 	SearchResponse,
 	ServerEvent,
 } from "../shared/protocol.js";
+import { WORKSPACE_BOT } from "../shared/protocol.js";
 import {
 	type BotRecord,
 	botRecordSchema,
@@ -571,8 +572,21 @@ try {
 	}
 
 	// Phase 13: delete that session and prove both the projection and the ledger
-	// on disk dropped its turns and its title.
+	// on disk dropped its turns and its title while keeping every other
+	// session's turns. The interval keeps committing to the current session, so
+	// only the pre-delete turn ids can be counted literally; a deleted-to-empty
+	// ledger would leave that count at zero and fail the assertion.
 	phase = 13;
+	const ledgerBeforeDelete = parseLedger(await readFile(ledgerPath, "utf8"));
+	const keptBefore = ledgerBeforeDelete.turns.filter(
+		(turn) => turn.sessionId !== renameSessionId,
+	);
+	const keptBeforeIds = new Set(keptBefore.map((turn) => turn.id));
+	const survivingIds = new Set(keptBefore.map((turn) => turn.sessionId));
+	assert(
+		keptBefore.length > 0 && survivingIds.size > 0,
+		`the ledger has no session other than ${renameSessionId} to survive, so the kept count proves nothing`,
+	);
 	const deleteEvents = openEvents(server.port);
 	try {
 		await deleteEvents.next((event) => event.type === "hello");
@@ -596,6 +610,13 @@ try {
 			`the projection still lists ${renameSessionId} after delete`,
 		);
 		const afterDelete = parseLedger(await readFile(ledgerPath, "utf8"));
+		const stillKept = afterDelete.turns.filter((turn) =>
+			keptBeforeIds.has(turn.id),
+		);
+		assert(
+			stillKept.length === keptBefore.length,
+			`the ledger kept ${stillKept.length} of the ${keptBefore.length} pre-delete turn(s), losing some alongside ${renameSessionId}`,
+		);
 		assert(
 			afterDelete.turns.every((turn) => turn.sessionId !== renameSessionId),
 			`the ledger still holds turns for ${renameSessionId} after delete`,
@@ -604,20 +625,62 @@ try {
 			afterDelete.sessionTitles[renameSessionId] === undefined,
 			`the ledger still holds a title for ${renameSessionId} after delete`,
 		);
-		const remaining = new Set(afterDelete.turns.map((turn) => turn.sessionId))
-			.size;
+		for (const sessionId of survivingIds) {
+			assert(
+				stillKept.some((turn) => turn.sessionId === sessionId),
+				`the surviving session ${sessionId} lost its turns to the delete`,
+			);
+		}
 		console.log(
-			`PASS phase 13 delete bot session: dropped ${renameSessionId}, the ledger keeps ${afterDelete.turns.length} turn(s) across ${remaining} session(s) and the projection lists ${projection.sessions.length} summary(ies)`,
+			`PASS phase 13 delete bot session: dropped ${renameSessionId}, the ledger keeps all ${stillKept.length} pre-delete turn(s) across ${survivingIds.size} surviving session(s) [${[...survivingIds].join(", ")}] and the projection lists ${projection.sessions.length} summary(ies)`,
 		);
 	} finally {
 		deleteEvents.abort();
 	}
 
 	// Phase 14: one search spans the workspace chat and every bot's sessions.
-	// The word is the phase-8 wake prompt, which the re-armed timer keeps
-	// recording, so a real prior turn must surface under a bot session with the
-	// word still in the bounded snippet.
+	// The bot word is the phase-8 wake prompt, which the re-armed timer keeps
+	// recording, so a real prior wake turn must surface under a bot session
+	// with the word still in the bounded snippet. The chat half is driven with
+	// its own unique word, so neither half can pass because the other matched.
 	phase = 14;
+	const chatTerm = "quokkaterm";
+	const chatSent = await postJson(server.port, "/api/send", {
+		bot: WORKSPACE_BOT,
+		text: `Answer with exactly one word: ${chatTerm}`,
+	});
+	assert(
+		chatSent.status === 200,
+		`POST /api/send for ${WORKSPACE_BOT} returned ${chatSent.status}`,
+	);
+	const chatDeadline = Date.now() + ANSWER_TIMEOUT_MS;
+	let chatMatch: SearchResponse["chat"][number] | undefined;
+	while (Date.now() < chatDeadline) {
+		const probe = await getSearch(server.port, chatTerm);
+		assert(
+			probe.query === chatTerm,
+			`GET /api/search echoed ${JSON.stringify(probe.query)}, expected ${JSON.stringify(chatTerm)}`,
+		);
+		chatMatch = probe.chat.find((match) =>
+			match.hits.some((candidate) =>
+				candidate.text.toLowerCase().includes(chatTerm.toLowerCase()),
+			),
+		);
+		if (chatMatch !== undefined) break;
+		await delay(POLL_MS);
+	}
+	assert(
+		chatMatch !== undefined,
+		`the search for ${JSON.stringify(chatTerm)} never surfaced a chat match`,
+	);
+	const chatHit = chatMatch.hits.find((candidate) =>
+		candidate.text.toLowerCase().includes(chatTerm.toLowerCase()),
+	);
+	assert(
+		chatHit !== undefined,
+		`the chat match ${chatMatch.sessionId} has no snippet carrying ${JSON.stringify(chatTerm)}`,
+	);
+
 	const searchTerm = "tock";
 	const searchResponse = await getSearch(server.port, searchTerm);
 	assert(
@@ -645,19 +708,33 @@ try {
 		hit !== undefined,
 		`the matched session ${sessionMatch.sessionId} has no snippet carrying ${JSON.stringify(searchTerm)}`,
 	);
-	// The hit is a real prior turn of this workspace, not a snippet invented by
-	// the search: the ledger has a turn for that session under the same root.
-	const searchLedger = parseLedger(await readFile(ledgerPath, "utf8"));
+	// The wake prompt is the user half of the turn, so the first snippet
+	// carrying the word is a `user` message, not an assistant echo.
 	assert(
-		searchLedger.turns.some(
-			(turn) =>
-				turn.sessionId === sessionMatch.sessionId &&
-				turn.workspaceRoot === workspace,
-		),
-		`the search hit session ${sessionMatch.sessionId} is not a ${workspace} session in the ledger`,
+		hit.role === "user",
+		`the ${BOT} hit role is ${JSON.stringify(hit.role)}, expected "user"`,
+	);
+	// The hit is a real prior turn of this workspace, not a snippet invented by
+	// the search: the ledger has that exact turn (same session and time) under
+	// the same root, and it is the interval wake the phase-8 timer committed.
+	const searchLedger = parseLedger(await readFile(ledgerPath, "utf8"));
+	const wakeTurn = searchLedger.turns.find(
+		(turn) => turn.sessionId === sessionMatch.sessionId && turn.at === hit.at,
+	);
+	assert(
+		wakeTurn !== undefined,
+		`the search hit session ${sessionMatch.sessionId} at ${hit.at} is not a ledger turn`,
+	);
+	assert(
+		wakeTurn.workspaceRoot === workspace,
+		`the matched turn's workspace is ${wakeTurn.workspaceRoot}, expected ${workspace}`,
+	);
+	assert(
+		wakeTurn.wake === "interval",
+		`the matched turn's wake is ${JSON.stringify(wakeTurn.wake)}, expected "interval"`,
 	);
 	console.log(
-		`PASS phase 14 search: GET /api/search?q=${searchTerm} echoed the query, ${searchResponse.chat.length} chat match(es), and hit ${BOT} session ${sessionMatch.sessionId} role=${hit.role} snippet=${JSON.stringify(hit.text)}`,
+		`PASS phase 14 search: GET /api/search?q=${searchTerm} echoed the query, hit ${BOT} session ${sessionMatch.sessionId} role=${hit.role} wake=${wakeTurn.wake} snippet=${JSON.stringify(hit.text)}, and q=${chatTerm} landed in chat session ${chatMatch.sessionId} role=${chatHit.role} snippet=${JSON.stringify(chatHit.text)}`,
 	);
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);

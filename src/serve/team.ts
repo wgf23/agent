@@ -160,14 +160,17 @@ export class TeamHub extends EventBus implements Hub {
 	}
 
 	// Tears down a bot's runtime and drops its ledger, then announces the new
-	// roster. The caller removes the config first. False when the roster has no
-	// such bot, so the route can answer 404 without reaching the runtime.
+	// roster. The ledger is the only step that can fail, so it runs first: a
+	// store failure leaves the runtime and roster intact and emits no `bots`
+	// event claiming the bot is gone, and the caller still owns the config.
+	// False when the roster has no such bot, so the route can answer 404
+	// without reaching the runtime.
 	async removeBot(name: string): Promise<boolean> {
 		if (!this.hasBot(name)) return false;
+		await this.store.remove(name);
 		this.team.removeRob(name);
 		const index = this.roster.findIndex((rob) => rob.name === name);
 		if (index !== -1) this.roster.splice(index, 1);
-		await this.store.remove(name);
 		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
 		return true;
 	}

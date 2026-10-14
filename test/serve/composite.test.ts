@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
+import { type BotStore, createBotStore } from "../../src/bot/store.js";
 import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
@@ -37,7 +38,10 @@ beforeEach(() => {
 	);
 });
 
-function createHub(provider: Provider = createMockProvider([])) {
+function createHub(
+	provider: Provider = createMockProvider([]),
+	store?: BotStore,
+) {
 	const allowAll = createAllowAll();
 	const options = {
 		workspaceRoot,
@@ -56,7 +60,12 @@ function createHub(provider: Provider = createMockProvider([])) {
 		session: newSession(workspaceRoot, settings.model),
 		sessions: [],
 	});
-	const robs = new TeamHub({ ...options, robs: [], providerEnv: {} });
+	const robs = new TeamHub({
+		...options,
+		robs: [],
+		providerEnv: {},
+		...(store === undefined ? {} : { store }),
+	});
 	return new CompositeHub(workspace, robs, workspaceRoot);
 }
 
@@ -254,6 +263,30 @@ describe("CompositeHub.removeBot", () => {
 		expect(
 			JSON.parse(readFileSync(projectFilePath(workspaceRoot), "utf8")).robs,
 		).toEqual([]);
+		await hub.dispose();
+	});
+
+	it("surfaces a ledger failure without deleting the config or claiming the bot is gone", async () => {
+		const real = createBotStore();
+		const failing: BotStore = {
+			...real,
+			remove: () => Promise.reject(new Error("ledger remove failed")),
+		};
+		const hub = createHub(createMockProvider([]), failing);
+		await hub.createBot({ name: "writer", role: "drafts" });
+		const events: ServerEvent[] = [];
+		hub.subscribe((event) => events.push(event));
+
+		await expect(hub.removeBot("writer")).rejects.toThrow(
+			"ledger remove failed",
+		);
+
+		// The runtime/ledger removal runs before the config write, so the
+		// failure left both the roster and my-agent.json intact and no `bots`
+		// event claimed the bot is gone.
+		expect(hub.hello().bots.map((bot) => bot.name)).toEqual(["writer"]);
+		expect(readRobs()).toEqual([{ name: "writer", role: "drafts" }]);
+		expect(events.some((event) => event.type === "bots")).toBe(false);
 		await hub.dispose();
 	});
 });

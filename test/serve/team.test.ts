@@ -4,7 +4,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
 import type { MemoryEntry, Turn } from "../../src/bot/schema.js";
-import { createBotStore } from "../../src/bot/store.js";
+import { type BotStore, createBotStore } from "../../src/bot/store.js";
 import { manualTimer, type Timer } from "../../src/bot/wake.js";
 import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
@@ -59,6 +59,7 @@ function createHub(
 	provider: Provider,
 	timer?: Timer,
 	allowAll = createAllowAll(),
+	store?: BotStore,
 ): TeamHub {
 	return new TeamHub({
 		workspaceRoot,
@@ -75,6 +76,7 @@ function createHub(
 		providerEnv: {},
 		allowAll,
 		timer,
+		...(store === undefined ? {} : { store }),
 	});
 }
 
@@ -454,16 +456,10 @@ describe("TeamHub", () => {
 		]);
 	});
 
-	it("searches a bot's turns across sessions for the current workspace, capped", async () => {
-		// 21 matching turns stay under the ring's cap of 24, so the result cap,
-		// not eviction, is what drops the tail.
-		for (let index = 0; index < 18; index += 1) {
-			await seedSession(
-				`chs_extra_${index}`,
-				`needle extra ${index}`,
-				4 + index,
-			);
-		}
+	it("searches a bot's turns only for the current workspace", async () => {
+		// Deliberately fewer sessions than MAX_SESSION_MATCHES, so the cap
+		// cannot hide a leak: with the workspace filter absent, the other
+		// workspace's newer turn would appear at the head of this result.
 		await seedSession("chs_a", "needle one", 1);
 		await seedSession("chs_a", "needle two", 2);
 		await seedSession("chs_b", "needle three", 3);
@@ -478,18 +474,41 @@ describe("TeamHub", () => {
 		expect(results).toHaveLength(1);
 		expect(results[0].bot).toBe("alpha");
 		const matches = results[0].matches;
-		// Turns group by session, newest turn order preserved: chs_a owns two
-		// hits, chs_b one, and the extra sessions fill out the cap.
-		expect(matches).toHaveLength(MAX_SESSION_MATCHES);
+		expect(matches.length).toBeLessThan(MAX_SESSION_MATCHES);
+		// Grouped by session, newest turn first: chs_b's only turn is seq 3,
+		// chs_a's newest is seq 2. The other workspace is nowhere.
+		expect(matches.map((match) => match.sessionId)).toEqual(["chs_b", "chs_a"]);
 		expect(matches[0]).toMatchObject({
-			sessionId: "chs_a",
+			sessionId: "chs_b",
 			title: null,
-			firstUserText: "needle one",
+			firstUserText: "needle three",
 		});
-		expect(matches[0].hits).toHaveLength(2);
-		expect(matches.map((match) => match.sessionId)).toContain("chs_b");
-		// A turn recorded in another workspace never surfaces in this one.
-		expect(matches.map((match) => match.sessionId)).not.toContain("chs_other");
+		expect(matches[1].firstUserText).toBe("needle one");
+		expect(matches[1].hits).toHaveLength(2);
+		await hub.dispose();
+	});
+
+	it("caps a bot's matches newest-first, dropping the oldest sessions", async () => {
+		// MAX_SESSION_MATCHES + 1 single-turn sessions all stay under the ring's
+		// cap of 24, so the result cap, not eviction, is what drops the tail.
+		for (let index = 0; index <= MAX_SESSION_MATCHES; index += 1) {
+			await seedSession(`chs_${index}`, `needle ${index}`, index + 1);
+		}
+
+		const hub = createHub(slowProvider());
+		const results = await hub.search("NEEDLE", workspaceRoot);
+
+		expect(results).toHaveLength(1);
+		const matches = results[0].matches;
+		// Literal kept list, newest-first: chs_20 down to chs_1; the oldest
+		// session chs_0 is the one the cap drops. An oldest-first cap would
+		// keep chs_0..chs_19 instead and fail here.
+		const expected = Array.from(
+			{ length: MAX_SESSION_MATCHES },
+			(_, offset) => `chs_${MAX_SESSION_MATCHES - offset}`,
+		);
+		expect(matches.map((match) => match.sessionId)).toEqual(expected);
+		expect(matches.map((match) => match.sessionId)).not.toContain("chs_0");
 		await hub.dispose();
 	});
 
@@ -734,6 +753,26 @@ describe("TeamHub", () => {
 		expect(await hub.removeBot("ghost")).toBe(false);
 		expect(await hub.removeBot("alpha")).toBe(true);
 		expect(existsSync(ledger)).toBe(false);
+		await hub.dispose();
+	});
+
+	it("surfaces a ledger failure and leaves the roster and events untouched", async () => {
+		const real = createBotStore();
+		const failing: BotStore = {
+			...real,
+			remove: () => Promise.reject(new Error("ledger remove failed")),
+		};
+		const hub = createHub(slowProvider(), undefined, undefined, failing);
+		const events = collect(hub);
+
+		await expect(hub.removeBot("alpha")).rejects.toThrow(
+			"ledger remove failed",
+		);
+
+		// The ledger goes first, so the failure left the bot on the roster and
+		// no `bots` event ever claimed it is gone.
+		expect(hub.bots().map((bot) => bot.name)).toEqual(["alpha"]);
+		expect(events.some((event) => event.type === "bots")).toBe(false);
 		await hub.dispose();
 	});
 

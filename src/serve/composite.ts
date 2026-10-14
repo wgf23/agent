@@ -190,13 +190,19 @@ export class CompositeHub extends EventBus implements Hub {
 		return created;
 	}
 
-	// Deletes a bot end to end: the config entry, the runtime, and the ledger.
-	// False when the name is not on the roster, so the route answers 404.
+	// Deletes a bot end to end: the runtime and the ledger, then the config
+	// entry. The ledger removal is the fallible step, so it runs before the
+	// config is touched: a store failure leaves the config and the roster
+	// intact, emits no `bots` event, and surfaces to the route instead of
+	// deleting the config and orphaning the ledger. False when the name is not
+	// on the roster, so the route answers 404.
 	async removeBot(name: string): Promise<boolean> {
 		if (!this.robs.bots().some((bot) => bot.name === name)) return false;
+		const removed = await this.robs.removeBot(name);
+		if (!removed) return false;
 		const saved = await removeRob(this.workspaceRoot, name);
 		if (!saved.ok) throw new BotDraftError(saved.error);
-		return this.robs.removeBot(name);
+		return true;
 	}
 
 	// Replaces a bot's role, model, and backend in place. The same validation
