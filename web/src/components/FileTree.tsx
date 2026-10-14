@@ -58,6 +58,13 @@ interface Props {
 	// The active workspace root (absolute), so the move picker can map a browse
 	// path back to the workspace-relative path the structure routes take.
 	workspaceRoot: string;
+	// Bumped by every agent write; the panel re-reads what it shows and pulses
+	// the entries named in `filesChanged`.
+	filesVersion: number;
+	filesChanged: string[];
+	// Clicking a file row asks the workspace chat to read it; App wires this to
+	// the hub's send, which owns the route.
+	onReadFile: (path: string) => void;
 	// Wide screens show the panel inline; a sidebar button folds it away.
 	open: boolean;
 }
@@ -91,6 +98,9 @@ interface PendingDelete {
 	capped: boolean;
 }
 
+// How long a just-written entry stays flagged after an agent write.
+const FILE_HIGHLIGHT_MS = 3000;
+
 // The workspace file tree. The root loads on mount and every directory is
 // fetched the first time it is expanded, then cached; the flags re-read from
 // scratch so every visible directory matches them, and 刷新 drops the cache
@@ -108,10 +118,15 @@ export default function FileTree({
 	deleteEntry,
 	listDirs,
 	workspaceRoot,
+	filesVersion,
+	filesChanged,
+	onReadFile,
 	open,
 }: Props) {
 	const [cache, setCache] = useState<Record<string, FileListResponse>>({});
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	// The entries an agent just wrote, pulsed for a few seconds after a write.
+	const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
 	const [loading, setLoading] = useState<Set<string>>(new Set());
 	const [error, setError] = useState<string | null>(null);
 	const [showHidden, setShowHidden] = useState(false);
@@ -172,6 +187,29 @@ export default function FileTree({
 		setError(null);
 		void load("");
 	}, [load]);
+
+	// When an agent writes, filesVersion changes: re-read every directory on
+	// screen (the root plus each open one) so the new file appears where the
+	// user is looking, then pulse the paths the event named. The ref keeps the
+	// mount render from re-reading, since the effect above already loaded root.
+	const filesVersionRef = useRef(filesVersion);
+	useEffect(() => {
+		if (filesVersionRef.current === filesVersion) return;
+		filesVersionRef.current = filesVersion;
+		const dirs = new Set<string>([""]);
+		for (const dir of expanded) dirs.add(dir);
+		for (const dir of dirs) void load(dir);
+		if (filesChanged.length === 0) {
+			setHighlighted(new Set());
+			return;
+		}
+		setHighlighted(new Set(filesChanged));
+		const timer = setTimeout(
+			() => setHighlighted(new Set()),
+			FILE_HIGHLIGHT_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [filesVersion, filesChanged, expanded, load]);
 
 	// A menu closes when the user clicks anywhere outside it, not only when the
 	// trigger is pressed again.
@@ -532,11 +570,12 @@ export default function FileTree({
 		const deleting = pendingDelete?.entry.path === entry.path;
 		const rowError = opError?.path === entry.path ? opError.message : null;
 		const menuOpen = menuPath === entry.path;
+		const changed = highlighted.has(entry.path);
 		return (
 			<li key={entry.path}>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: a directory row is a file drop target */}
 				<div
-					className={`file-row ${isDir && dragDir === entry.path ? "drop-target" : ""}`}
+					className={`file-row ${changed ? "changed" : ""} ${isDir && dragDir === entry.path ? "drop-target" : ""}`}
 					onDragOver={
 						isDir ? (event) => handleDragOver(event, entry.path) : undefined
 					}
@@ -581,10 +620,20 @@ export default function FileTree({
 								}
 							}}
 						/>
-					) : (
+					) : isDir ? (
 						<span className="file-name" title={entryTitle(entry)}>
 							{entry.name}
 						</span>
+					) : (
+						<button
+							type="button"
+							className="file-name file-read"
+							title="让 agent 读这个文件"
+							aria-label={`让 agent 读 ${entry.name}`}
+							onClick={() => onReadFile(entry.path)}
+						>
+							{entry.name}
+						</button>
 					)}
 					{isDir ? (
 						<>

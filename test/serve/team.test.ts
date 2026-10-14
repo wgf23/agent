@@ -304,6 +304,38 @@ describe("TeamHub", () => {
 		await hub.dispose();
 	});
 
+	it("announces the file a rob write wrote so the tree can refresh", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "write_file",
+					args: { path: "notes/rob.txt", content: "hi" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider, undefined, createAllowAll(true));
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "write a note");
+		await waitFor(
+			() => events.some((event) => event.type === "files_changed"),
+			"files_changed for the rob write",
+		);
+
+		expect(events).toContainEqual({
+			type: "files_changed",
+			paths: ["notes/rob.txt"],
+		});
+		await hub.dispose();
+	});
+
 	it("interrupts a running turn and returns the rob to idle", async () => {
 		const hub = createHub(slowProvider());
 		const events = collect(hub);

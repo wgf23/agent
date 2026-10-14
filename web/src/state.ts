@@ -83,6 +83,10 @@ export interface ClientState {
 	agents: AgentStatusView[];
 	// Latest job per agent id, live or terminal.
 	agentJobs: Record<string, AgentJobView>;
+	// Bumped by every agent write so the file tree refetches; filesChanged
+	// carries the paths named by the event, empty when the agent could not.
+	filesVersion: number;
+	filesChanged: string[];
 }
 
 export type ClientAction =
@@ -135,6 +139,8 @@ export function initialState(): ClientState {
 		search: { query: "", results: null, loading: false, error: null },
 		agents: [],
 		agentJobs: {},
+		filesVersion: 0,
+		filesChanged: [],
 	};
 }
 
@@ -450,6 +456,16 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			return {
 				...state,
 				agentJobs: { ...state.agentJobs, [event.job.agent]: event.job },
+			};
+
+		// An agent write advances the counter the tree watches and records what
+		// changed so the tree can pulse those rows. Its own fields, so a
+		// files_changed event never disturbs the transcript or the roster.
+		case "files_changed":
+			return {
+				...state,
+				filesVersion: state.filesVersion + 1,
+				filesChanged: event.paths,
 			};
 
 		case "error": {

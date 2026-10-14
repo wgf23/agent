@@ -26,7 +26,7 @@ green, and the branch is pushed.
 | M4 | Directory browser: `GET /api/fs/dirs` bounded to home + workspace, `WorkspacePicker` modal | LANDED 69b47c5 |
 | M5 | Structure ops: mkdir / rename / move / delete with confirm and boundary checks | LANDED fd2e320 |
 | M6 | Folder zip download: `GET /api/files/archive` | LANDED bde8eec |
-| M7 | Auto refresh on agent writes (`files_changed`) + click-to-read a file | PENDING |
+| M7 | Auto refresh on agent writes (`files_changed`) + click-to-read a file | LANDED 9327dc4 |
 | M8 | Docs, CHANGELOG, e2e phase | PENDING |
 
 ## Trail

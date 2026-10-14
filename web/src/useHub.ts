@@ -18,6 +18,7 @@ import type {
 	SetWakeBody,
 	UpdateBotBody,
 } from "./protocol";
+import { WORKSPACE_BOT } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
 // The server hands the token in the page URL on a non-loopback bind, where
@@ -49,6 +50,9 @@ export interface Hub {
 	// Images are optional and already validated by the composer; a refusal
 	// lands on the error banner.
 	send: (bot: string, text: string, images?: ImagePart[]) => void;
+	// The tree's click-to-read: asks the workspace chat to read one file, named
+	// by its workspace-relative path, through the ordinary send path.
+	readFile: (path: string) => void;
 	interrupt: (bot: string) => void;
 	respondApproval: (id: string, decision: ApprovalChoice) => void;
 	setAllowAll: (on: boolean) => void;
@@ -166,6 +170,15 @@ export function useHub(): Hub {
 	const interrupt = useCallback((bot: string) => {
 		api.interrupt(bot).catch(() => {});
 	}, []);
+
+	// The file tree's click-to-read drafts the message and sends it as if the
+	// user typed it, so the read rides the normal turn machinery.
+	const readFile = useCallback(
+		(path: string) => {
+			send(WORKSPACE_BOT, `请读取工作区文件 ${path}`);
+		},
+		[send],
+	);
 
 	const respondApproval = useCallback(
 		(id: string, decision: ApprovalChoice) => {
@@ -462,6 +475,7 @@ export function useHub(): Hub {
 	return {
 		state,
 		send,
+		readFile,
 		interrupt,
 		respondApproval,
 		setAllowAll,

@@ -3085,6 +3085,11 @@ select.field-input option {
 	background: var(--surface-hover);
 }
 
+/* A row an agent just wrote, flagged for a few seconds after files_changed. */
+.file-row.changed {
+	background: var(--accent-soft);
+}
+
 .file-arrow {
 	display: inline-flex;
 	align-items: center;
@@ -3129,6 +3134,21 @@ select.field-input option {
 	white-space: nowrap;
 	font-size: 13px;
 	color: var(--text);
+}
+
+/* A file's name is the click-to-read affordance: a button dressed as the
+   span a directory row keeps, so the two kinds of row still align. */
+.file-read {
+	padding: 0;
+	border: none;
+	background: transparent;
+	text-align: left;
+	font: inherit;
+	cursor: pointer;
+}
+
+.file-read:hover {
+	color: var(--accent-text);
 }
 
 .file-download {

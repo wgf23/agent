@@ -387,6 +387,10 @@ export type ServerEvent =
 	| { type: "allow_all"; on: boolean }
 	| { type: "agents"; agents: AgentStatusView[] }
 	| { type: "agent_job"; job: AgentJobView }
+	// An agent wrote to the workspace. An empty `paths` means "refresh whatever
+	// is expanded"; a non-empty list names workspace-relative posix paths that
+	// changed, so the tree can also highlight them.
+	| { type: "files_changed"; paths: string[] }
 	| { type: "error"; bot?: string; message: string };
 
 export interface SendBody {

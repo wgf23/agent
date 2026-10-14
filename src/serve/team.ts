@@ -25,6 +25,7 @@ import type { ImagePart, Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
 import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
+import { FilesChangedTracker } from "./files-changed.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { parseImages } from "./images.js";
 import {
@@ -62,6 +63,9 @@ export class TeamHub extends EventBus implements Hub {
 	private readonly roster: RobConfig[];
 	// Built once so reconfigure reuses the same ledger handle.
 	private readonly store: BotStore;
+	// One tracker per rob: a `tool_finished` names no args, so the tracker
+	// remembers that rob's `tool_started` until its write finishes.
+	private readonly filesChanged = new Map<string, FilesChangedTracker>();
 
 	constructor(options: TeamHubOptions) {
 		super();
@@ -127,6 +131,9 @@ export class TeamHub extends EventBus implements Hub {
 		this.options.settings = next.settings;
 		this.options.providerEnv = next.providerEnv;
 		this.team = this.createTeam();
+		// The rebuilt Team starts every rob's run fresh; drop the old trackers
+		// so a stale started-args entry cannot name a file for a new turn.
+		this.filesChanged.clear();
 		this.team.subscribe((event) => this.handle(event));
 		this.team.start();
 		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
@@ -444,9 +451,17 @@ export class TeamHub extends EventBus implements Hub {
 
 	private handle(event: TeamEvent): void {
 		switch (event.kind) {
-			case "rob_event":
+			case "rob_event": {
 				this.emit({ type: "agent_event", bot: event.rob, event: event.event });
+				// A successful write tells the tree to refresh; a bash run
+				// refreshes blindly because its paths are unknown.
+				const tracker =
+					this.filesChanged.get(event.rob) ?? new FilesChangedTracker();
+				this.filesChanged.set(event.rob, tracker);
+				const paths = tracker.onEvent(this.options.workspaceRoot, event.event);
+				if (paths !== null) this.emit({ type: "files_changed", paths });
 				return;
+			}
 			case "rob_status":
 				this.emitBotStatus(event.rob);
 				return;
