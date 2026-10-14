@@ -729,4 +729,122 @@ describe("Rob", () => {
 		const record = await loadBot("planner");
 		expect(record.turns.filter((turn) => turn.sessionId === a)).toHaveLength(2);
 	});
+
+	it("puts every teammate's name and role in the system prompt", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "ok" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "coordinate" },
+				{ name: "worker", role: "carry out file tasks" },
+				{ name: "reviewer", role: "check the work" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+			store: memoryStore(),
+		});
+		team.start();
+
+		team.dispatch("planner", "hello");
+		await waitFor(
+			() =>
+				provider.requests.length === 1 && team.statuses()[0].status === "idle",
+			"the planner's turn",
+		);
+		await team.stop();
+
+		const system = provider.requests[0].messages[0];
+		expect(system.role).toBe("system");
+		expect(system.content).toContain("worker");
+		expect(system.content).toContain("carry out file tasks");
+		expect(system.content).toContain("reviewer");
+		expect(system.content).toContain("check the work");
+	});
+
+	it("reads only new DMs across turns through the persisted cursor", async () => {
+		const readCall = (id: string) => ({
+			type: "tool_call" as const,
+			id,
+			name: "read_messages",
+			args: {},
+		});
+		const plannerProvider = createMockProvider([
+			[readCall("call_1"), { type: "finish", reason: "tool_calls" }],
+			[
+				{ type: "text_delta", text: "noted" },
+				{ type: "finish", reason: "stop" },
+			],
+			[readCall("call_2"), { type: "finish", reason: "tool_calls" }],
+			[
+				{ type: "text_delta", text: "nothing" },
+				{ type: "finish", reason: "stop" },
+			],
+			[readCall("call_3"), { type: "finish", reason: "tool_calls" }],
+			[
+				{ type: "text_delta", text: "got it" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const workerProvider = createMockProvider([]);
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "worker", role: "work" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: (rob) =>
+				rob.name === "planner" ? plannerProvider : workerProvider,
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+			store: memoryStore(),
+		});
+
+		// A DM that arrived before the first turn is read once.
+		team.postDm("worker", "planner", "first");
+		team.start();
+		await waitFor(
+			() =>
+				plannerProvider.requests.length === 2 &&
+				team.statuses()[0].status === "idle",
+			"the first read",
+		);
+		const firstRead = plannerProvider.requests[1].messages.find(
+			(message) => message.role === "tool" && message.toolCallId === "call_1",
+		);
+		expect(firstRead?.content).toBe("[from rob:worker] first");
+
+		// The cursor advanced, so a second read with no new DM is empty.
+		team.dispatch("planner", "anything new?");
+		await waitFor(
+			() =>
+				plannerProvider.requests.length === 4 &&
+				team.statuses()[0].status === "idle",
+			"the empty second read",
+		);
+		const secondRead = plannerProvider.requests[3].messages.find(
+			(message) => message.role === "tool" && message.toolCallId === "call_2",
+		);
+		expect(secondRead?.content).toBe("(no new messages)");
+
+		// A later DM is read, and only it.
+		team.postDm("worker", "planner", "second");
+		await waitFor(
+			() =>
+				plannerProvider.requests.length === 6 &&
+				team.statuses()[0].status === "idle",
+			"the read after a new DM",
+		);
+		const thirdRead = plannerProvider.requests[5].messages.find(
+			(message) => message.role === "tool" && message.toolCallId === "call_3",
+		);
+		expect(thirdRead?.content).toBe("[from rob:worker] second");
+
+		await team.stop();
+	});
 });

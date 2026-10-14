@@ -133,6 +133,19 @@ export interface DmEntry {
 	at: number;
 }
 
+export interface TeamMember {
+	name: RobName;
+	role: string;
+}
+
+// A slice of the append-only DM log addressed to one rob, plus the global log
+// index to resume from. The index is global rather than per-rob so two DMs in
+// the same millisecond cannot make a later read skip one.
+export interface DmReadResult {
+	entries: DmEntry[];
+	next: number;
+}
+
 export interface SubagentEntry {
 	parent: string;
 	id: string;
@@ -156,7 +169,9 @@ export interface RobStatusEntry {
 
 export interface TeamPort {
 	hasRob(name: string): boolean;
+	roster(): TeamMember[];
 	postDm(from: RobName, to: RobName, text: string): void;
+	readDms(to: RobName, fromIndex: number): DmReadResult;
 	recordSubagent(entry: SubagentEntry): void;
 	requestApproval(
 		rob: RobName,

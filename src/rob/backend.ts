@@ -5,8 +5,13 @@ import type { HooksConfig } from "../hooks/hooks.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
-import { createDelegateTool, createSendMessageTool } from "./tools.js";
-import type { Inbound, RobName, TeamPort } from "./types.js";
+import {
+	createDelegateTool,
+	createListRobsTool,
+	createReadMessagesTool,
+	createSendMessageTool,
+} from "./tools.js";
+import type { DmEntry, Inbound, RobName, TeamPort } from "./types.js";
 
 export interface RobTurn {
 	history: readonly Message[];
@@ -36,6 +41,8 @@ export interface NativeBackendOptions {
 	systemInstructions: () => string;
 	team: TeamPort;
 	drain: () => Inbound[];
+	// Already filtered to this rob and advanced past what it has read.
+	readMessages: () => DmEntry[];
 	runSubagent: (task: string, signal?: AbortSignal) => Promise<string>;
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
@@ -78,6 +85,11 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				drainInput,
 				extraTools: [
 					createSendMessageTool({ team: options.team, from: options.name }),
+					createListRobsTool({
+						self: options.name,
+						roster: () => options.team.roster(),
+					}),
+					createReadMessagesTool({ read: options.readMessages }),
 					createDelegateTool({
 						from: options.name,
 						depth: 0,

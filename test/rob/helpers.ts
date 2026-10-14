@@ -6,9 +6,11 @@ import type {
 import type { AuthorizerFactory } from "../../src/rob/rob.js";
 import type {
 	DmEntry,
+	DmReadResult,
 	RobName,
 	RobStatus,
 	SubagentEntry,
+	TeamMember,
 	TeamPort,
 } from "../../src/rob/types.js";
 
@@ -19,9 +21,27 @@ export function allowAllAuthorizerFactory(): AuthorizerFactory {
 export class FakeTeam implements TeamPort {
 	readonly dms: DmEntry[] = [];
 	readonly subagents: SubagentEntry[] = [];
+	private readonly members: TeamMember[];
+
+	constructor(members: TeamMember[] = []) {
+		this.members = members;
+	}
 
 	hasRob(): boolean {
 		return true;
+	}
+
+	roster(): TeamMember[] {
+		return this.members.map((member) => ({ ...member }));
+	}
+
+	readDms(to: RobName, fromIndex: number): DmReadResult {
+		const start = Math.max(0, fromIndex);
+		const entries = this.dms
+			.slice(start)
+			.filter((entry) => entry.to === to)
+			.map((entry) => ({ ...entry }));
+		return { entries, next: this.dms.length };
 	}
 
 	postDm(from: RobName, to: RobName, text: string): void {

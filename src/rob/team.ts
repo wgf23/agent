@@ -24,11 +24,13 @@ import { type AuthorizerFactory, Rob } from "./rob.js";
 import { robToolRules } from "./tools.js";
 import type {
 	DmEntry,
+	DmReadResult,
 	RobConfig,
 	RobName,
 	RobStatus,
 	RobStatusEntry,
 	SubagentEntry,
+	TeamMember,
 	TeamPort,
 } from "./types.js";
 
@@ -277,8 +279,27 @@ export class Team implements TeamPort {
 		rob.deliver({ kind: "user", from: "user", text, at: Date.now() });
 	}
 
-	readDms(): readonly DmEntry[] {
-		return this.dms.map((entry) => ({ ...entry }));
+	roster(): TeamMember[] {
+		return [...this.robs.values()].map((rob) => ({
+			name: rob.name,
+			role: rob.role,
+		}));
+	}
+
+	// The no-arg form reports the whole log for the CLI; the cursor form is the
+	// team port's read. Entries are cloned so a caller cannot mutate the log.
+	readDms(): readonly DmEntry[];
+	readDms(to: RobName, fromIndex: number): DmReadResult;
+	readDms(to?: RobName, fromIndex?: number): readonly DmEntry[] | DmReadResult {
+		if (to === undefined) {
+			return this.dms.map((entry) => ({ ...entry }));
+		}
+		const start = Math.max(0, fromIndex ?? 0);
+		const entries = this.dms
+			.slice(start)
+			.filter((entry) => entry.to === to)
+			.map((entry) => ({ ...entry }));
+		return { entries, next: this.dms.length };
 	}
 
 	readSubagents(robName?: string): readonly SubagentEntry[] {

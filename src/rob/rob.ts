@@ -32,7 +32,9 @@ import { createCliBackend } from "./cli-backend.js";
 import { AsyncQueue } from "./inbox.js";
 import { createMemoryTools } from "./memory-tools.js";
 import { createOpencodeBackend } from "./opencode-backend.js";
+import { renderCollaboration } from "./prompt.js";
 import type {
+	DmEntry,
 	Inbound,
 	RobBackendConfig,
 	RobName,
@@ -97,6 +99,10 @@ export class Rob {
 	private stopRequested = false;
 	private currentRun: AbortController | null = null;
 	private subagentSeq = 0;
+	// A global DM-log index, so two DMs in the same millisecond cannot make a
+	// later read skip one. It moves only when read, so "since the last read" is
+	// literal, and delivery never resets it.
+	private dmCursor = 0;
 
 	constructor(options: RobOptions) {
 		this.name = options.name;
@@ -154,6 +160,7 @@ export class Rob {
 						systemInstructions: () => this.systemInstructions(),
 						team: options.team,
 						drain: () => this.inbox.drain(),
+						readMessages: () => this.readMessages(),
 						runSubagent: (task, signal) => this.runSubagent(task, signal),
 						extraTools: [
 							...createMemoryTools({
@@ -399,11 +406,18 @@ export class Rob {
 		return lastAssistantText(result.messages) ?? "";
 	}
 
+	private readMessages(): DmEntry[] {
+		const result = this.team.readDms(this.name, this.dmCursor);
+		this.dmCursor = result.next;
+		return result.entries;
+	}
+
 	private systemInstructions(): string {
 		const base = [
 			`You are rob "${this.name}", one member of a team of robs.`,
 			"Use send_message to talk to another rob, and delegate to hand one self-contained task to a sub-agent.",
 			this.role,
+			renderCollaboration(this.team.roster(), this.name),
 		].join("\n");
 		return this.memoryBlock === "" ? base : `${base}\n${this.memoryBlock}`;
 	}

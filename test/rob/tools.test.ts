@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Team } from "../../src/rob/team.js";
-import { createDelegateTool, MAX_DELEGATE_DEPTH } from "../../src/rob/tools.js";
+import {
+	createDelegateTool,
+	createListRobsTool,
+	createReadMessagesTool,
+	createSendMessageTool,
+	MAX_DELEGATE_DEPTH,
+} from "../../src/rob/tools.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 import { allowAllAuthorizerFactory, waitFor } from "./helpers.js";
@@ -123,6 +129,188 @@ describe("send_message", () => {
 			isError: true,
 		});
 		expect(team.readDms()).toHaveLength(20);
+	});
+
+	it("sends one DM per recipient and counts each against the limit", async () => {
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "b", role: "second" },
+				{ name: "c", role: "third" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		const tool = createSendMessageTool({ team, from: "planner", limit: 2 });
+
+		const result = await tool.execute(
+			{ to: ["b", "c"], text: "hello" },
+			{ workspaceRoot: workspace },
+		);
+
+		expect(result).toEqual({ ok: true, output: "Message delivered to b, c." });
+		expect(team.readDms("b", 0).entries).toEqual([
+			{ from: "planner", to: "b", text: "hello", at: expect.any(Number) },
+		]);
+		expect(team.readDms("c", 0).entries).toEqual([
+			{ from: "planner", to: "c", text: "hello", at: expect.any(Number) },
+		]);
+
+		// Both recipients counted, so the next send is over the limit.
+		const next = await tool.execute(
+			{ to: "b", text: "again" },
+			{ workspaceRoot: workspace },
+		);
+		expect(next).toEqual({
+			ok: false,
+			error: "DM limit reached: a rob may send at most 2 messages per run.",
+		});
+		expect(team.readDms("b", 0).entries).toHaveLength(1);
+	});
+
+	it("dedupes recipients so a repeated name costs one", async () => {
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "b", role: "second" },
+				{ name: "c", role: "third" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		const tool = createSendMessageTool({ team, from: "planner", limit: 2 });
+
+		const result = await tool.execute(
+			{ to: ["b", "b", "c"], text: "hello" },
+			{ workspaceRoot: workspace },
+		);
+
+		expect(result.ok).toBe(true);
+		expect(team.readDms()).toHaveLength(2);
+	});
+
+	it("refuses the whole batch when it does not fit the limit", async () => {
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "b", role: "second" },
+				{ name: "c", role: "third" },
+				{ name: "d", role: "fourth" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		const tool = createSendMessageTool({ team, from: "planner", limit: 2 });
+
+		const result = await tool.execute(
+			{ to: ["b", "c", "d"], text: "spam" },
+			{ workspaceRoot: workspace },
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "DM limit reached: a rob may send at most 2 messages per run.",
+		});
+		expect(team.readDms()).toHaveLength(0);
+	});
+
+	it("refuses a message addressed to self", async () => {
+		const team = new Team({
+			robs: [{ name: "planner", role: "plan" }],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		const tool = createSendMessageTool({ team, from: "planner" });
+
+		const result = await tool.execute(
+			{ to: "planner", text: "hi" },
+			{ workspaceRoot: workspace },
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: "Cannot send a message to yourself.",
+		});
+		expect(team.readDms()).toHaveLength(0);
+	});
+});
+
+describe("list_robs", () => {
+	it("returns every rob's name and role", async () => {
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "coordinate" },
+				{ name: "worker", role: "carry out file tasks" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		const tool = createListRobsTool({
+			self: "planner",
+			roster: () => team.roster(),
+		});
+
+		const result = await tool.execute({}, { workspaceRoot: workspace });
+
+		expect(result.ok).toBe(true);
+		const output = result.ok ? result.output : "";
+		expect(output).toContain("planner");
+		expect(output).toContain("coordinate");
+		expect(output).toContain("worker");
+		expect(output).toContain("carry out file tasks");
+	});
+});
+
+describe("read_messages", () => {
+	it("returns only this rob's DMs since the last read", async () => {
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "b", role: "second" },
+				{ name: "c", role: "third" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		team.postDm("b", "planner", "one");
+		team.postDm("c", "planner", "two");
+		team.postDm("b", "c", "not mine");
+
+		let cursor = 0;
+		const tool = createReadMessagesTool({
+			read: () => {
+				const result = team.readDms("planner", cursor);
+				cursor = result.next;
+				return result.entries;
+			},
+		});
+
+		const first = await tool.execute({}, { workspaceRoot: workspace });
+		expect(first).toEqual({
+			ok: true,
+			output: "[from rob:b] one\n[from rob:c] two",
+		});
+
+		// Nothing new: the cursor advanced past the first read.
+		const second = await tool.execute({}, { workspaceRoot: workspace });
+		expect(second).toEqual({ ok: true, output: "(no new messages)" });
+
+		// A later DM is picked up even though it shares the log with the others.
+		team.postDm("c", "planner", "three");
+		const third = await tool.execute({}, { workspaceRoot: workspace });
+		expect(third).toEqual({ ok: true, output: "[from rob:c] three" });
 	});
 });
 
