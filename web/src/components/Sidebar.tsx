@@ -10,7 +10,7 @@ import { WORKSPACE_BOT } from "../protocol";
 import { sessionLabel } from "../sessions";
 import type { ConnectionStatus, SearchState } from "../state";
 import { STATUS_LABEL } from "../status";
-import { GearIcon, PlusIcon } from "./icons";
+import { FolderIcon, GearIcon, PlusIcon } from "./icons";
 import SearchPanel from "./SearchPanel";
 import SessionRow from "./SessionRow";
 import WorkspacePicker from "./WorkspacePicker";
@@ -48,6 +48,9 @@ interface Props {
 	onClearSearch: () => void;
 	onCreateBot: () => void;
 	onOpenSettings: () => void;
+	// The right-side file panel; the button folds it away on wide screens.
+	filesOpen: boolean;
+	onToggleFiles: () => void;
 	usage: UsageTotals;
 	connection: ConnectionStatus;
 }
@@ -81,6 +84,8 @@ export default function Sidebar(props: Props) {
 		onClearSearch,
 		onCreateBot,
 		onOpenSettings,
+		filesOpen,
+		onToggleFiles,
 		usage,
 		connection,
 	} = props;
@@ -135,6 +140,15 @@ export default function Sidebar(props: Props) {
 					onClick={() => onViewChange("agents")}
 				>
 					Agents
+				</button>
+				<button
+					type="button"
+					className={`nav-item ${filesOpen ? "active" : ""}`}
+					aria-pressed={filesOpen}
+					onClick={onToggleFiles}
+				>
+					<FolderIcon size={14} />
+					文件
 				</button>
 			</nav>
 

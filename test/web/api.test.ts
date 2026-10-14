@@ -135,6 +135,13 @@ const invocations: Array<{
 		body: undefined,
 	},
 	{
+		name: "listFiles",
+		run: (api) => api.listFiles("src", { showHidden: true }),
+		path: "/api/files?path=src&showHidden=1",
+		method: "GET",
+		body: undefined,
+	},
+	{
 		name: "loadBotTranscript",
 		run: (api) => api.loadBotTranscript("b"),
 		path: "/api/bots/b/transcript",

@@ -5,6 +5,7 @@ import type {
 	BotDraft,
 	BotTranscriptResponse,
 	CancelAgentBody,
+	FileListResponse,
 	ForgetMemoryBody,
 	ImagePart,
 	InstallAgentBody,
@@ -43,6 +44,12 @@ export interface ApiClient {
 	// A read-only search over the workspace chat and every bot's sessions; a
 	// blank query is refused by the server and never sent by the hub.
 	search(query: string): Promise<SearchResponse>;
+	// A read-only listing of one workspace directory; "" is the root. The two
+	// flags ask the server to include hidden and gitignored entries.
+	listFiles(
+		path: string,
+		options?: { showHidden?: boolean; showIgnored?: boolean },
+	): Promise<FileListResponse>;
 	createBot(draft: BotDraft): Promise<void>;
 	// Replaces a bot's role, model, and backend; the name rides in the path.
 	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
@@ -230,6 +237,23 @@ export function createApi(options: {
 			throw await failure(response, `GET ${path} failed: ${response.status}`);
 		}
 		return (await response.json()) as SearchResponse;
+	}
+
+	// The path is always present ("" is the root) and the flags ride as "1",
+	// matching the route's exact spellings; a refused listing keeps its status.
+	async function listFiles(
+		path: string,
+		options: { showHidden?: boolean; showIgnored?: boolean } = {},
+	): Promise<FileListResponse> {
+		const query = new URLSearchParams({ path });
+		if (options.showHidden === true) query.set("showHidden", "1");
+		if (options.showIgnored === true) query.set("showIgnored", "1");
+		const route = `/api/files?${query.toString()}`;
+		const response = await request(route);
+		if (!response.ok) {
+			throw await failure(response, `GET ${route} failed: ${response.status}`);
+		}
+		return (await response.json()) as FileListResponse;
 	}
 
 	async function createBot(draft: BotDraft): Promise<void> {
@@ -433,6 +457,7 @@ export function createApi(options: {
 		renameSession,
 		deleteSession,
 		search,
+		listFiles,
 		createBot,
 		updateBot,
 		removeBot,

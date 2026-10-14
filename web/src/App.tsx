@@ -5,6 +5,7 @@ import BotMemoryPanel from "./components/BotMemoryPanel";
 import BotPlaza from "./components/BotPlaza";
 import BotSettingsPanel from "./components/BotSettingsPanel";
 import Composer from "./components/Composer";
+import FileTree from "./components/FileTree";
 import MessageList from "./components/MessageList";
 import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
@@ -44,6 +45,7 @@ export default function App() {
 	const [selectedBot, setSelectedBot] = useState<string | null>(null);
 	const [tab, setTab] = useState<BotTab>("chat");
 	const [dialogOpen, setDialogOpen] = useState(false);
+	const [filesOpen, setFilesOpen] = useState(true);
 
 	const robs = robBots(state.bots);
 	const selectedRob =
@@ -132,6 +134,8 @@ export default function App() {
 				onClearSearch={hub.clearSearch}
 				onCreateBot={() => setDialogOpen(true)}
 				onOpenSettings={hub.openSettings}
+				filesOpen={filesOpen}
+				onToggleFiles={() => setFilesOpen((value) => !value)}
 				usage={state.usage}
 				connection={state.connection}
 			/>
@@ -263,6 +267,8 @@ export default function App() {
 					</section>
 				)}
 			</div>
+
+			<FileTree listFiles={hub.listFiles} open={filesOpen} />
 
 			{approval !== null && (
 				<PermissionModal

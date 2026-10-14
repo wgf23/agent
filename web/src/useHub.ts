@@ -4,6 +4,7 @@ import { readToken } from "./auth";
 import type {
 	ApprovalChoice,
 	BotDraft,
+	FileListResponse,
 	ImagePart,
 	SaveProviderBody,
 	ServerEvent,
@@ -62,6 +63,12 @@ export interface Hub {
 	// is not sent, and the answer lands in state.search for the sidebar panel.
 	search: (query: string) => void;
 	clearSearch: () => void;
+	// A read-only directory listing for the file panel. It forwards to the
+	// token-aware client and returns the response; the panel owns the state.
+	listFiles: (
+		path: string,
+		options?: { showHidden?: boolean; showIgnored?: boolean },
+	) => Promise<FileListResponse>;
 	createBot: (draft: BotDraft) => Promise<void>;
 	// Rejects with the server's message so the settings panel can show it
 	// inline; a 401 is still reported as the auth error.
@@ -282,6 +289,12 @@ export function useHub(): Hub {
 		dispatch({ type: "search_cleared" });
 	}, []);
 
+	const listFiles = useCallback(
+		(path: string, options?: { showHidden?: boolean; showIgnored?: boolean }) =>
+			api.listFiles(path, options),
+		[],
+	);
+
 	const updateBot = useCallback(
 		async (bot: string, draft: UpdateBotBody) => {
 			try {
@@ -396,6 +409,7 @@ export function useHub(): Hub {
 		deleteSession,
 		search,
 		clearSearch,
+		listFiles,
 		createBot,
 		updateBot,
 		removeBot,

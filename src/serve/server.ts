@@ -33,6 +33,8 @@ import {
 import { resolveConfig } from "../config/resolve.js";
 import type { Provider } from "../providers/types.js";
 import { UnknownRobError } from "../rob/team.js";
+import { PathEscapeError } from "../util/paths.js";
+import { listDirectory, NotADirectoryError } from "./files.js";
 import type { Hub } from "./hub.js";
 import { MAX_SEND_BODY_BYTES, parseImages } from "./images.js";
 import { openBrowser } from "./open-browser.js";
@@ -327,6 +329,33 @@ export async function buildServer(
 			const response = await search(query, hub.hello().workspaceRoot);
 			return reply.send(response);
 		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	// A read-only directory listing, bounded to the active workspace. The path
+	// is relative and posix; "" is the root. An escape is a 400, a missing or
+	// non-directory path is a 404, and any other failure is a 500.
+	app.get("/api/files", async (request, reply) => {
+		const query = request.query as {
+			path?: unknown;
+			showHidden?: unknown;
+			showIgnored?: unknown;
+		};
+		const relPath = typeof query.path === "string" ? query.path : "";
+		try {
+			const listing = await listDirectory(hub.hello().workspaceRoot, relPath, {
+				showHidden: isTruthyFlag(query.showHidden),
+				showIgnored: isTruthyFlag(query.showIgnored),
+			});
+			return reply.send(listing);
+		} catch (error) {
+			if (error instanceof PathEscapeError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			if (error instanceof NotADirectoryError) {
+				return reply.code(404).send({ error: errorText(error) });
+			}
 			return reply.code(500).send({ error: errorText(error) });
 		}
 	});
@@ -831,6 +860,12 @@ function botParam(request: FastifyRequest): string | undefined {
 	return typeof params?.bot === "string" && params.bot !== ""
 		? params.bot
 		: undefined;
+}
+
+// The file-list flags are on only for the exact "1" or "true" spellings, so a
+// stray value keeps the safe default (hidden and ignored files stay hidden).
+function isTruthyFlag(value: unknown): boolean {
+	return value === "1" || value === "true";
 }
 
 // The search query is the literal substring to find. A missing value or a blank
