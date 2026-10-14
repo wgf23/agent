@@ -450,6 +450,8 @@ The workspace chat is an ordinary session list, not a bot. It is the default ass
 
 The active workspace can be switched at runtime. `my-agent serve --workspace <root>` picks the initial root, and `POST /api/workspaces { "root": "<root>" }` (or the web picker) opens a fresh scope for another one and disposes the old one, so no mutable state is ever rebound across roots. A switch is refused while any bot or the chat is mid-turn, and a root the server cannot open answers `400`. Recent workspaces are remembered in `<data root>/sessions/workspaces.json`.
 
+Bots are also a team. Several native bots can discuss one task, delegate parts to each other, and let a chosen coordinator compile a single deliverable — headlessly with `my-agent team --coordinator <name>`, and visibly in the web DM stream. The roster each bot sees and the full protocol are in [Working as a team](#working-as-a-team).
+
 A bot's backend is the built-in one only. The create dialog and the edit panel show a single 内置 option — no external-CLI choices, no install affordance, no provider or backend-model fields — and the draft they send is `{"kind":"native"}`. `POST /api/bots` and `PATCH /api/bots/:bot` answer `400` with `Only the "native" backend is supported. A "cli" backend is no longer accepted.` for a `cli` draft, and an omitted backend is persisted explicitly as `{"kind":"native"}`. `my-agent serve` migrates an existing `cli` rob in the workspace's `my-agent.json` to native the first time it opens that workspace, dropping the cli-only fields and printing how many robs it rewrote; the TUI keeps parsing and running a hand-written `cli` rob until then.
 
 ## Robs
@@ -483,6 +485,30 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 - `command: "pi"` runs pi; `provider` and `model` are required. It keeps one pi session per rob under `.my-agent/pi-sessions/<name>` and bridges approvals through a pi extension.
 - `command: "opencode"` runs a private, long-lived `opencode serve` process with one persistent session per rob, on its own random local port and password. Its data and state live under `~/.config/my-agent/opencode/<name>/` (via `XDG_DATA_HOME` and `XDG_STATE_HOME`), so rob sessions never appear in your own opencode session list and never contend with your own server for the SQLite database. `provider` and `model` are optional; set both to pin an opencode model that exists in your own opencode setup. The configured provider key (the `apiKeyEnv` value) is forwarded to the child as its environment variable, so a key stored with `my-agent setup` works without exporting anything. Every turn reuses the same session, so the rob remembers earlier messages. Messages that arrive while a turn is running are delivered as `steer` prompts, so an interjection redirects the running turn instead of waiting for the next one. A tool that resolves to `ask` is exposed as an opencode `ask` rule, and every opencode permission request is answered through the rob's own authorizer and the shared approval queue, so you approve it in the same dialog as the rest of the team.
 - `command: "claude"` runs Claude Code, one `claude -p` process per turn. The first turn passes a fresh `--session-id` and later turns `--resume` it, so the rob remembers its history. Its config lives under `~/.config/my-agent/claude/<name>/` (via `CLAUDE_CONFIG_DIR`, overridable with `MY_AGENT_CLAUDE_CONFIG_DIR`) so rob sessions stay out of your own `~/.claude`. `model` is optional; set it to pin a Claude Code model alias. Tools that resolve to `allow` are exposed with `--allowedTools`, and `ask` and `deny` tools are denied with `--disallowedTools`. Interactive approval is not bridged, so an `ask` tool is treated as denied rather than surfaced in the approval dialog.
+
+### Working as a team
+
+Native robs can discuss a task among themselves and hand back one result, coordinated by one of them. Every native rob's system prompt carries a roster of its teammates — each one's name and role — so it knows who to ask for what.
+
+- `send_message` sends a private message to one teammate, or to a list of names to reach several at once. Each recipient reads it at its own next turn, as a turn prefixed `[from rob:<name>]`. A rob may send at most 20 messages per turn, counting every recipient of a broadcast.
+- `read_messages` returns the messages a rob has received since its last read, so it can check for replies without blocking.
+- `list_robs` returns the roster (the same one the prompt carries).
+- `delegate` still hands one self-contained task to a sub-agent (depth 1); it is not a teammate conversation. These four are native-only, as before.
+
+`my-agent team --coordinator <name>` runs a bounded, coordinator-led discussion. Run it from the workspace, or point `--workspace` at one:
+
+```bash
+my-agent team \
+  --dispatch 'planner=Produce a 3-day Kyoto plan; ask foodie and navigator for their parts.' \
+  --coordinator planner \
+  --max-rounds 4 \
+  --wait-ms 300000 \
+  --yes
+```
+
+The coordinator splits the task and delegates with `send_message`, the others answer with their own turns, and the discussion runs until it goes quiet — a full round with no new messages — or it hits `--max-rounds` or `--wait-ms`. Whatever the reason, the coordinator is then forced to wrap up and compile the final deliverable, so a timeout still yields a best-effort result. The deliverable is printed and written to `<workspace>/docs/deliverables/<timestamp>-<task-slug>.md` together with the full discussion transcript. The command exits 0 only when the discussion converged and the coordinator produced a non-empty deliverable, and 1 otherwise. Every message is a `dm` event, so the web Bot 广场 and the DM stream show the same discussion, and the wrap-up is a `notice`.
+
+A ready-to-run three-rob example (one coordinator, two teammates) lives in [`docs/examples/team/`](docs/examples/team/), with a sample deliverable in the same directory.
 
 `send_message` and `delegate` are native-only. Listing either in a `cli` rob's `permissions` is a config error.
 

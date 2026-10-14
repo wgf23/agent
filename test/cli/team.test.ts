@@ -105,4 +105,42 @@ describe("runTeamCommand", () => {
 			logSpy.mockRestore();
 		}
 	});
+
+	it("exits non-zero when the coordinator produces no deliverable", async () => {
+		const code = await runTeamCommand({
+			dispatch: ["planner=hi"],
+			waitMs: 200,
+			coordinator: "planner",
+			maxRounds: 1,
+			yesAll: true,
+			workspaceRoot: workspace,
+			homeDir: home,
+			// Every turn yields no text, so the wrap-up has nothing to return.
+			providerFactory: () => createMockProvider([]),
+		});
+
+		expect(code).toBe(1);
+	});
+
+	it("refuses a coordinator that is not on the roster before any work runs", async () => {
+		const errorSpy = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+		try {
+			const code = await runTeamCommand({
+				dispatch: ["planner=hi"],
+				waitMs: 2000,
+				coordinator: "ghost",
+				yesAll: true,
+				workspaceRoot: workspace,
+				homeDir: home,
+				providerFactory: () => createMockProvider([]),
+			});
+
+			expect(code).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith("Unknown rob: ghost");
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
 });

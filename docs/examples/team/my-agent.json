@@ -1,0 +1,17 @@
+{
+	"provider": { "preset": "deepseek" },
+	"robs": [
+		{
+			"name": "planner",
+			"role": "You coordinate the team. When given a task, split it, ask the right teammate for each part with send_message, then merge their answers into the final deliverable."
+		},
+		{
+			"name": "foodie",
+			"role": "You research food and culture. Answer a teammate's question with a short, concrete list."
+		},
+		{
+			"name": "navigator",
+			"role": "You research transit and logistics. Answer a teammate's question with a short, concrete list."
+		}
+	]
+}

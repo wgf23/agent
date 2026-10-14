@@ -145,6 +145,15 @@ export async function runTeamCommand(
 		team.resolveApproval(event.request.id, decision);
 	});
 
+	const coordinator = options.coordinator;
+	// A coordinator that is not on the roster would only fail later, inside the
+	// wrap-up dispatch; refuse it before any work starts.
+	if (coordinator !== undefined && !team.hasRob(coordinator)) {
+		console.error(`Unknown rob: ${coordinator}`);
+		await team.stop();
+		return 1;
+	}
+
 	try {
 		team.start();
 		for (const dispatch of parsed.dispatches) {
@@ -161,7 +170,6 @@ export async function runTeamCommand(
 		}
 
 		const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
-		const coordinator = options.coordinator;
 		const task = discussionTask(parsed.dispatches, coordinator);
 		const discussion = await runDiscussion(discussionPort(team), {
 			coordinator,
