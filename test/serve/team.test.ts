@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -498,6 +498,137 @@ describe("TeamHub", () => {
 			readFileSync(projectFilePath(workspaceRoot), "utf8"),
 		);
 		expect(cleared.robs[0].wake).toBeUndefined();
+		await hub.dispose();
+	});
+
+	it("denies a pending approval when its bot is removed", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "bash",
+					args: { command: "echo hi" },
+				},
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "go");
+		await waitFor(
+			() => events.some((event) => event.type === "approval_requested"),
+			"the approval request",
+		);
+		const requested = events.find(
+			(event) => event.type === "approval_requested",
+		);
+		expect(hub.states().find((state) => state.bot === "alpha")?.status).toBe(
+			"waiting_approval",
+		);
+
+		expect(await hub.removeBot("alpha")).toBe(true);
+
+		// The pending approval resolved denied rather than hanging, and the rob
+		// reported the literal stopped status on its way out.
+		expect(events).toContainEqual({
+			type: "approval_resolved",
+			id: requested?.type === "approval_requested" ? requested.request.id : "",
+			decision: "deny",
+		});
+		expect(events).toContainEqual({
+			type: "bot_status",
+			state: expect.objectContaining({ bot: "alpha", status: "stopped" }),
+		});
+		expect(hub.bots()).toEqual([]);
+		expect(hub.states().some((state) => state.bot === "alpha")).toBe(false);
+
+		// A later dispatch to the removed name reports the literal unknown bot.
+		hub.dispatch("alpha", "again");
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "alpha",
+			message: "Unknown bot: alpha",
+		});
+		await hub.dispose();
+	});
+
+	it("deletes a removed bot's ledger", async () => {
+		const store = createBotStore();
+		const loaded = await store.load("alpha", {
+			role: "a test rob",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		await store.commit(loaded.record, {
+			id: "trn_00000000000000000000000000000001",
+			seq: 1,
+			sessionId: "chs_seed",
+			workspaceRoot,
+			at: 1,
+			wake: "user",
+			messages: [],
+		});
+		const ledger = path.join(process.env.MY_AGENT_BOTS_DIR ?? "", "alpha.json");
+		expect(existsSync(ledger)).toBe(true);
+
+		const hub = createHub(slowProvider());
+		expect(await hub.removeBot("ghost")).toBe(false);
+		expect(await hub.removeBot("alpha")).toBe(true);
+		expect(existsSync(ledger)).toBe(false);
+		await hub.dispose();
+	});
+
+	it("replaces a bot's role and model and keeps its wake", async () => {
+		writeFileSync(
+			projectFilePath(workspaceRoot),
+			`${JSON.stringify(
+				{
+					robs: [
+						{
+							name: "alpha",
+							role: "a test rob",
+							wake: { everyMs: 60000, prompt: "tick" },
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		const manual = manualTimer();
+		const hub = createHub(slowProvider(), manual.timer);
+
+		const updated = hub.replaceBot("alpha", {
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+			wake: { everyMs: 60000, prompt: "tick" },
+		});
+
+		expect(updated).toEqual({
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+			backend: "native",
+			wake: { everyMs: 60000, prompt: "tick" },
+		});
+		expect(hub.hello().bots[0]).toMatchObject({
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+		});
+		expect(hub.hello().bots[0].wake).toEqual({
+			everyMs: 60000,
+			prompt: "tick",
+		});
+		expect(() => hub.replaceBot("ghost", { name: "ghost", role: "x" })).toThrow(
+			"Unknown rob: ghost",
+		);
 		await hub.dispose();
 	});
 });

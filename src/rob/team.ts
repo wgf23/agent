@@ -38,6 +38,9 @@ export const TEAM_STOPPED_REASON =
 export const TURN_INTERRUPTED_REASON =
 	"The turn was interrupted before the approval was answered.";
 
+export const ROB_REMOVED_REASON =
+	"The bot was removed before this approval was answered.";
+
 export class UnknownRobError extends Error {
 	readonly robName: string;
 
@@ -136,6 +139,45 @@ export class Team implements TeamPort {
 			this.loops.set(config.name, rob.run());
 			this.armWake(config.name, config.wake ?? null);
 		}
+	}
+
+	// Removes a rob at runtime: its wake timer is disarmed, its loop stops, it
+	// leaves every map, and any approval it is still waiting on is denied so a
+	// turn cannot hang. An unknown name is UnknownRobError, so the caller never
+	// deletes a rob the roster never had.
+	removeRob(name: string): void {
+		const rob = this.requireRob(name);
+		this.disarmWake(name);
+		rob.stop();
+		this.approvals.denyRob(name, ROB_REMOVED_REASON);
+		this.robs.delete(name);
+		this.wakes.delete(name);
+		this.loops.delete(name);
+	}
+
+	// Replaces a rob's config in place: the old runtime is stopped and a fresh
+	// one is built from the new config, keeping the same name and, unless the
+	// config carries its own, the same wake. start/stop/addRob are untouched.
+	updateRob(config: RobConfig): void {
+		const existing = this.requireRob(config.name);
+		this.disarmWake(config.name);
+		existing.stop();
+		this.approvals.denyRob(config.name, TURN_INTERRUPTED_REASON);
+		const rob = this.createRob(config);
+		this.robs.set(config.name, rob);
+		const wake = config.wake ?? this.wakes.get(config.name) ?? null;
+		this.wakes.set(config.name, wake);
+		if (this.started && !this.stopping) {
+			this.loops.set(config.name, rob.run());
+			this.armWake(config.name, wake);
+		}
+	}
+
+	private disarmWake(name: RobName): void {
+		const cancel = this.wakeTimers.get(name);
+		if (cancel === undefined) return;
+		cancel();
+		this.wakeTimers.delete(name);
 	}
 
 	private createRob(config: RobConfig): Rob {

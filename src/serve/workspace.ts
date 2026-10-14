@@ -9,6 +9,7 @@ import type {
 	BotTranscriptResponse,
 	BotWake,
 	MemoryListResponse,
+	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
@@ -295,6 +296,14 @@ export class WorkspaceHub extends EventBus implements Hub {
 
 	createBot(draft: BotDraft): Promise<BotInfo> {
 		return this.scope.hub.createBot(draft);
+	}
+
+	updateBot(name: string, draft: UpdateBotBody): Promise<BotInfo> {
+		return this.scope.hub.updateBot(name, draft);
+	}
+
+	removeBot(name: string): Promise<boolean> {
+		return this.scope.hub.removeBot(name);
 	}
 
 	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {

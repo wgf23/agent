@@ -50,6 +50,11 @@ const WAKE_EVERY_MS = 3000;
 // brief, so the turn it eventually commits proves the route reached the timer.
 const WAKE_SET_EVERY_MS = 2500;
 const WAKE_SET_PROMPT = "Say the single word: tock";
+// Phase 10 replaces the bot's role and model and reads both back; phase 11
+// creates then deletes a throwaway bot.
+const EDITED_ROLE = "You are the edited atlas. Keep every answer short.";
+const EDITED_MODEL = "deepseek-chat";
+const THROWAWAY_BOT = "throwaway";
 const POLL_MS = 200;
 const MEMORY_TIMEOUT_MS = 45_000;
 const ANSWER_TIMEOUT_MS = 45_000;
@@ -427,6 +432,91 @@ try {
 	} finally {
 		collisionEvents.abort();
 	}
+
+	// Phase 10: edit the existing bot's role and model in place and read both
+	// back through a fresh hello. The interval wake set in phase 8 must survive
+	// the edit, so the same roster entry carries it again.
+	phase = 10;
+	const edited = await patchJson(server.port, `/api/bots/${BOT}`, {
+		role: EDITED_ROLE,
+		model: EDITED_MODEL,
+	});
+	assert(
+		edited.status === 200,
+		`PATCH /api/bots/${BOT} returned ${edited.status}`,
+	);
+	const editedBody = (await edited.json()) as {
+		ok?: boolean;
+		bot?: { role?: string; model?: string };
+	};
+	assert(editedBody.ok === true, `PATCH /api/bots/${BOT} did not answer ok`);
+	assert(
+		editedBody.bot?.role === EDITED_ROLE &&
+			editedBody.bot?.model === EDITED_MODEL,
+		`PATCH /api/bots/${BOT} answered ${JSON.stringify(editedBody.bot)}`,
+	);
+	const editedHello = await helloOnce(server.port);
+	const editedBot = editedHello.bots.find((bot) => bot.name === BOT);
+	assert(
+		editedBot?.role === EDITED_ROLE,
+		`fresh hello role is ${JSON.stringify(editedBot?.role)}, expected ${JSON.stringify(EDITED_ROLE)}`,
+	);
+	assert(
+		editedBot?.model === EDITED_MODEL,
+		`fresh hello model is ${JSON.stringify(editedBot?.model)}, expected ${JSON.stringify(EDITED_MODEL)}`,
+	);
+	assert(
+		editedBot?.wake?.everyMs === WAKE_SET_EVERY_MS,
+		`the edit dropped the wake: ${JSON.stringify(editedBot?.wake)}`,
+	);
+	console.log(
+		`PASS phase 10 edit: role=${JSON.stringify(editedBot?.role)} model=${editedBot?.model} kept wake everyMs=${editedBot?.wake?.everyMs}`,
+	);
+
+	// Phase 11: create a throwaway bot, then delete it and confirm a fresh hello
+	// no longer lists it and the config entry is gone.
+	phase = 11;
+	const createdThrowaway = await postJson(server.port, "/api/bots", {
+		name: THROWAWAY_BOT,
+		role: "temporary, deleted in the same phase",
+	});
+	assert(
+		createdThrowaway.status === 200,
+		`POST /api/bots for ${THROWAWAY_BOT} returned ${createdThrowaway.status}`,
+	);
+	const beforeDelete = await helloOnce(server.port);
+	assert(
+		beforeDelete.bots.some((bot) => bot.name === THROWAWAY_BOT),
+		`the hello does not list the freshly created ${THROWAWAY_BOT}`,
+	);
+	const deleted = await deleteJson(server.port, `/api/bots/${THROWAWAY_BOT}`);
+	assert(
+		deleted.status === 200,
+		`DELETE /api/bots/${THROWAWAY_BOT} returned ${deleted.status}`,
+	);
+	const deletedBody = (await deleted.json()) as {
+		ok?: boolean;
+		bot?: { name?: string };
+	};
+	assert(
+		deletedBody.ok === true && deletedBody.bot?.name === THROWAWAY_BOT,
+		`DELETE /api/bots/${THROWAWAY_BOT} answered ${JSON.stringify(deletedBody)}`,
+	);
+	const afterDelete = await helloOnce(server.port);
+	assert(
+		!afterDelete.bots.some((bot) => bot.name === THROWAWAY_BOT),
+		`the hello still lists ${THROWAWAY_BOT} after delete`,
+	);
+	const projectAfterDelete = JSON.parse(
+		await readFile(path.join(workspace, "my-agent.json"), "utf8"),
+	) as { robs?: Array<{ name?: string }> };
+	assert(
+		!projectAfterDelete.robs?.some((entry) => entry.name === THROWAWAY_BOT),
+		`my-agent.json still carries ${THROWAWAY_BOT} after delete`,
+	);
+	console.log(
+		`PASS phase 11 delete: created then deleted ${THROWAWAY_BOT}, fresh hello lists [${afterDelete.bots.map((bot) => bot.name).join(", ")}]`,
+	);
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);
 	if (server !== undefined) console.error(server.output());
@@ -683,6 +773,24 @@ function openEvents(port: number): EventStream {
 	return { next, abort: () => controller.abort() };
 }
 
+// The hello a fresh event stream opens with: the snapshot the client renders
+// before any tail, read here to prove a route reached the roster.
+async function helloOnce(
+	port: number,
+): Promise<Extract<ServerEvent, { type: "hello" }>> {
+	const events = openEvents(port);
+	try {
+		const event = await events.next((candidate) => candidate.type === "hello");
+		assert(
+			event.type === "hello",
+			"the event stream did not start with a hello",
+		);
+		return event;
+	} finally {
+		events.abort();
+	}
+}
+
 async function waitForMemory(
 	filePath: string,
 	needle: string,
@@ -885,6 +993,22 @@ function postJson(
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
+}
+
+function patchJson(
+	port: number,
+	route: string,
+	body: unknown,
+): Promise<Response> {
+	return fetch(`${baseUrl(port)}${route}`, {
+		method: "PATCH",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	});
+}
+
+function deleteJson(port: number, route: string): Promise<Response> {
+	return fetch(`${baseUrl(port)}${route}`, { method: "DELETE" });
 }
 
 function baseUrl(port: number): string {

@@ -286,6 +286,58 @@ describe("bot ledger routes", () => {
 		await hub.dispose();
 	});
 
+	it("edits and deletes a bot through the routes", async () => {
+		const hub = makeHub(createMockProvider([]));
+		const { app, port } = await startServer(hub);
+		const request = (method: string, route: string, body?: unknown) =>
+			fetch(`http://127.0.0.1:${port}${route}`, {
+				method,
+				...(body === undefined
+					? {}
+					: {
+							headers: { "content-type": "application/json" },
+							body: JSON.stringify(body),
+						}),
+			});
+
+		const ghost = await request("DELETE", "/api/bots/ghost");
+		expect(ghost.status).toBe(404);
+		expect(await ghost.json()).toEqual({ error: "Unknown bot: ghost" });
+
+		const bad = await request("PATCH", "/api/bots/alpha", {
+			role: "x",
+			model: "",
+		});
+		expect(bad.status).toBe(400);
+
+		const edited = await request("PATCH", "/api/bots/alpha", {
+			role: "the edited rob",
+			model: "deepseek-chat",
+		});
+		expect(edited.status).toBe(200);
+		expect(await edited.json()).toMatchObject({
+			ok: true,
+			bot: { name: "alpha", role: "the edited rob", model: "deepseek-chat" },
+		});
+		expect(hub.hello().bots[0]).toMatchObject({
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+		});
+
+		const deleted = await request("DELETE", "/api/bots/alpha");
+		expect(deleted.status).toBe(200);
+		expect(await deleted.json()).toMatchObject({
+			ok: true,
+			bot: { name: "alpha" },
+		});
+		expect(hub.hello().bots).toEqual([]);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+		await hub.dispose();
+	});
+
 	it("returns 501 when the hub cannot serve the routes", async () => {
 		const hub = new SoloHub(hubOptions(createMockProvider([])), {
 			session: newSession(workspaceRoot, settings.model),
@@ -307,6 +359,22 @@ describe("bot ledger routes", () => {
 		).toBe(501);
 		expect(
 			(await post("/api/bots/assistant/wake", { clear: true })).status,
+		).toBe(501);
+		expect(
+			(
+				await fetch(`http://127.0.0.1:${port}/api/bots/assistant`, {
+					method: "DELETE",
+				})
+			).status,
+		).toBe(501);
+		expect(
+			(
+				await fetch(`http://127.0.0.1:${port}/api/bots/assistant`, {
+					method: "PATCH",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ role: "x" }),
+				})
+			).status,
 		).toBe(501);
 
 		app.server.closeAllConnections?.();

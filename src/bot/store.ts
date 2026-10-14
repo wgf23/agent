@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -51,6 +51,8 @@ export interface BotStore {
 	// error: there is nothing to edit and no turn to lend it identity.
 	saveMemory(bot: string, delta: MemoryDelta): Promise<SaveMemoryResult>;
 	memory(bot: string): Promise<MemoryEntry[]>;
+	// Deletes the bot's durable record. A missing file is a no-op.
+	remove(bot: string): Promise<void>;
 }
 
 // A bot's experience is global across workspaces, so the ledger is keyed by
@@ -202,6 +204,15 @@ export function createBotStore(
 		});
 	}
 
+	// Deletes a bot's whole record. A missing file is a no-op, so deleting a bot
+	// that never ran a turn (or was already deleted) cannot fail. It runs on the
+	// bot's chain like commit, so a pending write cannot resurrect the file.
+	async function remove(bot: string): Promise<void> {
+		return enqueue(bot, async () => {
+			await rm(botPath(bot), { force: true });
+		});
+	}
+
 	// Best-effort read for callers that only want the memory and can tolerate a
 	// missing ledger. Corruption is reported by load(), not swallowed here.
 	async function memory(bot: string): Promise<MemoryEntry[]> {
@@ -221,7 +232,7 @@ export function createBotStore(
 		return parsed.success ? parsed.data.memory : [];
 	}
 
-	return { load, commit, saveMemory, memory };
+	return { load, commit, saveMemory, memory, remove };
 }
 
 // A bot's identity and role live in the workspace project file, never here, so

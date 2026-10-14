@@ -6,6 +6,7 @@ import type {
 	BotWake,
 	MemoryListResponse,
 	ServerEvent,
+	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
@@ -56,8 +57,10 @@ export interface Hub {
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
 	closeSession?(bot: string, id: string): Promise<void>;
-	// Only a hub that manages a rob roster can create one.
+	// Only a hub that manages a rob roster can create, edit, or delete one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
+	updateBot?(name: string, draft: UpdateBotBody): Promise<BotInfo>;
+	removeBot?(name: string): Promise<boolean>;
 	// A hub that keeps bot ledgers can serve these. The reads return null for an
 	// unknown bot; the writes return false. A store error throws, and the route
 	// turns it into a 500; forgetting an id the record has no entry for throws

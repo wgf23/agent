@@ -157,6 +157,33 @@ export class TeamHub extends EventBus implements Hub {
 		this.roster.push(config);
 	}
 
+	// Tears down a bot's runtime and drops its ledger, then announces the new
+	// roster. The caller removes the config first. False when the roster has no
+	// such bot, so the route can answer 404 without reaching the runtime.
+	async removeBot(name: string): Promise<boolean> {
+		if (!this.hasBot(name)) return false;
+		this.team.removeRob(name);
+		const index = this.roster.findIndex((rob) => rob.name === name);
+		if (index !== -1) this.roster.splice(index, 1);
+		await this.store.remove(name);
+		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
+		return true;
+	}
+
+	// Restarts a bot's runtime from the new config and announces the roster.
+	// The caller persists the config first and keeps the wake in `config`.
+	// UnknownRobError names a bot the roster never had.
+	replaceBot(name: string, config: RobConfig): BotInfo {
+		if (!this.hasBot(name)) throw new UnknownRobError(name);
+		this.team.updateRob(config);
+		const index = this.roster.findIndex((rob) => rob.name === name);
+		if (index !== -1) this.roster[index] = config;
+		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
+		const updated = this.bots().find((bot) => bot.name === name);
+		if (updated === undefined) throw new UnknownRobError(name);
+		return updated;
+	}
+
 	dispatch(bot: string, text: string, images?: ImagePart[]): void {
 		if (text.trim() === "") return;
 		if (this.options.runtime?.isConfigured() === false) {

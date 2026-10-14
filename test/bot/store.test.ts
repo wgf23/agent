@@ -221,6 +221,30 @@ describe("memory", () => {
 	});
 });
 
+describe("remove", () => {
+	it("deletes the record and is a no-op when it is already gone", async () => {
+		const store = createBotStore();
+		await store.commit(await loadRecord("atlas"), makeTurn());
+		expect((await stat(botFile("atlas"))).isFile()).toBe(true);
+
+		await store.remove("atlas");
+		await expect(readFile(botFile("atlas"), "utf8")).rejects.toThrow();
+		// A second delete of the same name must not throw.
+		await expect(store.remove("atlas")).resolves.toBeUndefined();
+
+		const loaded = await store.load("atlas", identity);
+		expect(loaded).toEqual({
+			ok: true,
+			record: expect.objectContaining({
+				bot: "atlas",
+				memory: [],
+				turns: [],
+				seq: 0,
+			}),
+		});
+	});
+});
+
 describe("concurrency", () => {
 	it("leaves both effects when a commit and a memory edit race", async () => {
 		const store = createBotStore();
