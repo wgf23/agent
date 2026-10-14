@@ -89,6 +89,12 @@ export interface Hub {
 		file: File,
 		options?: UploadOptions,
 	) => Promise<UploadResult>;
+	// Structure writes for the file panel; each rejects with the server's
+	// reason so the row can show it, and the panel owns the refresh.
+	mkdir: (path: string) => Promise<void>;
+	renameEntry: (from: string, to: string) => Promise<void>;
+	moveEntry: (from: string, to: string) => Promise<void>;
+	deleteEntry: (path: string, recursive?: boolean) => Promise<void>;
 	createBot: (draft: BotDraft) => Promise<void>;
 	// Rejects with the server's message so the settings panel can show it
 	// inline; a 401 is still reported as the auth error.
@@ -331,6 +337,22 @@ export function useHub(): Hub {
 		[],
 	);
 
+	// Forwarded whole too: the panel shows the server's reason on the row and
+	// re-reads the directories the entry left and landed in.
+	const mkdir = useCallback((path: string) => api.mkdir(path), []);
+	const renameEntry = useCallback(
+		(from: string, to: string) => api.renameEntry(from, to),
+		[],
+	);
+	const moveEntry = useCallback(
+		(from: string, to: string) => api.moveEntry(from, to),
+		[],
+	);
+	const deleteEntry = useCallback(
+		(path: string, recursive?: boolean) => api.deleteEntry(path, recursive),
+		[],
+	);
+
 	const updateBot = useCallback(
 		async (bot: string, draft: UpdateBotBody) => {
 			try {
@@ -449,6 +471,10 @@ export function useHub(): Hub {
 		listDirs,
 		fileDownloadUrl,
 		upload,
+		mkdir,
+		renameEntry,
+		moveEntry,
+		deleteEntry,
 		createBot,
 		updateBot,
 		removeBot,

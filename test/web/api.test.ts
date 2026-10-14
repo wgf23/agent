@@ -202,6 +202,34 @@ const invocations: Array<{
 		body: undefined,
 	},
 	{
+		name: "mkdir",
+		run: (api) => api.mkdir("src/new"),
+		path: "/api/files/mkdir",
+		method: "POST",
+		body: { path: "src/new" },
+	},
+	{
+		name: "renameEntry",
+		run: (api) => api.renameEntry("src/a.txt", "src/b.txt"),
+		path: "/api/files/rename",
+		method: "POST",
+		body: { from: "src/a.txt", to: "src/b.txt" },
+	},
+	{
+		name: "moveEntry",
+		run: (api) => api.moveEntry("a.txt", "src/a.txt"),
+		path: "/api/files/move",
+		method: "POST",
+		body: { from: "a.txt", to: "src/a.txt" },
+	},
+	{
+		name: "deleteEntry",
+		run: (api) => api.deleteEntry("src/old", true),
+		path: "/api/files/delete",
+		method: "POST",
+		body: { path: "src/old", recursive: true },
+	},
+	{
 		name: "loadBotTranscript",
 		run: (api) => api.loadBotTranscript("b"),
 		path: "/api/bots/b/transcript",
@@ -460,6 +488,30 @@ describe("response handling", () => {
 			"Unknown bot: atlas",
 		);
 		await expect(api.removeBot("atlas")).rejects.toThrow("Unknown bot: atlas");
+	});
+
+	it("surfaces the server's reason on the structure writes", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(
+					JSON.stringify({ ok: false, error: "Already exists: src" }),
+					{
+						status: 400,
+						headers: { "Content-Type": "application/json" },
+					},
+				)) as typeof fetch,
+		});
+		await expect(api.mkdir("src")).rejects.toThrow("Already exists: src");
+		await expect(api.renameEntry("a.txt", "b.txt")).rejects.toMatchObject({
+			status: 400,
+		});
+		await expect(api.moveEntry("a.txt", "src/a.txt")).rejects.toThrow(
+			"Already exists: src",
+		);
+		await expect(api.deleteEntry("src", true)).rejects.toMatchObject({
+			status: 400,
+		});
 	});
 
 	it("surfaces the server's refusal on renameSession and deleteSession", async () => {

@@ -69,6 +69,18 @@ export interface ApiClient {
 		file: File,
 		options?: UploadOptions,
 	): Promise<UploadResult>;
+	// Creates a directory (parents allowed) inside the workspace; rejects with
+	// the server's reason on a boundary, a bad name, or an existing target.
+	mkdir(path: string): Promise<void>;
+	// Renames one entry to a new path inside the workspace; rejects with the
+	// server's reason when the destination exists or the source is missing.
+	renameEntry(from: string, to: string): Promise<void>;
+	// Moves one entry to a new path inside the workspace; rejects with the
+	// server's reason on an existing destination or a self-nesting move.
+	moveEntry(from: string, to: string): Promise<void>;
+	// Deletes one entry; a directory needs `recursive: true` to remove its
+	// contents. Irreversible, so the panel confirms before calling.
+	deleteEntry(path: string, recursive?: boolean): Promise<void>;
 	createBot(draft: BotDraft): Promise<void>;
 	// Replaces a bot's role, model, and backend; the name rides in the path.
 	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
@@ -372,6 +384,39 @@ export function createApi(options: {
 		});
 	}
 
+	// The structure writes share one refusal shape: the server answers
+	// { ok: false, error } with a 400/404/500, so failure falls back to the
+	// server's reason for the panel to show on the row.
+	async function structureOp(route: string, body: unknown): Promise<void> {
+		const response = await request(route, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (!response.ok) {
+			throw await failure(response, `POST ${route} failed: ${response.status}`);
+		}
+	}
+
+	async function mkdir(path: string): Promise<void> {
+		await structureOp("/api/files/mkdir", { path });
+	}
+
+	async function renameEntry(from: string, to: string): Promise<void> {
+		await structureOp("/api/files/rename", { from, to });
+	}
+
+	async function moveEntry(from: string, to: string): Promise<void> {
+		await structureOp("/api/files/move", { from, to });
+	}
+
+	async function deleteEntry(path: string, recursive?: boolean): Promise<void> {
+		await structureOp(
+			"/api/files/delete",
+			recursive === true ? { path, recursive: true } : { path },
+		);
+	}
+
 	async function createBot(draft: BotDraft): Promise<void> {
 		const response = await request("/api/bots", {
 			method: "POST",
@@ -577,6 +622,10 @@ export function createApi(options: {
 		listDirs,
 		fileDownloadUrl,
 		upload,
+		mkdir,
+		renameEntry,
+		moveEntry,
+		deleteEntry,
 		createBot,
 		updateBot,
 		removeBot,
