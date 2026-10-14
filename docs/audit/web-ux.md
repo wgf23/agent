@@ -13,7 +13,7 @@ at a time.
 ## Done predicate
 
 Falsifiable on this box, with a real `node` process, real HTTP, real disk, and real DeepSeek
-turns, by `pnpm bot:e2e` (nine phases):
+turns, by `pnpm bot:e2e` (eleven phases):
 
 1. `GET /api/bots/:bot/transcript` returns the bot's session id, its messages replayed from the
    ledger (including the ask a prior phase sent), and its session summaries.
@@ -49,6 +49,8 @@ turns, by `pnpm bot:e2e` (nine phases):
 | 2 | Client data layer: per-bot `botSessions`/`botActiveSession`/`memory`, the `auth_error` action, token-aware api calls, `selectBot`/`forgetMemory`/`setWake`/`closeBotSession` | LANDED 18c9f4a |
 | 3 | Panels: the bot session list (create/open/close), the memory panel with delete, the wake tab, the auth banner naming `?token=` | LANDED 03bd557 |
 | 4 | E2E phases 6–9, the README/CHANGELOG, and this audit trail | LANDED (this commit) |
+| 5 | Bot lifecycle on the server: `updateRob`/`removeRob`, single-rob removal, ledger deletion, `PATCH`/`DELETE /api/bots/:bot`, e2e phases 10–11 | LANDED a53163f |
+| 6 | The bot settings tab: role/model/backend edit, a confirmed delete that names the memory loss, and the api/state coverage | LANDED b6b9bce |
 
 ## Trail
 
@@ -63,18 +65,21 @@ as `docs/audit/bot-architecture-trail.tsv`.
 | 2026-10-13 | unit 3 | The panels: bot session list, memory delete, wake tab, and the auth banner. | commit 03bd557; vite build green; rendered UI unverified |
 | 2026-10-13 | unit 4 | `scripts/bot-e2e.ts` drove the four surfaces on the real server; phase 9 was shown to fail under the old `sessions` emit, then reverted; README/CHANGELOG/audit written. | this commit; `pnpm bot:e2e` nine PASS |
 | 2026-10-13 | hardening | Closed the review's web-side findings and added image input: the deadline reaches the dialog, a memory delete confirms and can fail visibly, the three other swallowed calls report, and the composer attaches images under the CLI's caps. | this commit; `test/serve/send-images-http.test.ts`, `test/web/images.test.ts`, `test/web/countdown.test.ts`, `test/web/state.test.ts`, `test/web/api.test.ts` |
+| 2026-10-14 | unit 5 | A bot can be edited and deleted: `my-agent.json` gains `updateRob`/`removeRob` on the shared `writeChain`, the team drops a single rob (stopping its loop and denying its pending approval), its ledger file goes, and `PATCH`/`DELETE /api/bots/:bot` serve it. | commit a53163f; `test/config/project-file.test.ts`, `test/rob/team.test.ts`, `test/serve/bot-routes-http.test.ts`; `pnpm bot:e2e` eleven PASS |
+| 2026-10-14 | unit 6 | The settings tab edits role/model/backend and deletes behind a confirm that says the memory goes too; create and edit share `BACKEND_CHOICES` so they cannot drift. | commit b6b9bce; `test/web/api.test.ts`, `test/web/state.test.ts`; vite build green; rendered panel unverified |
 
 ## Verdicts
 
 Proven on the real artifact (a real `node` server, real HTTP, real disk, real DeepSeek turns) by
-`pnpm bot:e2e`, which exits 0 with nine `PASS` lines. Those runs happened on
-2026-10-13 while the DeepSeek key was funded; the key is now overdrawn
-(`is_available: false`, `total_balance: -0.02` CNY, and a real completion
-answers HTTP 402), so the model-driven phases were true when measured and are
-not rerunnable on this box. The harness now probes `GET /user/balance` (no
-tokens spent) before any phase and skips with exit 0 both when the key is
-absent and when the provider reports no balance, so a nightly run fails for
-the right reason instead of dying at phase 1 after a 45 s timeout.
+`pnpm bot:e2e`, which now exits 0 with eleven `PASS` lines. Two runs matter for the record. The
+first nine phases were measured on 2026-10-13 while the DeepSeek key was funded; the key was then
+overdrawn (`is_available: false`, `total_balance: -0.02` CNY, a real completion answering HTTP
+402), which made every model-driven phase unrerunnable for a day while the harness reported it as
+a phase-1 timeout. The key was funded again on 2026-10-14 and all eleven phases were re-measured
+as `PASS` on this box, so the verdicts below are currently reproducible, not historical. The
+harness still probes `GET /user/balance` (no tokens spent) before any phase and skips with exit 0
+both when the key is absent and when the provider reports no balance, so a later run fails for the
+right reason instead of dying at phase 1 after a 45 s timeout.
 
 1. **Transcript reloads from the ledger.** After phase 5's workspace switch disposed the scope and
    with it the in-memory channel, phase 6 lists the bot's sessions, re-opens the session id that
@@ -92,6 +97,13 @@ the right reason instead of dying at phase 1 after a 45 s timeout.
    the first session event is `bot_sessions` for `atlas`, and asserts that through the next real
    interval tick no chat `sessions` event arrives. Falsified by hand: making `TeamHub.emitSessions`
    emit the chat `sessions` event again makes phase 9 fail; reverting it makes the run green again.
+5. **A bot can be edited.** Phase 10 patches `atlas` with a new role and model, reads the fresh
+   `hello`, and asserts the role it carries is the edited one while the wake set in phase 8
+   (`everyMs: 2500`) survives untouched — the edit owns role/model/backend and nothing else.
+6. **A bot can be deleted.** Phase 11 creates a throwaway bot, deletes it, re-reads `hello`, and
+   asserts the roster holds only `atlas`. The delete also drops the ledger file; that half is
+   asserted in `test/bot/store.test.ts` and `test/serve/team.test.ts` rather than against the
+   running server.
 
 ## Known limits and what stays unverified
 
