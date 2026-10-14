@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -164,6 +170,21 @@ describe("GET /api/fs/dirs", () => {
 			`/api/fs/dirs?path=${encodeURIComponent(path.join(home, "nope"))}`,
 		);
 		expect(response.status).toBe(404);
+		expect(typeof (await response.json()).error).toBe("string");
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+
+	it("refuses a symlink that points outside every root", async () => {
+		// The lexical path is inside home, but the link resolves to /etc, which
+		// is outside both roots, so the real path must be checked too.
+		const link = path.join(home, "escape");
+		symlinkSync("/etc", link);
+		const { app, get } = await startServer();
+
+		const response = await get(`/api/fs/dirs?path=${encodeURIComponent(link)}`);
+		expect(response.status).toBe(400);
 		expect(typeof (await response.json()).error).toBe("string");
 
 		app.server.closeAllConnections?.();

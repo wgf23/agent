@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { lstat, readdir, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type {
 	FileEntry,
@@ -118,6 +118,46 @@ export function isInsideBrowseRoots(
 ): boolean {
 	const resolved = path.resolve(target);
 	return roots.some((root) => isInside(path.resolve(root), resolved));
+}
+
+// The lexical check above passes for a path that is textually inside a root but
+// reaches it through a symlink, so the real path is checked too. This is the
+// same rule resolveInWorkspace applies to files: a link inside the home must not
+// widen the browse boundary to the rest of the host.
+export async function assertBrowsePath(
+	absPath: string,
+	roots: readonly string[],
+): Promise<void> {
+	if (!isInsideBrowseRoots(absPath, roots)) {
+		throw new BrowseError(`Path is outside the browse roots: ${absPath}`);
+	}
+	const realTarget = await realpathDeepest(absPath);
+	const realRoots = await Promise.all(roots.map((root) => realpath(root)));
+	if (!realRoots.some((root) => isInside(root, realTarget))) {
+		throw new BrowseError(
+			`Path escapes the browse roots through a symlink: ${absPath}`,
+		);
+	}
+}
+
+// realpath() fails on a path that does not exist yet, so resolve the deepest
+// existing ancestor and re-attach the missing suffix, exactly as the workspace
+// resolver does. A read of the missing part is left to the caller's readdir.
+async function realpathDeepest(target: string): Promise<string> {
+	const suffix: string[] = [];
+	let current = target;
+	for (;;) {
+		try {
+			const real = await realpath(current);
+			return path.join(real, ...suffix.reverse());
+		} catch (error) {
+			if (!isMissing(error)) throw error;
+			const parent = path.dirname(current);
+			if (parent === current) return target;
+			suffix.push(path.basename(current));
+			current = parent;
+		}
+	}
 }
 
 function isInside(root: string, target: string): boolean {

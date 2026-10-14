@@ -39,6 +39,7 @@ import type { Provider } from "../providers/types.js";
 import { UnknownRobError } from "../rob/team.js";
 import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
 import {
+	assertBrowsePath,
 	BrowseError,
 	browseDirectories,
 	isInsideBrowseRoots,
@@ -475,10 +476,13 @@ export async function buildServer(
 		const roots = [home, path.resolve(hub.hello().workspaceRoot)];
 		const raw = typeof query.path === "string" ? query.path : "";
 		const target = path.resolve(raw === "" ? home : raw);
-		if (!isInsideBrowseRoots(target, roots)) {
-			return reply
-				.code(400)
-				.send({ error: `Path is outside the browse roots: ${raw}` });
+		try {
+			await assertBrowsePath(target, roots);
+		} catch (error) {
+			if (error instanceof BrowseError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
 		}
 		// The parent is offered only while it is still inside a root, so 上一级
 		// stops instead of climbing above the home or workspace boundary.
