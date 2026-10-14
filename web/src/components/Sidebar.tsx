@@ -7,9 +7,11 @@ import type {
 	WorkspaceOption,
 } from "../protocol";
 import { WORKSPACE_BOT } from "../protocol";
+import { sessionLabel } from "../sessions";
 import type { ConnectionStatus } from "../state";
 import { STATUS_LABEL } from "../status";
 import { GearIcon, PlusIcon } from "./icons";
+import SessionRow from "./SessionRow";
 import WorkspacePicker from "./WorkspacePicker";
 
 export type View = "chat" | "plaza" | "agents";
@@ -37,6 +39,8 @@ interface Props {
 	onNewBotSession: (bot: string) => void;
 	onOpenBotSession: (bot: string, id: string) => void;
 	onCloseBotSession: (bot: string, id: string) => void;
+	onRenameSession: (bot: string, id: string, title: string) => Promise<void>;
+	onDeleteSession: (bot: string, id: string) => Promise<void>;
 	onCreateBot: () => void;
 	onOpenSettings: () => void;
 	usage: UsageTotals;
@@ -65,6 +69,8 @@ export default function Sidebar(props: Props) {
 		onNewBotSession,
 		onOpenBotSession,
 		onCloseBotSession,
+		onRenameSession,
+		onDeleteSession,
 		onCreateBot,
 		onOpenSettings,
 		usage,
@@ -145,25 +151,20 @@ export default function Sidebar(props: Props) {
 					) : (
 						<ul className="session-list">
 							{sessions.map((session) => (
-								<li key={session.id}>
-									<button
-										type="button"
-										className={`session-item ${
-											session.id === activeSessionId ? "active" : ""
-										}`}
-										onClick={() => {
-											onOpenSession(WORKSPACE_BOT, session.id);
-											openChat();
-										}}
-									>
-										<span className="session-title">
-											{session.firstUserText || "新会话"}
-										</span>
-										<span className="session-meta">
-											{session.messageCount} 条消息
-										</span>
-									</button>
-								</li>
+								<SessionRow
+									key={session.id}
+									session={session}
+									label={sessionLabel(session)}
+									active={session.id === activeSessionId}
+									onOpen={() => {
+										onOpenSession(WORKSPACE_BOT, session.id);
+										openChat();
+									}}
+									onRename={(title) =>
+										onRenameSession(WORKSPACE_BOT, session.id, title)
+									}
+									onDelete={() => onDeleteSession(WORKSPACE_BOT, session.id)}
+								/>
 							))}
 						</ul>
 					)}
@@ -220,33 +221,32 @@ export default function Sidebar(props: Props) {
 						) : (
 							<ul className="session-list">
 								{(botSessions[selectedBot] ?? []).map((session) => (
-									<li key={session.id} className="bot-session-row">
-										<button
-											type="button"
-											className={`session-item ${
-												session.id === (botActiveSession[selectedBot] ?? null)
-													? "active"
-													: ""
-											}`}
-											onClick={() => onOpenBotSession(selectedBot, session.id)}
-										>
-											<span className="session-title">
-												{session.firstUserText || "新会话"}
-											</span>
-											<span className="session-meta">
-												{session.messageCount} 条消息
-											</span>
-										</button>
-										<button
-											type="button"
-											className="session-close"
-											title="关闭会话"
-											aria-label="关闭会话"
-											onClick={() => onCloseBotSession(selectedBot, session.id)}
-										>
-											×
-										</button>
-									</li>
+									<SessionRow
+										key={session.id}
+										session={session}
+										label={sessionLabel(session)}
+										active={
+											session.id === (botActiveSession[selectedBot] ?? null)
+										}
+										trailing={
+											<button
+												type="button"
+												className="session-close"
+												title="关闭会话"
+												aria-label="关闭会话"
+												onClick={() =>
+													onCloseBotSession(selectedBot, session.id)
+												}
+											>
+												×
+											</button>
+										}
+										onOpen={() => onOpenBotSession(selectedBot, session.id)}
+										onRename={(title) =>
+											onRenameSession(selectedBot, session.id, title)
+										}
+										onDelete={() => onDeleteSession(selectedBot, session.id)}
+									/>
 								))}
 							</ul>
 						)}

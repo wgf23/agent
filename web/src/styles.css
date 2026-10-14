@@ -493,14 +493,73 @@ h3 {
 	color: var(--text-3);
 }
 
-.bot-session-row {
+.session-row {
 	display: flex;
-	align-items: center;
+	flex-direction: column;
+	gap: 2px;
 }
 
-.bot-session-row .session-item {
+.session-row-line {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.session-row-line .session-item {
 	flex: 1;
 	min-width: 0;
+}
+
+.session-actions {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 2px;
+}
+
+.session-action {
+	flex: none;
+	padding: 3px 6px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-3);
+	font-size: 11px;
+	line-height: 1.2;
+}
+
+.session-action:hover:not(:disabled) {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.session-rename {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 9px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--text);
+	font-size: 13px;
+}
+
+.session-rename:focus {
+	outline: none;
+	border-color: var(--accent-text);
+}
+
+.session-confirm-text {
+	font-size: 11px;
+	color: var(--text-2);
+	white-space: nowrap;
+}
+
+.session-error {
+	margin: 0 0 0 10px;
+	font-size: 11px;
+	color: var(--red);
+	overflow-wrap: anywhere;
 }
 
 .session-close {

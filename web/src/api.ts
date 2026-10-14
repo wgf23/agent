@@ -34,6 +34,11 @@ export interface ApiClient {
 	forgetMemory(bot: string, id: string): Promise<void>;
 	setWake(bot: string, body: SetWakeBody): Promise<void>;
 	closeBotSession(bot: string, id: string): Promise<void>;
+	// Sets an owner label on a session; the server trims it and bounds it to
+	// 120 characters, refusing a blank one.
+	renameSession(bot: string, id: string, title: string): Promise<void>;
+	// Removes a session and its transcript; irreversible.
+	deleteSession(bot: string, id: string): Promise<void>;
 	createBot(draft: BotDraft): Promise<void>;
 	// Replaces a bot's role, model, and backend; the name rides in the path.
 	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
@@ -176,6 +181,38 @@ export function createApi(options: {
 			throw await failure(
 				response,
 				`POST /api/sessions/close failed: ${response.status}`,
+			);
+		}
+	}
+
+	async function renameSession(
+		bot: string,
+		id: string,
+		title: string,
+	): Promise<void> {
+		const response = await request("/api/sessions/rename", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ bot, id, title }),
+		});
+		if (!response.ok) {
+			throw await failure(
+				response,
+				`POST /api/sessions/rename failed: ${response.status}`,
+			);
+		}
+	}
+
+	async function deleteSession(bot: string, id: string): Promise<void> {
+		const response = await request("/api/sessions/delete", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ bot, id }),
+		});
+		if (!response.ok) {
+			throw await failure(
+				response,
+				`POST /api/sessions/delete failed: ${response.status}`,
 			);
 		}
 	}
@@ -378,6 +415,8 @@ export function createApi(options: {
 		forgetMemory,
 		setWake,
 		closeBotSession,
+		renameSession,
+		deleteSession,
 		createBot,
 		updateBot,
 		removeBot,

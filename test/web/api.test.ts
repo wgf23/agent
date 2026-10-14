@@ -114,6 +114,20 @@ const invocations: Array<{
 		body: { bot: "b", id: "s1" },
 	},
 	{
+		name: "renameSession",
+		run: (api) => api.renameSession("b", "s1", "Greeting"),
+		path: "/api/sessions/rename",
+		method: "POST",
+		body: { bot: "b", id: "s1", title: "Greeting" },
+	},
+	{
+		name: "deleteSession",
+		run: (api) => api.deleteSession("b", "s1"),
+		path: "/api/sessions/delete",
+		method: "POST",
+		body: { bot: "b", id: "s1" },
+	},
+	{
 		name: "loadBotTranscript",
 		run: (api) => api.loadBotTranscript("b"),
 		path: "/api/bots/b/transcript",
@@ -262,6 +276,23 @@ describe("response handling", () => {
 		await expect(api.removeBot("atlas")).rejects.toThrow("Unknown bot: atlas");
 	});
 
+	it("surfaces the server's refusal on renameSession and deleteSession", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "Unknown session: s1" }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.renameSession("b", "s1", "Greeting")).rejects.toThrow(
+			"Unknown session: s1",
+		);
+		await expect(api.deleteSession("b", "s1")).rejects.toThrow(
+			"Unknown session: s1",
+		);
+	});
+
 	it("returns the accepted provider and its warning from saveProvider", async () => {
 		const api = createApi({
 			token: "abc",
@@ -342,6 +373,14 @@ describe("response handling", () => {
 			status: 401,
 		});
 		await expect(api.removeBot("b")).rejects.toMatchObject({ status: 401 });
+		await expect(
+			api.renameSession("b", "s1", "Greeting"),
+		).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.deleteSession("b", "s1")).rejects.toMatchObject({
+			status: 401,
+		});
 	});
 });
 

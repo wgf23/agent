@@ -54,6 +54,10 @@ export interface Hub {
 	forgetMemory: (bot: string, id: string) => Promise<void>;
 	setWake: (bot: string, body: SetWakeBody) => Promise<void>;
 	closeBotSession: (bot: string, id: string) => void;
+	// Rejects with the server's message so the row can show it inline; a 401 is
+	// still reported as the auth error.
+	renameSession: (bot: string, id: string, title: string) => Promise<void>;
+	deleteSession: (bot: string, id: string) => Promise<void>;
 	createBot: (draft: BotDraft) => Promise<void>;
 	// Rejects with the server's message so the settings panel can show it
 	// inline; a 401 is still reported as the auth error.
@@ -218,6 +222,35 @@ export function useHub(): Hub {
 		[reportError],
 	);
 
+	// A rename and a delete are reflected by the server's next `sessions` (chat)
+	// or `bot_sessions` (bot) event, which already replaces the list wholesale,
+	// so no reducer change is needed here.
+	const renameSession = useCallback(
+		async (bot: string, id: string, title: string) => {
+			try {
+				await api.renameSession(bot, id, title);
+			} catch (error) {
+				// The row owns the message for the write, so the promise is handed
+				// back rather than dropped; a 401 lands on the auth banner.
+				reportError(error);
+				throw error instanceof Error ? error : new Error(failureMessage(error));
+			}
+		},
+		[reportError],
+	);
+
+	const deleteSession = useCallback(
+		async (bot: string, id: string) => {
+			try {
+				await api.deleteSession(bot, id);
+			} catch (error) {
+				reportError(error);
+				throw error instanceof Error ? error : new Error(failureMessage(error));
+			}
+		},
+		[reportError],
+	);
+
 	const createBot = useCallback(async (draft: BotDraft) => {
 		await api.createBot(draft);
 	}, []);
@@ -332,6 +365,8 @@ export function useHub(): Hub {
 		forgetMemory,
 		setWake,
 		closeBotSession,
+		renameSession,
+		deleteSession,
 		createBot,
 		updateBot,
 		removeBot,
