@@ -68,7 +68,6 @@ async function startAuthedServer() {
 	});
 	const app = await buildServer(hub, undefined, {
 		service,
-		host: "0.0.0.0",
 		token: TOKEN,
 	});
 	await app.listen({ port: 0, host: "127.0.0.1" });

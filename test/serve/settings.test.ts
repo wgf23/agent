@@ -434,7 +434,10 @@ describe("TeamHub.reconfigure", () => {
 });
 
 describe("POST /api/settings", () => {
-	it("is refused when the server is bound to a non-loopback host", async () => {
+	it("applies a save when the caller presents the server token", async () => {
+		// A wider bind issues a token and requires it on every /api/* request,
+		// so a token-bearing caller is the owner. The old bind-host check
+		// refused this save, which is the bug this pins.
 		const runtime = runtimeWith(createMockProvider([]), {
 			apiKey: "sk-existing",
 			apiKeySource: "env",
@@ -451,13 +454,14 @@ describe("POST /api/settings", () => {
 				return { ok: true };
 			},
 		});
+		const token = "token-from-the-owner";
 		const app = await buildServer(hub, undefined, {
 			service,
-			host: "0.0.0.0",
+			token,
 		});
 		const port = await listen(app);
 
-		const response = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+		const refused = await fetch(`http://127.0.0.1:${port}/api/settings`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
@@ -467,10 +471,24 @@ describe("POST /api/settings", () => {
 				verify: false,
 			}),
 		});
-		expect(response.status).toBe(403);
-		expect(await response.json()).toMatchObject({ ok: false });
-		// Nothing was written and the runtime was not touched.
-		expect(runtime.view().model).toBe("deepseek-flash");
+		expect(refused.status).toBe(401);
+
+		const response = await fetch(
+			`http://127.0.0.1:${port}/api/settings?token=${token}`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					preset: "deepseek",
+					model: "deepseek-v4-pro",
+					apiKey: "sk-new",
+					verify: false,
+				}),
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ ok: true });
+		expect(runtime.view().model).toBe("deepseek-v4-pro");
 
 		app.server.closeAllConnections?.();
 		await app.close();
@@ -501,10 +519,7 @@ describe("POST /api/settings", () => {
 				return { ok: true };
 			},
 		});
-		const app = await buildServer(hub, undefined, {
-			service,
-			host: "127.0.0.1",
-		});
+		const app = await buildServer(hub, undefined, { service });
 		const port = await listen(app);
 
 		const before = await fetch(`http://127.0.0.1:${port}/api/settings`);

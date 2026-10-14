@@ -149,10 +149,9 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			get service() {
 				return hub.settings;
 			},
-			host,
 			token,
 		},
-		{ supervisor, host },
+		{ supervisor },
 	);
 
 	try {
@@ -190,8 +189,6 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 
 export interface SettingsBinding {
 	service: SettingsService;
-	// The resolved bind host. A non-loopback bind refuses secret writes.
-	host: string;
 	// Present on a non-loopback bind; buildServer then gates every /api/*
 	// request behind it. Loopback leaves it undefined, keeping no-auth behavior.
 	token?: string;
@@ -199,8 +196,6 @@ export interface SettingsBinding {
 
 export interface AgentsBinding {
 	supervisor: AgentSupervisor;
-	// The resolved bind host. A non-loopback bind refuses installs and cancels.
-	host: string;
 }
 
 export async function buildServer(
@@ -609,12 +604,13 @@ export async function buildServer(
 				error: "this server cannot manage provider settings",
 			});
 		}
-		// Writing a credential is a local-only action: a server bound to a
-		// non-loopback host would let the network seed a key.
-		if (!isLoopbackHost(settings.host)) {
+		// Writing a credential is a local-only action, gated on the caller for the
+		// same reason as an agent install: the bind host is the wrong axis.
+		if (!isLocalRequest(request, token)) {
 			return reply.code(403).send({
 				ok: false,
-				error: "saving provider settings is only allowed on a loopback bind",
+				error:
+					"saving provider settings is only allowed from this machine or with the server token",
 			});
 		}
 		const body = request.body as Partial<SaveProviderBody> | undefined;
@@ -682,12 +678,15 @@ export async function buildServer(
 				.code(501)
 				.send({ ok: false, error: "this server cannot manage agents" });
 		}
-		// Installing an external CLI is a local-only action, like writing a key:
-		// a server bound to a non-loopback host would let the network seed one.
-		if (!isLoopbackHost(agents.host)) {
+		// Installing an external CLI is a local-only action, like writing a key.
+		// Gate on the caller, not the bind host: a non-loopback bind already
+		// requires the token on every /api/* request, so a bind check only ever
+		// refused the owner who chose to listen wider than loopback.
+		if (!isLocalRequest(request, token)) {
 			return reply.code(403).send({
 				ok: false,
-				error: "installing agents is only allowed on a loopback bind",
+				error:
+					"installing agents is only allowed from this machine or with the server token",
 			});
 		}
 		const body = request.body as Partial<InstallAgentBody> | undefined;
@@ -730,10 +729,11 @@ export async function buildServer(
 				.code(501)
 				.send({ ok: false, error: "this server cannot manage agents" });
 		}
-		if (!isLoopbackHost(agents.host)) {
+		if (!isLocalRequest(request, token)) {
 			return reply.code(403).send({
 				ok: false,
-				error: "cancelling agents is only allowed on a loopback bind",
+				error:
+					"cancelling agents is only allowed from this machine or with the server token",
 			});
 		}
 		const body = request.body as Partial<CancelAgentBody> | undefined;
@@ -784,6 +784,31 @@ function displayHost(host: string): string {
 
 function isLoopbackHost(host: string): boolean {
 	return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+// A loopback peer is the machine itself: all of 127.0.0.0/8, ::1, and the
+// IPv4-mapped form a v6 socket reports for a v4 client.
+function isLoopbackAddress(address: string | null | undefined): boolean {
+	if (typeof address !== "string") return false;
+	return (
+		address === "::1" ||
+		address.startsWith("127.") ||
+		address.startsWith("::ffff:127.")
+	);
+}
+
+// A local-only action (writing a credential, installing an external CLI) is
+// gated on the caller, not the bind host. The bind is the wrong axis: a
+// non-loopback bind already requires the token on every /api/* request, so a
+// bind check only refuses the owner who chose to listen wider than loopback.
+// A loopback peer is the machine; any other peer must present the token, which
+// a loopback bind never issues because no non-loopback client can reach it.
+export function isLocalRequest(
+	request: FastifyRequest,
+	token: string | undefined,
+): boolean {
+	if (isLoopbackAddress(request.socket.remoteAddress)) return true;
+	return token !== undefined && requestToken(request) === token;
 }
 
 function generateToken(): string {

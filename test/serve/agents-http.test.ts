@@ -64,10 +64,11 @@ function makeHub(): SoloHub {
 }
 
 // Builds a server with an injected fake probe and installer, so nothing here
-// ever spawns a real npm.
+// ever spawns a real npm. The install route no longer consults the listen
+// address: a loopback caller is local by construction, and a wider bind is
+// already token-gated on every /api/* request.
 async function startServer(
 	install: (pkg: string, options?: NpmOptions) => Promise<NpmResult>,
-	host = "127.0.0.1",
 ) {
 	const hub = makeHub();
 	const supervisor = new AgentSupervisor({
@@ -76,7 +77,6 @@ async function startServer(
 	});
 	const app = await buildServer(hub, undefined, undefined, {
 		supervisor,
-		host,
 	});
 	await app.listen({ port: 0, host: "127.0.0.1" });
 	const address = app.server.address();
@@ -181,11 +181,17 @@ describe("agent routes", () => {
 		await supervisor.dispose();
 	});
 
-	it("refuses an install on a non-loopback bind", async () => {
-		const { app, hub, supervisor, port } = await startServer(
-			okInstall,
-			"0.0.0.0",
+	it("accepts an install from a loopback caller", async () => {
+		// The route used to refuse when the server listened on a wider address,
+		// which blocked the owner without blocking anyone who could not already
+		// reach the token-gated API. `isLocalRequest` is unit-tested for the
+		// peer/token decision; this proves the route is reachable and installs.
+		const install = vi.fn(
+			async (_pkg: string, _options?: NpmOptions): Promise<NpmResult> => ({
+				ok: true,
+			}),
 		);
+		const { app, hub, supervisor, port } = await startServer(install);
 
 		const response = await fetch(
 			`http://127.0.0.1:${port}/api/agents/install`,
@@ -195,8 +201,8 @@ describe("agent routes", () => {
 				body: JSON.stringify({ id: "pi", confirm: true }),
 			},
 		);
-		expect(response.status).toBe(403);
-		expect(okInstall).not.toHaveBeenCalled();
+		expect(response.status).toBe(202);
+		expect(install).toHaveBeenCalledTimes(1);
 
 		app.server.closeAllConnections?.();
 		await app.close();
