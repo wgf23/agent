@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
@@ -9,15 +10,25 @@ import {
 } from "../permissions/authorizer.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Provider } from "../providers/types.js";
+import {
+	type DiscussionPort,
+	deliverablePath,
+	renderDeliverable,
+	runDiscussion,
+	writeDeliverable,
+} from "../rob/discussion.js";
 import { Team, UnknownRobError } from "../rob/team.js";
 import type { DmEntry, RobConfig, RobStatusEntry } from "../rob/types.js";
 
 const DEFAULT_WAIT_MS = 120_000;
 const POLL_INTERVAL_MS = 50;
+const DEFAULT_MAX_ROUNDS = 6;
 
 export interface TeamCommandOptions {
 	dispatch: string[];
 	waitMs?: number;
+	coordinator?: string;
+	maxRounds?: number;
 	yesAll?: boolean;
 	workspaceRoot?: string;
 	homeDir?: string;
@@ -150,38 +161,138 @@ export async function runTeamCommand(
 		}
 
 		const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
-		const idle = await waitForIdle(team, waitMs);
-		// Stop moves every rob to "stopped", so read the statuses first to report
-		// what each rob actually did.
+		const coordinator = options.coordinator;
+		const task = discussionTask(parsed.dispatches, coordinator);
+		const discussion = await runDiscussion(discussionPort(team), {
+			coordinator,
+			maxRounds: options.maxRounds ?? DEFAULT_MAX_ROUNDS,
+			waitMs,
+			task,
+			wrapUp: wrapUpPrompt,
+			pollMs: POLL_INTERVAL_MS,
+		});
+
+		// Stop moves every rob to "stopped", so snapshot the roster, the DMs,
+		// and the statuses first to report what each rob actually did.
 		const statuses = team.statuses();
+		const dms = team.readDms();
+		const participants = team.roster().map((member) => member.name);
 		await team.stop();
 
-		printReport(statuses, team.readDms());
-		return idle ? 0 : 1;
+		const deliverable = discussion.deliverable;
+		let deliverableFilePath: string | null = null;
+		if (
+			coordinator !== undefined &&
+			deliverable !== null &&
+			deliverable !== ""
+		) {
+			const at = Date.now();
+			deliverableFilePath = deliverablePath(
+				path.join(workspaceRoot, "docs", "deliverables"),
+				at,
+				task,
+			);
+			await writeDeliverable(
+				deliverableFilePath,
+				renderDeliverable({
+					task,
+					coordinator,
+					participants,
+					dms,
+					body: deliverable,
+					at,
+				}),
+			);
+		}
+
+		printReport(statuses, dms, {
+			rounds: discussion.rounds,
+			converged: discussion.converged,
+			reason: discussion.reason,
+			deliverable,
+			path: deliverableFilePath,
+		});
+
+		if (coordinator === undefined) {
+			// Without a coordinator the old rule stands: any quiescence inside
+			// the wait is success, and only a timeout is not.
+			return discussion.reason === "timeout" ? 1 : 0;
+		}
+		return discussion.converged && deliverable !== null && deliverable !== ""
+			? 0
+			: 1;
 	} finally {
 		await mcp.dispose();
 	}
 }
 
-async function waitForIdle(team: Team, waitMs: number): Promise<boolean> {
-	const deadline = Date.now() + waitMs;
-	while (Date.now() < deadline) {
-		const statuses = team.statuses();
-		if (
-			statuses.length > 0 &&
-			statuses.every((entry) => entry.status === "idle" && entry.pending === 0)
-		) {
-			return true;
-		}
-		await sleep(POLL_INTERVAL_MS);
-	}
-	return false;
+// The coordinator's own dispatch names the work; without one the whole set of
+// dispatches is the task.
+function discussionTask(
+	dispatches: readonly Dispatch[],
+	coordinator: string | undefined,
+): string {
+	const directed =
+		coordinator === undefined
+			? undefined
+			: dispatches.find((dispatch) => dispatch.name === coordinator)?.text;
+	if (directed !== undefined) return directed;
+	return dispatches.map((dispatch) => dispatch.text).join("\n");
+}
+
+function wrapUpPrompt(task: string): string {
+	return [
+		"Wrap up the discussion now and compile the final deliverable.",
+		"State the concrete result, then stop.",
+		"",
+		`Task: ${task}`,
+	].join("\n");
+}
+
+// The loop is pure, so the live team arrives through this thin adapter.
+function discussionPort(team: Team): DiscussionPort {
+	return {
+		statuses: () =>
+			team.statuses().map(({ name, status, pending }) => ({
+				name,
+				status,
+				pending,
+			})),
+		dmCount: () => team.readDms().length,
+		dispatch: (name, text) => team.dispatch(name, text),
+		notice: (name, text) => team.emitNotice(name, text),
+		lastMessage: (name) =>
+			team.statuses().find((entry) => entry.name === name)?.lastMessage ?? null,
+		now: () => Date.now(),
+		sleep,
+	};
+}
+
+interface DiscussionReport {
+	rounds: number;
+	converged: boolean;
+	reason: string;
+	deliverable: string | null;
+	path: string | null;
 }
 
 function printReport(
 	statuses: readonly RobStatusEntry[],
 	dms: readonly DmEntry[],
+	discussion: DiscussionReport,
 ): void {
+	console.log("=== Discussion ===");
+	console.log(`rounds: ${discussion.rounds}`);
+	console.log(`converged: ${discussion.converged}`);
+	console.log(`reason: ${discussion.reason}`);
+	if (discussion.path === null) {
+		console.log("deliverable: (none)");
+	} else {
+		console.log(`deliverable: ${discussion.path}`);
+		console.log(discussion.deliverable);
+	}
+
+	console.log("");
 	console.log("=== DMs ===");
 	if (dms.length === 0) {
 		console.log("(no DMs)");

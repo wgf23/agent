@@ -38,6 +38,8 @@ interface RunOptions {
 interface TeamOptions {
 	dispatch: string[];
 	waitMs?: string;
+	coordinator?: string;
+	maxRounds?: number;
 	yes?: boolean;
 }
 
@@ -78,6 +80,16 @@ function parsePort(value: string | undefined): number | undefined {
 
 function parseWaitMs(value: string | undefined): number | undefined {
 	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function parsePositiveInteger(value: string): number {
+	const parsed = Number(value);
+	if (!Number.isInteger(parsed) || parsed <= 0) {
+		throw new InvalidArgumentError(
+			`Expected a positive integer, got: ${value}`,
+		);
+	}
+	return parsed;
 }
 
 function parseInteger(value: string): number {
@@ -252,11 +264,19 @@ program
 		[],
 	)
 	.option("--wait-ms <ms>", "maximum time to wait for the team to go idle")
+	.option("--coordinator <name>", "rob that compiles the final deliverable")
+	.option(
+		"--max-rounds <n>",
+		"most discussion rounds before wrapping up",
+		parsePositiveInteger,
+	)
 	.option("--yes", "auto-approve every tool call")
 	.action(async (options: TeamOptions) => {
 		process.exitCode = await runTeamCommand({
 			dispatch: options.dispatch,
 			waitMs: parseWaitMs(options.waitMs),
+			coordinator: options.coordinator,
+			maxRounds: options.maxRounds,
 			yesAll: options.yes,
 		});
 	});
