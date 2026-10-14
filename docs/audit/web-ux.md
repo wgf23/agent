@@ -13,7 +13,7 @@ at a time.
 ## Done predicate
 
 Falsifiable on this box, with a real `node` process, real HTTP, real disk, and real DeepSeek
-turns, by `pnpm bot:e2e` (eleven phases):
+turns, by `pnpm bot:e2e` (fourteen phases):
 
 1. `GET /api/bots/:bot/transcript` returns the bot's session id, its messages replayed from the
    ledger (including the ask a prior phase sent), and its session summaries.
@@ -51,6 +51,11 @@ turns, by `pnpm bot:e2e` (eleven phases):
 | 4 | E2E phases 6–9, the README/CHANGELOG, and this audit trail | LANDED (this commit) |
 | 5 | Bot lifecycle on the server: `updateRob`/`removeRob`, single-rob removal, ledger deletion, `PATCH`/`DELETE /api/bots/:bot`, e2e phases 10–11 | LANDED a53163f |
 | 6 | The bot settings tab: role/model/backend edit, a confirmed delete that names the memory loss, and the api/state coverage | LANDED b6b9bce |
+| 7 | Sub-agent activity on the wire and a read-only feed tab, mapping every event the way the TUI's `SubagentView` does | LANDED f914bfd |
+| 8 | Session rename and delete on the server: a `title` on a chat session file, `sessionTitles` on the bot record, `deleteSession`/`renameSession` on both hubs, `POST /api/sessions/delete|rename`, e2e phases 12–13 | LANDED c091378 |
+| 9 | The sidebar's rename and delete: one `SessionRow` and one `sessionLabel` for both lists, inline rename, inline confirm | LANDED dc84628 |
+| 10 | One search over the chat's sessions and every bot's sessions: pure match/snippet helpers, `GET /api/search?q=`, e2e phase 14 | LANDED c189be2 |
+| 11 | The sidebar search box and grouped results, opening a hit the same way the lists do | LANDED c8b0d38 |
 
 ## Trail
 
@@ -71,12 +76,13 @@ as `docs/audit/bot-architecture-trail.tsv`.
 ## Verdicts
 
 Proven on the real artifact (a real `node` server, real HTTP, real disk, real DeepSeek turns) by
-`pnpm bot:e2e`, which now exits 0 with eleven `PASS` lines. Two runs matter for the record. The
+`pnpm bot:e2e`, which now exits 0 with fourteen `PASS` lines. Two runs matter for the record. The
 first nine phases were measured on 2026-10-13 while the DeepSeek key was funded; the key was then
 overdrawn (`is_available: false`, `total_balance: -0.02` CNY, a real completion answering HTTP
 402), which made every model-driven phase unrerunnable for a day while the harness reported it as
-a phase-1 timeout. The key was funded again on 2026-10-14 and all eleven phases were re-measured
-as `PASS` on this box, so the verdicts below are currently reproducible, not historical. The
+a phase-1 timeout. The key was funded again on 2026-10-14 and every phase added since was
+re-measured as `PASS` on this box, so the verdicts below are currently reproducible, not
+historical. The
 harness still probes `GET /user/balance` (no tokens spent) before any phase and skips with exit 0
 both when the key is absent and when the provider reports no balance, so a later run fails for the
 right reason instead of dying at phase 1 after a 45 s timeout.
@@ -104,6 +110,13 @@ right reason instead of dying at phase 1 after a 45 s timeout.
    asserts the roster holds only `atlas`. The delete also drops the ledger file; that half is
    asserted in `test/bot/store.test.ts` and `test/serve/team.test.ts` rather than against the
    running server.
+7. **A session can be renamed and deleted.** Phase 12 renames a bot session and asserts the next
+   `bot_sessions` projection carries the title; phase 13 deletes one and asserts the ledger keeps
+   the other session's turns and the projection drops the deleted one.
+8. **One query searches both storages.** Phase 14 runs `GET /api/search?q=tock` and asserts the
+   query is echoed, the hit lands in the bot's session with `role: "user"`, and the snippet still
+   contains the word a real wake turn recorded. That word is a later turn on purpose: the ledger
+   ring can evict an older one.
 
 ## Known limits and what stays unverified
 
@@ -139,8 +152,9 @@ Named rather than assumed:
   (`test/web/countdown.test.ts`), that a posted image reaches the turn's first user message for
   both the chat and a rob (`test/serve/send-images-http.test.ts`), and that the deadline survives
   the reducer. Not proven: the chip list, the picker interaction, the ticking label, the confirm
-  row, and any real model turn over an attachment — the DeepSeek key is overdrawn, so a vision
-  turn could not run here even with a browser.
+  row, and any real model turn over an attachment. DeepSeek's chat model takes no image part, so
+  even with a funded key a vision turn could not run here; what is proven is that the image
+  reaches the turn's message, not that a model read it.
 - **External-CLI backends were not driven at all**, and the interval wake remains the only
   trigger. Both are unchanged from the bot-architecture run.
 - **The sub-agent feed has no live e2e phase by design.** Whether a real model calls `delegate`
@@ -151,3 +165,12 @@ Named rather than assumed:
 - **A page reload starts the sub-agent feed empty.** `hello` does not carry past sub-agent
   activity, so only events that arrive after the client connects are shown. The rendered feed
   itself was not exercised in a browser here.
+- **The session row, the inline rename input, the confirm row, the search box, and the grouped
+  results were never rendered.** Same reason as the paragraphs above. Proven without a browser:
+  the store's rename/delete on both storages, the routes over real HTTP, `sessionLabel`, the
+  reducer's search states, and the api calls' literal paths and bodies.
+- **Search is a linear scan with no index.** Every query re-reads the workspace's session files
+  and every roster bot's ledger. It is read-only and capped, but a very large workspace will feel
+  it; an index is deliberately out of scope for v1.
+- **A renamed session does not move in the list.** The rename leaves `updatedAt` alone on purpose,
+  so the list order is stable while a label is edited; that is a decision, not an oversight.
