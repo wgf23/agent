@@ -2,7 +2,14 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	BotMatches,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryListResponse,
+	SearchResponse,
 	ServerEvent,
+	SessionMatch,
+	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
@@ -10,7 +17,7 @@ import type { ProviderSettings } from "../config/resolve.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type { AllowAll } from "../permissions/allow-all.js";
 import type { PermissionRules } from "../permissions/rules.js";
-import type { Provider } from "../providers/types.js";
+import type { ImagePart, Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 import type {
 	ApplyRuntimeResult,
@@ -43,15 +50,40 @@ export interface HubOptions {
 export interface Hub {
 	hello(): HelloEvent;
 	subscribe(listener: EventListener): () => void;
-	dispatch(bot: string, text: string): void;
+	// Images ride along on the turn a dispatch starts; a hub validates them
+	// against the same caps the CLI does and reports a refusal as an error
+	// event, so a bad attachment never reaches the provider.
+	dispatch(bot: string, text: string, images?: ImagePart[]): void;
 	interrupt(bot: string): void;
 	resolveApproval(id: string, decision: ApprovalChoice): void;
 	setAllowAll(on: boolean): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
 	closeSession?(bot: string, id: string): Promise<void>;
-	// Only a hub that manages a rob roster can create one.
+	// A hub that owns durable sessions can drop or relabel one. False means the
+	// bot or the session is unknown, so the route answers 404. The implementations
+	// are on the two concrete hubs; the chat and the ledger branch on WORKSPACE_BOT.
+	deleteSession?(bot: string, id: string): Promise<boolean>;
+	renameSession?(bot: string, id: string, title: string): Promise<boolean>;
+	// Only a hub that manages a rob roster can create, edit, or delete one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
+	updateBot?(name: string, draft: UpdateBotBody): Promise<BotInfo>;
+	removeBot?(name: string): Promise<boolean>;
+	// A hub that keeps bot ledgers can serve these. The reads return null for an
+	// unknown bot; the writes return false. A store error throws, and the route
+	// turns it into a 500; forgetting an id the record has no entry for throws
+	// UnknownMemoryEntryError, which the route turns into a 404.
+	readTranscript?(bot: string): Promise<BotTranscriptResponse | null>;
+	readMemory?(bot: string): Promise<MemoryListResponse | null>;
+	forgetMemory?(bot: string, id: string): Promise<boolean>;
+	setWake?(bot: string, wake: BotWake | null): Promise<boolean>;
+	// A read-only search. The composite hub answers the whole SearchResponse;
+	// the chat and team halves each expose their own slice, so the one optional
+	// member admits every return shape. It writes nothing and emits no event.
+	search?(
+		query: string,
+		workspaceRoot: string,
+	): Promise<SearchResponse | BotMatches[] | SessionMatch[]>;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;

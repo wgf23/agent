@@ -65,6 +65,20 @@ const invocations: Array<{
 		body: { bot: "b", text: "hi" },
 	},
 	{
+		name: "sendWithImages",
+		run: (api) =>
+			api.send("b", "look", [
+				{ type: "image", mediaType: "image/png", data: "iVBORw0KGgo=" },
+			]),
+		path: "/api/send",
+		method: "POST",
+		body: {
+			bot: "b",
+			text: "look",
+			images: [{ type: "image", mediaType: "image/png", data: "iVBORw0KGgo=" }],
+		},
+	},
+	{
 		name: "interrupt",
 		run: (api) => api.interrupt("b"),
 		path: "/api/interrupt",
@@ -100,11 +114,74 @@ const invocations: Array<{
 		body: { bot: "b", id: "s1" },
 	},
 	{
+		name: "renameSession",
+		run: (api) => api.renameSession("b", "s1", "Greeting"),
+		path: "/api/sessions/rename",
+		method: "POST",
+		body: { bot: "b", id: "s1", title: "Greeting" },
+	},
+	{
+		name: "deleteSession",
+		run: (api) => api.deleteSession("b", "s1"),
+		path: "/api/sessions/delete",
+		method: "POST",
+		body: { bot: "b", id: "s1" },
+	},
+	{
+		name: "search",
+		run: (api) => api.search("zed"),
+		path: "/api/search?q=zed",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "loadBotTranscript",
+		run: (api) => api.loadBotTranscript("b"),
+		path: "/api/bots/b/transcript",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "loadMemory",
+		run: (api) => api.loadMemory("b"),
+		path: "/api/bots/b/memory",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "forgetMemory",
+		run: (api) => api.forgetMemory("b", "m1"),
+		path: "/api/bots/b/memory/forget",
+		method: "POST",
+		body: { id: "m1" },
+	},
+	{
+		name: "setWake",
+		run: (api) => api.setWake("b", { everyMs: 60000, prompt: "tick" }),
+		path: "/api/bots/b/wake",
+		method: "POST",
+		body: { everyMs: 60000, prompt: "tick" },
+	},
+	{
 		name: "createBot",
 		run: (api) => api.createBot({ name: "b", role: "r" }),
 		path: "/api/bots",
 		method: "POST",
 		body: { name: "b", role: "r" },
+	},
+	{
+		name: "updateBot",
+		run: (api) => api.updateBot("atlas", { role: "editor" }),
+		path: "/api/bots/atlas",
+		method: "PATCH",
+		body: { role: "editor" },
+	},
+	{
+		name: "removeBot",
+		run: (api) => api.removeBot("atlas"),
+		path: "/api/bots/atlas",
+		method: "DELETE",
+		body: undefined,
 	},
 	{
 		name: "loadSettings",
@@ -191,6 +268,51 @@ describe("response handling", () => {
 		);
 	});
 
+	it("surfaces the server's error on updateBot and removeBot", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "Unknown bot: atlas" }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.updateBot("atlas", { role: "r" })).rejects.toThrow(
+			"Unknown bot: atlas",
+		);
+		await expect(api.removeBot("atlas")).rejects.toThrow("Unknown bot: atlas");
+	});
+
+	it("surfaces the server's refusal on renameSession and deleteSession", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "Unknown session: s1" }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.renameSession("b", "s1", "Greeting")).rejects.toThrow(
+			"Unknown session: s1",
+		);
+		await expect(api.deleteSession("b", "s1")).rejects.toThrow(
+			"Unknown session: s1",
+		);
+	});
+
+	it("surfaces the server's refusal on search", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "query is required" }), {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.search("")).rejects.toThrow("query is required");
+		await expect(api.search("zed")).rejects.toMatchObject({ status: 400 });
+	});
+
 	it("returns the accepted provider and its warning from saveProvider", async () => {
 		const api = createApi({
 			token: "abc",
@@ -225,6 +347,61 @@ describe("response handling", () => {
 		await expect(
 			api.saveProvider({ preset: "deepseek", model: "m" }),
 		).rejects.toThrow("保存设置失败 (401)");
+	});
+
+	// The composer blocks an over-cap or unsupported file locally; the route is
+	// the second gate, and its reason is what the user is shown.
+	it("surfaces the server's refusal on send", async () => {
+		const api = createApi({
+			token: null,
+			fetchImpl: (async () =>
+				new Response(
+					JSON.stringify({
+						error: 'Unsupported image type "image/bmp": allowed types are ...',
+					}),
+					{ status: 400, headers: { "Content-Type": "application/json" } },
+				)) as typeof fetch,
+		});
+		await expect(
+			api.send("b", "hi", [
+				{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+			]),
+		).rejects.toThrow('Unsupported image type "image/bmp"');
+		await expect(api.send("b", "hi")).rejects.toMatchObject({ status: 400 });
+	});
+
+	it("carries the status on a 401 so the hub can flag the token", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "unauthorized" }), {
+					status: 401,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.loadBotTranscript("b")).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.loadMemory("b")).rejects.toMatchObject({ status: 401 });
+		await expect(api.forgetMemory("b", "m1")).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.setWake("b", { clear: true })).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.updateBot("b", { role: "r" })).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.removeBot("b")).rejects.toMatchObject({ status: 401 });
+		await expect(
+			api.renameSession("b", "s1", "Greeting"),
+		).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.deleteSession("b", "s1")).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.search("zed")).rejects.toMatchObject({ status: 401 });
 	});
 });
 

@@ -7,7 +7,11 @@ import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { SoloHub } from "../../src/serve/solo.js";
-import { latestSession, newSession } from "../../src/session/store.js";
+import {
+	latestSession,
+	newSession,
+	saveSession,
+} from "../../src/session/store.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
@@ -140,6 +144,68 @@ describe("SoloHub", () => {
 		expect(userTexts).toEqual(["one", "two"]);
 	});
 
+	it("keeps an attachment on the turn and on a queued interjection", async () => {
+		const provider = createMockProvider([
+			[{ type: "text_delta", text: "first" }],
+			[{ type: "text_delta", text: "second" }],
+		]);
+		const session = newSession(workspaceRoot, settings.model);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+
+		hub.dispatch("assistant", "one", [
+			{ type: "image", mediaType: "image/png", data: "QQ==" },
+		]);
+		// The second message lands mid-turn, so it is queued with its own
+		// image rather than losing it.
+		hub.dispatch("assistant", "two", [
+			{ type: "image", mediaType: "image/webp", data: "Qg==" },
+		]);
+		await waitFor(
+			() =>
+				hub.hello().states[0]?.status === "idle" &&
+				hub.hello().states[0].messageCount >= 3,
+			"both messages to be handled",
+			5000,
+		);
+
+		// Both reach the same request: the queued one is injected at the step
+		// boundary, and its image rides with it.
+		const users = provider.requests[0]?.messages.filter(
+			(message) => message.role === "user",
+		);
+		expect(users).toEqual([
+			{
+				role: "user",
+				content: "one",
+				images: [{ type: "image", mediaType: "image/png", data: "QQ==" }],
+			},
+			{
+				role: "user",
+				content: "two",
+				images: [{ type: "image", mediaType: "image/webp", data: "Qg==" }],
+			},
+		]);
+		await hub.dispose();
+	});
+
+	it("refuses a bad attachment with an error event, not a turn", async () => {
+		const provider = createMockProvider([[{ type: "text_delta", text: "ok" }]]);
+		const session = newSession(workspaceRoot, settings.model);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+		const events = collect(hub);
+
+		hub.dispatch("assistant", "hi", [
+			{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+		]);
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "assistant",
+			message: expect.stringContaining("image/bmp"),
+		});
+		expect(provider.requests).toEqual([]);
+		await hub.dispose();
+	});
+
 	it("creates a new session and reopens a saved one", async () => {
 		const provider = createMockProvider([
 			[{ type: "text_delta", text: "hello" }],
@@ -224,6 +290,105 @@ describe("SoloHub", () => {
 					event.type === "approval_resolved" && event.decision === "deny",
 			),
 		).toBe(true);
+	});
+
+	it("deletes a stored session and adopts the newest remaining or a fresh one", async () => {
+		const provider = createMockProvider([]);
+		const first = newSession(workspaceRoot, settings.model);
+		first.messages = [{ role: "user", content: "first" }];
+		first.updatedAt = 1000;
+		const second = newSession(workspaceRoot, settings.model);
+		second.messages = [{ role: "user", content: "second" }];
+		second.updatedAt = 2000;
+		await saveSession(first);
+		await saveSession(second);
+		const hub = new SoloHub(hubOptions(provider), {
+			session: second,
+			sessions: [],
+		});
+		const events = collect(hub);
+
+		// Deleting the live session adopts the newest remaining one, and the
+		// emitted session_opened names something other than what was deleted.
+		expect(await hub.deleteSession("assistant", second.id)).toBe(true);
+		expect(hub.hello().activeSessionId).toBe(first.id);
+		const adopted = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(adopted).toMatchObject({ sessionId: first.id });
+		const adoptedId =
+			adopted?.type === "session_opened" ? adopted.sessionId : "";
+		expect(adoptedId).not.toBe(second.id);
+
+		// Deleting the last one starts a fresh session.
+		expect(await hub.deleteSession("assistant", first.id)).toBe(true);
+		const fresh = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		const freshId = fresh?.type === "session_opened" ? fresh.sessionId : "";
+		expect(freshId).not.toBe(first.id);
+		expect(hub.hello().activeSessionId).toBe(freshId);
+		expect(hub.hello().sessions).toEqual([]);
+
+		// An unknown id is reported, not accepted.
+		expect(await hub.deleteSession("assistant", "ses_missing")).toBe(false);
+		await hub.dispose();
+	});
+
+	it("renames a stored session and carries the trimmed title in the list", async () => {
+		const provider = createMockProvider([]);
+		const session = newSession(workspaceRoot, settings.model);
+		session.messages = [{ role: "user", content: "hello" }];
+		await saveSession(session);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+		const events = collect(hub);
+
+		expect(await hub.renameSession("assistant", session.id, "Greeting")).toBe(
+			true,
+		);
+		const sessionsEvent = events
+			.filter((event) => event.type === "sessions")
+			.at(-1);
+		const listed =
+			sessionsEvent?.type === "sessions" ? sessionsEvent.sessions : [];
+		expect(listed).toEqual([
+			expect.objectContaining({ id: session.id, title: "Greeting" }),
+		]);
+
+		expect(await hub.renameSession("assistant", "ses_missing", "x")).toBe(
+			false,
+		);
+		await hub.dispose();
+	});
+
+	it("searches the chat's stored sessions and reports a hit's role", async () => {
+		const provider = createMockProvider([]);
+		const match = newSession(workspaceRoot, settings.model);
+		match.messages = [{ role: "user", content: "the needle is here" }];
+		await saveSession(match);
+		const miss = newSession(workspaceRoot, settings.model);
+		miss.messages = [{ role: "user", content: "nothing to see" }];
+		await saveSession(miss);
+		const hub = new SoloHub(hubOptions(provider), {
+			session: newSession(workspaceRoot, settings.model),
+			sessions: [],
+		});
+
+		// The query is matched case-insensitively and echoed into the snippet.
+		const found = await hub.search("NEEDLE", workspaceRoot);
+		expect(found).toEqual([
+			{
+				sessionId: match.id,
+				title: null,
+				firstUserText: "the needle is here",
+				hits: [
+					{ role: "user", text: "the needle is here", at: match.updatedAt },
+				],
+			},
+		]);
+		// The "nothing found" case is an empty list, not every session.
+		expect(await hub.search("absent", workspaceRoot)).toEqual([]);
+		await hub.dispose();
 	});
 });
 

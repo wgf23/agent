@@ -8,9 +8,11 @@ export const MAX_MEMORY_ENTRIES = 128;
 export const MAX_MEMORY_CHARS = 24_000;
 export const MAX_RING_TURNS = 24;
 export const MAX_MEMORY_TEXT = 2_000;
+export const MAX_SESSION_TITLE = 120;
 
 const memoryIdSchema = z.string().regex(/^mem_[0-9a-f]+$/);
 const turnIdSchema = z.string().regex(/^trn_[0-9a-f]+$/);
+const sessionTitleSchema = z.string().min(1).max(MAX_SESSION_TITLE);
 
 export const memoryEntrySchema = z
 	.object({
@@ -53,6 +55,9 @@ export const botRecordSchema = z
 		seq: z.number().int().min(0),
 		usage: z.object({ input: z.number(), output: z.number() }).strict(),
 		memory: z.array(memoryEntrySchema),
+		// Optional and defaulted so a record written before titles existed still
+		// parses; adding it does not bump BOT_RECORD_VERSION.
+		sessionTitles: z.record(z.string(), sessionTitleSchema).default({}),
 		turns: z.array(turnSchema),
 	})
 	.strict();

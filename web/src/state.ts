@@ -8,10 +8,13 @@ import type {
 	BotStatus,
 	DmInfo,
 	InstallPhase,
+	MemoryEntryView,
 	PresetInfo,
 	ProviderView,
+	SearchResponse,
 	ServerEvent,
 	SessionSummaryInfo,
+	SubagentView,
 	ToolCallView,
 	TranscriptMessage,
 	UsageTotals,
@@ -19,11 +22,26 @@ import type {
 } from "./protocol";
 import { WORKSPACE_BOT } from "./protocol";
 
+// A bot's retained sub-agent activity is capped so a long run cannot grow the
+// client without bound; the oldest entries drop first.
+export const SUBAGENT_FEED_MAX = 200;
+
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
 export interface NoticeView {
 	bot: string;
 	text: string;
+}
+
+// The sidebar search's client-only facts. A search is read-only server data,
+// so it gets its own small actions rather than riding the SSE channel; the
+// null results mean "not searched yet", which is distinct from an empty
+// payload that says "nothing found".
+export interface SearchState {
+	query: string;
+	results: SearchResponse | null;
+	loading: boolean;
+	error: string | null;
 }
 
 export interface ClientState {
@@ -39,6 +57,14 @@ export interface ClientState {
 	workspaces: WorkspaceOption[];
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
+	// A bot's sessions live in their own maps keyed by bot name, so switching a
+	// bot's channel can never clobber the workspace chat's sessions.
+	botSessions: Record<string, SessionSummaryInfo[]>;
+	botActiveSession: Record<string, string | null>;
+	// A bot's memory, replaced wholesale after each read or edit.
+	memory: Record<string, MemoryEntryView[]>;
+	// A bot's sub-agent activity, appended per event and capped oldest-first.
+	subagents: Record<string, SubagentView[]>;
 	transcripts: Record<string, TranscriptMessage[]>;
 	approvals: ApprovalRequestInfo[];
 	allowAll: boolean;
@@ -47,8 +73,13 @@ export interface ClientState {
 	connection: ConnectionStatus;
 	usage: UsageTotals;
 	lastError: string | null;
+	// Set when a request is refused with 401 so the UI can say the token is bad
+	// rather than reporting a dropped connection.
+	authError: boolean;
 	settingsOpen: boolean;
 	settingsError: string | null;
+	// The sidebar's read-only session search; a small client-only slice.
+	search: SearchState;
 	agents: AgentStatusView[];
 	// Latest job per agent id, live or terminal.
 	agentJobs: Record<string, AgentJobView>;
@@ -64,7 +95,16 @@ export type ClientAction =
 	| { type: "settings_open" }
 	| { type: "settings_close" }
 	| { type: "settings_error"; error: string | null }
-	| { type: "agents_loaded"; agents: AgentStatusView[] };
+	| { type: "agents_loaded"; agents: AgentStatusView[] }
+	| { type: "memory_loaded"; bot: string; entries: MemoryEntryView[] }
+	| { type: "search_started"; query: string }
+	| { type: "search_results"; results: SearchResponse }
+	| { type: "search_failed"; error: string }
+	| { type: "search_cleared" }
+	| { type: "auth_error"; authError: boolean }
+	// A request this client made was refused (not an SSE error): the server's
+	// reason goes to the same banner so it is never swallowed.
+	| { type: "request_error"; error: string };
 
 export function initialState(): ClientState {
 	return {
@@ -77,6 +117,10 @@ export function initialState(): ClientState {
 		workspaces: [],
 		sessions: [],
 		activeSessionId: null,
+		botSessions: {},
+		botActiveSession: {},
+		memory: {},
+		subagents: {},
 		transcripts: {},
 		approvals: [],
 		allowAll: false,
@@ -85,8 +129,10 @@ export function initialState(): ClientState {
 		connection: "connecting",
 		usage: { input: 0, output: 0 },
 		lastError: null,
+		authError: false,
 		settingsOpen: false,
 		settingsError: null,
+		search: { query: "", results: null, loading: false, error: null },
 		agents: [],
 		agentJobs: {},
 	};
@@ -165,6 +211,56 @@ export function clientReducer(
 		case "agents_loaded":
 			return { ...state, agents: action.agents };
 
+		case "memory_loaded":
+			return {
+				...state,
+				memory: { ...state.memory, [action.bot]: action.entries },
+			};
+
+		// A new search keeps the previous results on screen while it loads and
+		// clears any prior error, so the panel never blanks mid-query.
+		case "search_started":
+			return {
+				...state,
+				search: {
+					...state.search,
+					query: action.query,
+					loading: true,
+					error: null,
+				},
+			};
+
+		case "search_results":
+			return {
+				...state,
+				search: {
+					...state.search,
+					results: action.results,
+					loading: false,
+					error: null,
+				},
+			};
+
+		// A failure keeps the query so the panel can still show what was asked,
+		// but drops `loading` and carries the server's message.
+		case "search_failed":
+			return {
+				...state,
+				search: { ...state.search, loading: false, error: action.error },
+			};
+
+		case "search_cleared":
+			return {
+				...state,
+				search: { query: "", results: null, loading: false, error: null },
+			};
+
+		case "auth_error":
+			return { ...state, authError: action.authError };
+
+		case "request_error":
+			return { ...state, lastError: action.error };
+
 		case "server":
 			return applyServerEvent(state, action.event);
 	}
@@ -210,9 +306,21 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			};
 
 		case "session_opened":
+			// A bot's channel switch replaces only that bot's transcript; the chat
+			// keeps its own active id. The workspace chat is the one bot whose
+			// active session the top-level `activeSessionId` tracks.
+			if (event.bot === WORKSPACE_BOT) {
+				return {
+					...state,
+					activeSessionId: event.sessionId,
+					transcripts: {
+						...state.transcripts,
+						[event.bot]: event.messages,
+					},
+				};
+			}
 			return {
 				...state,
-				activeSessionId: event.sessionId,
 				transcripts: {
 					...state.transcripts,
 					[event.bot]: event.messages,
@@ -221,6 +329,18 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 
 		case "sessions":
 			return { ...state, sessions: event.sessions };
+
+		// A bot's session list is its own event so it cannot clobber the chat's:
+		// it fills the bot-keyed maps only, never `sessions`/`activeSessionId`.
+		case "bot_sessions":
+			return {
+				...state,
+				botSessions: { ...state.botSessions, [event.bot]: event.sessions },
+				botActiveSession: {
+					...state.botActiveSession,
+					[event.bot]: event.currentSessionId,
+				},
+			};
 
 		case "bot_status":
 			return {
@@ -266,8 +386,33 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			return next;
 		}
 
-		case "approval_requested":
-			return { ...state, approvals: [...state.approvals, event.request] };
+		// A sub-agent's activity belongs to its parent bot's feed. Only the line
+		// with text is rendered; the cap drops the oldest so a long run cannot
+		// grow the client without bound.
+		case "subagent": {
+			const existing = state.subagents[event.bot] ?? [];
+			return {
+				...state,
+				subagents: {
+					...state.subagents,
+					[event.bot]: [...existing, event.entry].slice(-SUBAGENT_FEED_MAX),
+				},
+			};
+		}
+
+		// A queued request is announced twice: once with no deadline, then again when
+		// it becomes the head and the server arms its window. Replacing in place
+		// keeps one entry per id and, critically, keeps the FIFO order the modal
+		// renders from.
+		case "approval_requested": {
+			const index = state.approvals.findIndex((a) => a.id === event.request.id);
+			if (index === -1) {
+				return { ...state, approvals: [...state.approvals, event.request] };
+			}
+			const approvals = [...state.approvals];
+			approvals[index] = event.request;
+			return { ...state, approvals };
+		}
 
 		case "approval_resolved":
 			return {

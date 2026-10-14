@@ -42,11 +42,18 @@ export type ApprovalChoice = "allow_once" | "allow_always" | "deny";
 
 export const WORKSPACE_BOT = "assistant";
 
+export interface BotWake {
+	everyMs: number;
+	prompt: string;
+}
+
 export interface BotInfo {
 	name: string;
 	role: string;
 	model: string;
 	backend: BackendKind;
+	// The configured interval that wakes the bot; absent when it has none.
+	wake?: BotWake | null;
 }
 
 // One entry in the workspace picker. `active` marks the scope the server is
@@ -185,6 +192,15 @@ export interface BotState {
 	usage: UsageTotals;
 }
 
+// One attachment on a message: the same part the provider expands into an
+// OpenAI image_url data URL, declared here so the wire has no runtime import
+// of the provider module.
+export interface ImagePart {
+	type: "image";
+	mediaType: string;
+	data: string;
+}
+
 export interface ApprovalRequestInfo {
 	id: string;
 	bot: string;
@@ -192,6 +208,11 @@ export interface ApprovalRequestInfo {
 	subject: string;
 	dangerous: boolean;
 	rule: string | null;
+	// When the server denies this request unanswered, in epoch milliseconds,
+	// or null when nothing is armed. A request still queued behind another one
+	// has no deadline yet: its window starts when it is promoted to the head,
+	// and the server re-emits it with the deadline then.
+	expiresAt: number | null;
 }
 
 export interface SessionSummaryInfo {
@@ -199,6 +220,8 @@ export interface SessionSummaryInfo {
 	updatedAt: number;
 	messageCount: number;
 	firstUserText: string;
+	// An owner-set label; null until the session is renamed.
+	title: string | null;
 }
 
 export interface DmInfo {
@@ -206,6 +229,15 @@ export interface DmInfo {
 	to: string;
 	text: string;
 	at: number;
+}
+
+// One sub-agent event, mirrored from src/rob/types.ts's SubagentEntry so the
+// web feed can render the same lines the TUI's SubagentView does.
+export interface SubagentView {
+	parent: string;
+	id: string;
+	at: number;
+	event: AgentEvent;
 }
 
 export type ToolStatus = "running" | "ok" | "error" | "blocked";
@@ -225,6 +257,61 @@ export interface TranscriptMessage {
 	text: string;
 	reasoning: string;
 	tools: ToolCallView[];
+}
+
+// The memory view omits supersedes/source: the browser edits entries by id and
+// never needs the ledger's provenance fields.
+export interface MemoryEntryView {
+	id: string;
+	at: number;
+	kind: "fact" | "preference" | "commitment" | "digest";
+	text: string;
+}
+
+export interface MemoryListResponse {
+	bot: string;
+	entries: MemoryEntryView[];
+}
+
+// One read answers both questions the sidebar asks when a bot is selected: the
+// current transcript and the bot's own session list, so no second request is
+// needed (the list is the same projection `bot_sessions` carries).
+export interface BotTranscriptResponse {
+	bot: string;
+	sessionId: string;
+	messages: TranscriptMessage[];
+	sessions: SessionSummaryInfo[];
+}
+
+// One message that carries the query: its role, a bounded snippet with the
+// match intact, and the turn (or session) time it belongs to.
+export interface SearchHit {
+	role: "user" | "assistant" | "system" | "tool";
+	text: string;
+	at: number;
+}
+
+// Every hit for one session, with the same summary fields the sidebar lists, so
+// a search result can be opened like any other session.
+export interface SessionMatch {
+	sessionId: string;
+	title: string | null;
+	firstUserText: string;
+	hits: SearchHit[];
+}
+
+// One bot's matches, present only when the bot has at least one.
+export interface BotMatches {
+	bot: string;
+	matches: SessionMatch[];
+}
+
+// The whole answer to one read-only search: the query echoed back, the chat's
+// matches, and each bot's matches.
+export interface SearchResponse {
+	query: string;
+	chat: SessionMatch[];
+	bots: BotMatches[];
 }
 
 export type ServerEvent =
@@ -251,8 +338,15 @@ export type ServerEvent =
 			messages: TranscriptMessage[];
 	  }
 	| { type: "sessions"; sessions: SessionSummaryInfo[] }
+	| {
+			type: "bot_sessions";
+			bot: string;
+			sessions: SessionSummaryInfo[];
+			currentSessionId: string | null;
+	  }
 	| { type: "bot_status"; state: BotState }
 	| { type: "agent_event"; bot: string; event: AgentEvent }
+	| { type: "subagent"; bot: string; entry: SubagentView }
 	| { type: "approval_requested"; request: ApprovalRequestInfo }
 	| { type: "approval_resolved"; id: string; decision: ApprovalChoice }
 	| { type: "notice"; bot: string; text: string }
@@ -265,6 +359,9 @@ export type ServerEvent =
 export interface SendBody {
 	bot: string;
 	text: string;
+	// Optional attachments, already encoded by the client as base64. The route
+	// rejects a bad media type, an over-cap payload, or too many of them.
+	images?: ImagePart[];
 }
 
 export interface InterruptBody {
@@ -294,4 +391,26 @@ export interface SessionCloseBody {
 	id: string;
 }
 
+export interface RenameSessionBody {
+	bot: string;
+	id: string;
+	title: string;
+}
+
+// A wake write either sets the interval or clears it; the route rejects a body
+// that is neither.
+export interface SetWakeBody {
+	everyMs?: number;
+	prompt?: string;
+	clear?: boolean;
+}
+
+export interface ForgetMemoryBody {
+	id: string;
+}
+
 export type CreateBotBody = BotDraft;
+
+// The edit route takes the name from the path, so its body is the draft without
+// one.
+export type UpdateBotBody = Omit<BotDraft, "name">;

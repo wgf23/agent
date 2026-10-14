@@ -7,9 +7,12 @@ import type {
 	WorkspaceOption,
 } from "../protocol";
 import { WORKSPACE_BOT } from "../protocol";
-import type { ConnectionStatus } from "../state";
+import { sessionLabel } from "../sessions";
+import type { ConnectionStatus, SearchState } from "../state";
 import { STATUS_LABEL } from "../status";
 import { GearIcon, PlusIcon } from "./icons";
+import SearchPanel from "./SearchPanel";
+import SessionRow from "./SessionRow";
 import WorkspacePicker from "./WorkspacePicker";
 
 export type View = "chat" | "plaza" | "agents";
@@ -24,12 +27,25 @@ interface Props {
 	onSwitchWorkspace: (root: string) => Promise<SwitchWorkspaceResult>;
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
+	// A bot's own session list and active id, keyed by bot name; kept separate
+	// from the workspace chat's so the two lists never overwrite each other.
+	botSessions: Record<string, SessionSummaryInfo[]>;
+	botActiveSession: Record<string, string | null>;
 	selectedBot: string | null;
 	onSelectBot: (name: string | null) => void;
 	allowAll: boolean;
 	onToggleAllowAll: (on: boolean) => void;
 	onNewSession: (bot: string) => void;
 	onOpenSession: (bot: string, id: string) => void;
+	onNewBotSession: (bot: string) => void;
+	onOpenBotSession: (bot: string, id: string) => void;
+	onCloseBotSession: (bot: string, id: string) => void;
+	onRenameSession: (bot: string, id: string, title: string) => Promise<void>;
+	onDeleteSession: (bot: string, id: string) => Promise<void>;
+	// The sidebar's session search: its client-only slice and the two verbs.
+	search: SearchState;
+	onSearch: (query: string) => void;
+	onClearSearch: () => void;
 	onCreateBot: () => void;
 	onOpenSettings: () => void;
 	usage: UsageTotals;
@@ -47,12 +63,22 @@ export default function Sidebar(props: Props) {
 		onSwitchWorkspace,
 		sessions,
 		activeSessionId,
+		botSessions,
+		botActiveSession,
 		selectedBot,
 		onSelectBot,
 		allowAll,
 		onToggleAllowAll,
 		onNewSession,
 		onOpenSession,
+		onNewBotSession,
+		onOpenBotSession,
+		onCloseBotSession,
+		onRenameSession,
+		onDeleteSession,
+		search,
+		onSearch,
+		onClearSearch,
 		onCreateBot,
 		onOpenSettings,
 		usage,
@@ -113,6 +139,21 @@ export default function Sidebar(props: Props) {
 			</nav>
 
 			<div className="sidebar-scroll">
+				<SearchPanel
+					search={search}
+					onSearch={onSearch}
+					onClear={onClearSearch}
+					// A chat hit opens the way the chat list already does; a bot
+					// hit selects that bot first so its list and transcript follow.
+					onOpenChat={(sessionId) => {
+						onOpenSession(WORKSPACE_BOT, sessionId);
+						openChat();
+					}}
+					onOpenBot={(bot, sessionId) => {
+						onSelectBot(bot);
+						onOpenBotSession(bot, sessionId);
+					}}
+				/>
 				<section className="sidebar-section">
 					<div className="sidebar-label">
 						<span>对话</span>
@@ -133,25 +174,20 @@ export default function Sidebar(props: Props) {
 					) : (
 						<ul className="session-list">
 							{sessions.map((session) => (
-								<li key={session.id}>
-									<button
-										type="button"
-										className={`session-item ${
-											session.id === activeSessionId ? "active" : ""
-										}`}
-										onClick={() => {
-											onOpenSession(WORKSPACE_BOT, session.id);
-											openChat();
-										}}
-									>
-										<span className="session-title">
-											{session.firstUserText || "新会话"}
-										</span>
-										<span className="session-meta">
-											{session.messageCount} 条消息
-										</span>
-									</button>
-								</li>
+								<SessionRow
+									key={session.id}
+									session={session}
+									label={sessionLabel(session)}
+									active={session.id === activeSessionId}
+									onOpen={() => {
+										onOpenSession(WORKSPACE_BOT, session.id);
+										openChat();
+									}}
+									onRename={(title) =>
+										onRenameSession(WORKSPACE_BOT, session.id, title)
+									}
+									onDelete={() => onDeleteSession(WORKSPACE_BOT, session.id)}
+								/>
 							))}
 						</ul>
 					)}
@@ -189,6 +225,56 @@ export default function Sidebar(props: Props) {
 						</ul>
 					)}
 				</section>
+
+				{selectedBot !== null && (
+					<section className="sidebar-section">
+						<div className="sidebar-label">
+							<span>会话</span>
+						</div>
+						<button
+							type="button"
+							className="btn new-chat"
+							onClick={() => onNewBotSession(selectedBot)}
+						>
+							<PlusIcon />
+							新建会话
+						</button>
+						{(botSessions[selectedBot] ?? []).length === 0 ? (
+							<p className="sidebar-empty">还没有会话</p>
+						) : (
+							<ul className="session-list">
+								{(botSessions[selectedBot] ?? []).map((session) => (
+									<SessionRow
+										key={session.id}
+										session={session}
+										label={sessionLabel(session)}
+										active={
+											session.id === (botActiveSession[selectedBot] ?? null)
+										}
+										trailing={
+											<button
+												type="button"
+												className="session-close"
+												title="关闭会话"
+												aria-label="关闭会话"
+												onClick={() =>
+													onCloseBotSession(selectedBot, session.id)
+												}
+											>
+												×
+											</button>
+										}
+										onOpen={() => onOpenBotSession(selectedBot, session.id)}
+										onRename={(title) =>
+											onRenameSession(selectedBot, session.id, title)
+										}
+										onDelete={() => onDeleteSession(selectedBot, session.id)}
+									/>
+								))}
+							</ul>
+						)}
+					</section>
+				)}
 			</div>
 
 			<div className="sidebar-footer">

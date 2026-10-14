@@ -4,10 +4,17 @@ import {
 	type ApprovalChoice,
 	type BotDraft,
 	type BotInfo,
+	type BotTranscriptResponse,
+	type BotWake,
+	type MemoryListResponse,
+	type SearchResponse,
+	type UpdateBotBody,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
-import { addRob } from "../config/project-file.js";
+import { addRob, removeRob, updateRob } from "../config/project-file.js";
+import type { ImagePart } from "../providers/types.js";
+import { UnknownRobError } from "../rob/team.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
@@ -89,9 +96,9 @@ export class CompositeHub extends EventBus implements Hub {
 		return { ok: true };
 	}
 
-	dispatch(bot: string, text: string): void {
-		if (bot === WORKSPACE_BOT) this.workspace.dispatch(bot, text);
-		else this.robs.dispatch(bot, text);
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
+		if (bot === WORKSPACE_BOT) this.workspace.dispatch(bot, text, images);
+		else this.robs.dispatch(bot, text, images);
 	}
 
 	interrupt(bot: string): void {
@@ -127,7 +134,97 @@ export class CompositeHub extends EventBus implements Hub {
 		return this.robs.closeSession(bot, id);
 	}
 
+	deleteSession(bot: string, id: string): Promise<boolean> {
+		if (bot === WORKSPACE_BOT) return this.workspace.deleteSession(bot, id);
+		return this.robs.deleteSession(bot, id);
+	}
+
+	renameSession(bot: string, id: string, title: string): Promise<boolean> {
+		if (bot === WORKSPACE_BOT) {
+			return this.workspace.renameSession(bot, id, title);
+		}
+		return this.robs.renameSession(bot, id, title);
+	}
+
+	// The workspace chat is not a ledger bot, so every ledger route resolves
+	// against the rob roster only.
+	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		return this.robs.readTranscript(bot);
+	}
+
+	// One read-only search across both halves: the workspace chat's sessions and
+	// every bot's turns for this workspace. It emits nothing and changes no
+	// status.
+	async search(query: string, workspaceRoot: string): Promise<SearchResponse> {
+		const chat = await this.workspace.search(query, workspaceRoot);
+		const bots = await this.robs.search(query, workspaceRoot);
+		return { query, chat, bots };
+	}
+
+	readMemory(bot: string): Promise<MemoryListResponse | null> {
+		return this.robs.readMemory(bot);
+	}
+
+	forgetMemory(bot: string, id: string): Promise<boolean> {
+		return this.robs.forgetMemory(bot, id);
+	}
+
+	setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		return this.robs.setWake(bot, wake);
+	}
+
 	async createBot(draft: BotDraft): Promise<BotInfo> {
+		const parsed = await this.validatedDraft(draft);
+		if (this.robs.bots().some((bot) => bot.name === parsed.name)) {
+			throw new BotDraftError(`A bot named "${parsed.name}" already exists.`);
+		}
+		const saved = await addRob(this.workspaceRoot, parsed);
+		if (!saved.ok) throw new BotDraftError(saved.error);
+		this.robs.addBot(parsed);
+		const hello = this.hello();
+		this.emit({ type: "bots", bots: hello.bots, states: hello.states });
+		const created = hello.bots.find((bot) => bot.name === parsed.name);
+		if (created === undefined) {
+			throw new BotDraftError(`Bot "${parsed.name}" was not registered.`);
+		}
+		return created;
+	}
+
+	// Deletes a bot end to end: the runtime and the ledger, then the config
+	// entry. The ledger removal is the fallible step, so it runs before the
+	// config is touched: a store failure leaves the config and the roster
+	// intact, emits no `bots` event, and surfaces to the route instead of
+	// deleting the config and orphaning the ledger. False when the name is not
+	// on the roster, so the route answers 404.
+	async removeBot(name: string): Promise<boolean> {
+		if (!this.robs.bots().some((bot) => bot.name === name)) return false;
+		const removed = await this.robs.removeBot(name);
+		if (!removed) return false;
+		const saved = await removeRob(this.workspaceRoot, name);
+		if (!saved.ok) throw new BotDraftError(saved.error);
+		return true;
+	}
+
+	// Replaces a bot's role, model, and backend in place. The same validation
+	// and install check the create path runs gate the draft; the ledger, memory,
+	// and wake are untouched, and the runtime restarts so the new config takes
+	// effect. UnknownRobError names a bot the roster never had (404).
+	async updateBot(name: string, draft: UpdateBotBody): Promise<BotInfo> {
+		const parsed = await this.validatedDraft({ ...draft, name });
+		const existing = this.robs.bots().find((bot) => bot.name === name);
+		if (existing === undefined) throw new UnknownRobError(name);
+		const saved = await updateRob(this.workspaceRoot, name, parsed);
+		if (!saved.ok) throw new BotDraftError(saved.error);
+		const runtime: RobConfig = { ...parsed };
+		if (existing.wake !== undefined && existing.wake !== null) {
+			runtime.wake = existing.wake;
+		}
+		return this.robs.replaceBot(name, runtime);
+	}
+
+	// The draft-to-config check both the create and the update path run, so a
+	// cli backend is refused with the same wording wherever it is entered.
+	private async validatedDraft(draft: BotDraft): Promise<RobConfig> {
 		const parsed = robConfigSchema.safeParse(toRobConfig(draft));
 		if (!parsed.success) {
 			throw new BotDraftError(z.prettifyError(parsed.error));
@@ -140,21 +237,7 @@ export class CompositeHub extends EventBus implements Hub {
 				missingCommandMessage(parsed.data.backend.command),
 			);
 		}
-		if (this.robs.bots().some((bot) => bot.name === parsed.data.name)) {
-			throw new BotDraftError(
-				`A bot named "${parsed.data.name}" already exists.`,
-			);
-		}
-		const saved = await addRob(this.workspaceRoot, parsed.data);
-		if (!saved.ok) throw new BotDraftError(saved.error);
-		this.robs.addBot(parsed.data);
-		const hello = this.hello();
-		this.emit({ type: "bots", bots: hello.bots, states: hello.states });
-		const created = hello.bots.find((bot) => bot.name === parsed.data.name);
-		if (created === undefined) {
-			throw new BotDraftError(`Bot "${parsed.data.name}" was not registered.`);
-		}
-		return created;
+		return parsed.data;
 	}
 
 	// Detection and creation must agree: ask the supervisor (which also sees a

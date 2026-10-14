@@ -6,6 +6,11 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryListResponse,
+	SearchResponse,
+	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
@@ -16,6 +21,7 @@ import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
+import type { ImagePart } from "../providers/types.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { writeJsonAtomic } from "../session/atomic.js";
 import {
@@ -261,8 +267,8 @@ export class WorkspaceHub extends EventBus implements Hub {
 		return { ok: true };
 	}
 
-	dispatch(bot: string, text: string): void {
-		this.scope.hub.dispatch(bot, text);
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
+		this.scope.hub.dispatch(bot, text, images);
 	}
 
 	interrupt(bot: string): void {
@@ -289,8 +295,46 @@ export class WorkspaceHub extends EventBus implements Hub {
 		return this.scope.hub.closeSession(bot, id);
 	}
 
+	deleteSession(bot: string, id: string): Promise<boolean> {
+		return this.scope.hub.deleteSession?.(bot, id) ?? Promise.resolve(false);
+	}
+
+	renameSession(bot: string, id: string, title: string): Promise<boolean> {
+		return (
+			this.scope.hub.renameSession?.(bot, id, title) ?? Promise.resolve(false)
+		);
+	}
+
 	createBot(draft: BotDraft): Promise<BotInfo> {
 		return this.scope.hub.createBot(draft);
+	}
+
+	updateBot(name: string, draft: UpdateBotBody): Promise<BotInfo> {
+		return this.scope.hub.updateBot(name, draft);
+	}
+
+	removeBot(name: string): Promise<boolean> {
+		return this.scope.hub.removeBot(name);
+	}
+
+	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		return this.scope.hub.readTranscript?.(bot) ?? Promise.resolve(null);
+	}
+
+	readMemory(bot: string): Promise<MemoryListResponse | null> {
+		return this.scope.hub.readMemory?.(bot) ?? Promise.resolve(null);
+	}
+
+	forgetMemory(bot: string, id: string): Promise<boolean> {
+		return this.scope.hub.forgetMemory?.(bot, id) ?? Promise.resolve(false);
+	}
+
+	setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		return this.scope.hub.setWake?.(bot, wake) ?? Promise.resolve(false);
+	}
+
+	search(query: string, workspaceRoot: string): Promise<SearchResponse> {
+		return this.scope.hub.search(query, workspaceRoot);
 	}
 
 	applyRuntime(next: RuntimeSnapshot): Promise<ApplyRuntimeResult> {

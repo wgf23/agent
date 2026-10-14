@@ -5,7 +5,13 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ServerEvent } from "../shared/protocol.js";
+import type {
+	BotTranscriptResponse,
+	MemoryListResponse,
+	SearchResponse,
+	ServerEvent,
+} from "../shared/protocol.js";
+import { WORKSPACE_BOT } from "../shared/protocol.js";
 import {
 	type BotRecord,
 	botRecordSchema,
@@ -15,12 +21,22 @@ import {
 import { PRESETS } from "../src/providers/presets.js";
 import { newSession, saveSession } from "../src/session/store.js";
 
-// The whole point of this script is a real DeepSeek turn, so an absent key is a
-// skip, not a failure: it runs in CI without secrets the same way the other
-// scripts gate on their provider key.
+// The whole point of this script is a real DeepSeek turn, so an absent key
+// is a skip, not a failure: it runs in CI without secrets the same way the
+// other scripts gate on their provider key. An overdrawn key is the same
+// skip: the first completion would answer HTTP 402 after a phase timeout,
+// so the balance is probed (no tokens spent) before any phase runs.
 const apiKeyEnv = PRESETS.deepseek.apiKeyEnv;
-if (process.env[apiKeyEnv] === undefined || process.env[apiKeyEnv] === "") {
+const apiKey = process.env[apiKeyEnv];
+if (apiKey === undefined || apiKey === "") {
 	console.log(`skipped: ${apiKeyEnv} is not set`);
+	process.exit(0);
+}
+const balance = await probeBalance(apiKey);
+if (balance !== undefined && !balance.isAvailable) {
+	console.log(
+		`skipped: ${apiKeyEnv} reports no balance (is_available=false, total_balance=${balance.figure}); fund the key to run the phases`,
+	);
 	process.exit(0);
 }
 
@@ -32,11 +48,22 @@ const PHASE3_TEXT = "What is my name?";
 // The wake interval is fixed by the brief; a turn must finish inside it for the
 // scheduler to ever hand the loop back an idle moment.
 const WAKE_EVERY_MS = 3000;
+// Phase 8 re-arms the live timer to this interval and prompt, both fixed by the
+// brief, so the turn it eventually commits proves the route reached the timer.
+const WAKE_SET_EVERY_MS = 2500;
+const WAKE_SET_PROMPT = "Say the single word: tock";
+// Phase 10 replaces the bot's role and model and reads both back; phase 11
+// creates then deletes a throwaway bot; phases 12 and 13 rename then delete a
+// bot session through the routes.
+const EDITED_ROLE = "You are the edited atlas. Keep every answer short.";
+const EDITED_MODEL = "deepseek-chat";
+const THROWAWAY_BOT = "throwaway";
 const POLL_MS = 200;
 const MEMORY_TIMEOUT_MS = 45_000;
 const ANSWER_TIMEOUT_MS = 45_000;
 const READY_TIMEOUT_MS = 30_000;
 const SWITCH_TIMEOUT_MS = 60_000;
+const WAKE_SET_TIMEOUT_MS = 30_000;
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxBin = resolveTsx();
@@ -219,6 +246,496 @@ try {
 	} finally {
 		events.abort();
 	}
+
+	// Phase 6: the transcript route reloads a bot's session from the ledger. The
+	// workspace switch in phase 5 threw away the in-memory channel, so the ask is
+	// re-opened by its ledger session id first: the route then replays exactly
+	// that session's turns, which is the reload the web panel does on selection.
+	phase = 6;
+	const listed = await getTranscript(server.port, BOT);
+	assert(
+		listed.sessions.length >= 1,
+		`GET /api/bots/${BOT}/transcript listed ${listed.sessions.length} sessions on the list call`,
+	);
+	const askTurn = parseLedger(await readFile(ledgerPath, "utf8")).turns.find(
+		(turn) => turnHasText(turn, PHASE3_TEXT),
+	);
+	assert(
+		askTurn !== undefined,
+		`no committed turn recorded ${JSON.stringify(PHASE3_TEXT)}`,
+	);
+	const askSessionId = askTurn.sessionId;
+	const openedAsk = await postJson(server.port, "/api/sessions/open", {
+		bot: BOT,
+		id: askSessionId,
+	});
+	assert(
+		openedAsk.status === 200,
+		`POST /api/sessions/open returned ${openedAsk.status}`,
+	);
+	const transcript = await getTranscript(server.port, BOT);
+	assert(
+		transcript.sessions.length >= 1,
+		`GET /api/bots/${BOT}/transcript listed ${transcript.sessions.length} sessions on the replayed call`,
+	);
+	assert(
+		transcript.sessionId === askSessionId,
+		`the replayed session is ${transcript.sessionId}, expected ${askSessionId}`,
+	);
+	assert(
+		transcript.messages.some(
+			(message) =>
+				message.role === "user" &&
+				message.text.toLowerCase().includes(PHASE3_TEXT.toLowerCase()),
+		),
+		`the replayed transcript is missing the ask ${JSON.stringify(PHASE3_TEXT)}`,
+	);
+	console.log(
+		`PASS phase 6 transcript: session ${transcript.sessionId} replayed from the ledger, ${transcript.messages.length} messages including the ask, ${transcript.sessions.length} session summary(ies)`,
+	);
+
+	// Phase 7: read the memory over the route, forget one fact by id, and prove
+	// the ledger on disk dropped it too, not just the API view.
+	phase = 7;
+	const memoryBefore = await getMemory(server.port, BOT);
+	const fact = memoryBefore.entries.find(
+		(entry) => entry.kind === "fact" && entry.text.includes(MEMORY_NEEDLE),
+	);
+	assert(
+		fact !== undefined,
+		`GET /api/bots/${BOT}/memory has no fact containing ${JSON.stringify(MEMORY_NEEDLE)}`,
+	);
+	const forgotten = await postJson(
+		server.port,
+		`/api/bots/${BOT}/memory/forget`,
+		{ id: fact.id },
+	);
+	assert(
+		forgotten.status === 200,
+		`POST /api/bots/${BOT}/memory/forget returned ${forgotten.status}`,
+	);
+	const memoryAfter = await getMemory(server.port, BOT);
+	assert(
+		!memoryAfter.entries.some((entry) => entry.id === fact.id),
+		`the memory list still contains ${fact.id} after forget`,
+	);
+	// The ledger's turns keep the phase-1 remember tool output ("Remembered as
+	// <id>."), so the id can never vanish from the raw bytes; what must vanish is
+	// the memory entry, both as a standalone entry and as a supersedes target.
+	const diskRecord = parseLedger(await readFile(ledgerPath, "utf8"));
+	assert(
+		!diskRecord.memory.some((entry) => entry.id === fact.id),
+		`the ledger on disk still lists ${fact.id} as a memory entry after forget`,
+	);
+	assert(
+		!diskRecord.memory.some((entry) => entry.supersedes.includes(fact.id)),
+		`the ledger on disk still references ${fact.id} in a supersedes list after forget`,
+	);
+	console.log(
+		`PASS phase 7 memory forget: ${memoryBefore.entries.length} -> ${memoryAfter.entries.length} entries, dropped fact ${fact.id} ${JSON.stringify(fact.text)} from the API and the on-disk memory`,
+	);
+
+	// Phase 8: setting the wake writes the project file and re-arms the live
+	// timer. Only a turn committed after the POST proves the timer, not just the
+	// file, was reached.
+	phase = 8;
+	const wakeBaseline = new Set(
+		parseLedger(await readFile(ledgerPath, "utf8")).turns.map(
+			(turn) => turn.id,
+		),
+	);
+	const setWake = await postJson(server.port, `/api/bots/${BOT}/wake`, {
+		everyMs: WAKE_SET_EVERY_MS,
+		prompt: WAKE_SET_PROMPT,
+	});
+	assert(
+		setWake.status === 200,
+		`POST /api/bots/${BOT}/wake returned ${setWake.status}`,
+	);
+	const reWoken = await waitForWakeTurn(
+		ledgerPath,
+		wakeBaseline,
+		WAKE_SET_PROMPT,
+		WAKE_SET_TIMEOUT_MS,
+	);
+	const project = JSON.parse(
+		await readFile(path.join(workspace, "my-agent.json"), "utf8"),
+	) as {
+		robs?: Array<{
+			name?: string;
+			wake?: { everyMs?: number; prompt?: string };
+		}>;
+	};
+	const savedRob = project.robs?.find((entry) => entry.name === BOT);
+	assert(
+		savedRob?.wake?.everyMs === WAKE_SET_EVERY_MS,
+		`my-agent.json wake everyMs is ${savedRob?.wake?.everyMs}, expected ${WAKE_SET_EVERY_MS}`,
+	);
+	assert(
+		savedRob?.wake?.prompt === WAKE_SET_PROMPT,
+		`my-agent.json wake prompt is ${JSON.stringify(savedRob?.wake?.prompt)}, expected ${JSON.stringify(WAKE_SET_PROMPT)}`,
+	);
+	console.log(
+		`PASS phase 8 wake set live: project file re-armed to everyMs=${savedRob?.wake?.everyMs} prompt=${JSON.stringify(savedRob?.wake?.prompt)}, and a later turn carries ${JSON.stringify(`[wake:interval] ${WAKE_SET_PROMPT}`)} after ${reWoken.ms} ms`,
+	);
+
+	// Phase 9: the collision fix. A bot's session list has its own event; the
+	// timer must keep running without a chat `sessions` event, or the sidebar
+	// would replace the workspace chat's list with the bot's. The window stays
+	// open until the tick's own turn is inside it, so the claim cannot pass
+	// vacuously over an idle gap.
+	phase = 9;
+	const collisionEvents = openEvents(server.port);
+	try {
+		await collisionEvents.next((event) => event.type === "hello");
+		const created = await postJson(server.port, "/api/sessions/new", {
+			bot: BOT,
+		});
+		assert(
+			created.status === 200,
+			`POST /api/sessions/new returned ${created.status}`,
+		);
+		const firstSession = await collisionEvents.next(
+			(event) => event.type === "sessions" || event.type === "bot_sessions",
+		);
+		assert(
+			firstSession.type === "bot_sessions" && firstSession.bot === BOT,
+			`the first session event after creating a bot session was ${JSON.stringify(firstSession)}, expected bot_sessions for ${BOT}`,
+		);
+		const seen: ServerEvent[] = [];
+		let woke = false;
+		await collisionEvents.next((event) => {
+			seen.push(event);
+			if (
+				event.type === "notice" &&
+				event.bot === BOT &&
+				event.text === "woke on interval"
+			) {
+				woke = true;
+				return false;
+			}
+			// The window covers a whole tick: it closes only once the
+			// turn the wake delivered is inside it (its agent events or
+			// a status change), so "no chat sessions event" is a claim
+			// over real timer activity.
+			return (
+				woke &&
+				((event.type === "agent_event" && event.bot === BOT) ||
+					(event.type === "bot_status" && event.state.bot === BOT))
+			);
+		});
+		const clobber = seen.filter((event) => event.type === "sessions");
+		assert(
+			clobber.length === 0,
+			`${clobber.length} chat sessions event(s) arrived while the timer ran`,
+		);
+		console.log(
+			`PASS phase 9 collision guard: first session event is bot_sessions for ${BOT} (${firstSession.sessions.length} summary(ies)), and ${seen.length} events through the next interval tick carried no chat sessions event`,
+		);
+	} finally {
+		collisionEvents.abort();
+	}
+
+	// Phase 10: edit the existing bot's role and model in place and read both
+	// back through a fresh hello. The interval wake set in phase 8 must survive
+	// the edit, so the same roster entry carries it again.
+	phase = 10;
+	const edited = await patchJson(server.port, `/api/bots/${BOT}`, {
+		role: EDITED_ROLE,
+		model: EDITED_MODEL,
+	});
+	assert(
+		edited.status === 200,
+		`PATCH /api/bots/${BOT} returned ${edited.status}`,
+	);
+	const editedBody = (await edited.json()) as {
+		ok?: boolean;
+		bot?: { role?: string; model?: string };
+	};
+	assert(editedBody.ok === true, `PATCH /api/bots/${BOT} did not answer ok`);
+	assert(
+		editedBody.bot?.role === EDITED_ROLE &&
+			editedBody.bot?.model === EDITED_MODEL,
+		`PATCH /api/bots/${BOT} answered ${JSON.stringify(editedBody.bot)}`,
+	);
+	const editedHello = await helloOnce(server.port);
+	const editedBot = editedHello.bots.find((bot) => bot.name === BOT);
+	assert(
+		editedBot?.role === EDITED_ROLE,
+		`fresh hello role is ${JSON.stringify(editedBot?.role)}, expected ${JSON.stringify(EDITED_ROLE)}`,
+	);
+	assert(
+		editedBot?.model === EDITED_MODEL,
+		`fresh hello model is ${JSON.stringify(editedBot?.model)}, expected ${JSON.stringify(EDITED_MODEL)}`,
+	);
+	assert(
+		editedBot?.wake?.everyMs === WAKE_SET_EVERY_MS,
+		`the edit dropped the wake: ${JSON.stringify(editedBot?.wake)}`,
+	);
+	console.log(
+		`PASS phase 10 edit: role=${JSON.stringify(editedBot?.role)} model=${editedBot?.model} kept wake everyMs=${editedBot?.wake?.everyMs}`,
+	);
+
+	// Phase 11: create a throwaway bot, then delete it and confirm a fresh hello
+	// no longer lists it and the config entry is gone.
+	phase = 11;
+	const createdThrowaway = await postJson(server.port, "/api/bots", {
+		name: THROWAWAY_BOT,
+		role: "temporary, deleted in the same phase",
+	});
+	assert(
+		createdThrowaway.status === 200,
+		`POST /api/bots for ${THROWAWAY_BOT} returned ${createdThrowaway.status}`,
+	);
+	const beforeDelete = await helloOnce(server.port);
+	assert(
+		beforeDelete.bots.some((bot) => bot.name === THROWAWAY_BOT),
+		`the hello does not list the freshly created ${THROWAWAY_BOT}`,
+	);
+	const deleted = await deleteJson(server.port, `/api/bots/${THROWAWAY_BOT}`);
+	assert(
+		deleted.status === 200,
+		`DELETE /api/bots/${THROWAWAY_BOT} returned ${deleted.status}`,
+	);
+	const deletedBody = (await deleted.json()) as {
+		ok?: boolean;
+		bot?: { name?: string };
+	};
+	assert(
+		deletedBody.ok === true && deletedBody.bot?.name === THROWAWAY_BOT,
+		`DELETE /api/bots/${THROWAWAY_BOT} answered ${JSON.stringify(deletedBody)}`,
+	);
+	const afterDelete = await helloOnce(server.port);
+	assert(
+		!afterDelete.bots.some((bot) => bot.name === THROWAWAY_BOT),
+		`the hello still lists ${THROWAWAY_BOT} after delete`,
+	);
+	const projectAfterDelete = JSON.parse(
+		await readFile(path.join(workspace, "my-agent.json"), "utf8"),
+	) as { robs?: Array<{ name?: string }> };
+	assert(
+		!projectAfterDelete.robs?.some((entry) => entry.name === THROWAWAY_BOT),
+		`my-agent.json still carries ${THROWAWAY_BOT} after delete`,
+	);
+	console.log(
+		`PASS phase 11 delete: created then deleted ${THROWAWAY_BOT}, fresh hello lists [${afterDelete.bots.map((bot) => bot.name).join(", ")}]`,
+	);
+
+	// Phase 12: rename a bot session that already has turns and read the title
+	// back off the next bot_sessions projection. A non-current session is picked
+	// so the rename does not disturb the live channel the interval is writing to.
+	phase = 12;
+	const currentSessionId = (await getTranscript(server.port, BOT)).sessionId;
+	const renameTarget = parseLedger(
+		await readFile(ledgerPath, "utf8"),
+	).turns.find((turn) => turn.sessionId !== currentSessionId);
+	assert(
+		renameTarget !== undefined,
+		`the ledger has no non-current session to rename (current ${currentSessionId})`,
+	);
+	const renameSessionId = renameTarget.sessionId;
+	const RENAME_TITLE = "e2e renamed session";
+	const renameEvents = openEvents(server.port);
+	try {
+		await renameEvents.next((event) => event.type === "hello");
+		const renamed = await postJson(server.port, "/api/sessions/rename", {
+			bot: BOT,
+			id: renameSessionId,
+			title: RENAME_TITLE,
+		});
+		assert(
+			renamed.status === 200,
+			`POST /api/sessions/rename returned ${renamed.status}`,
+		);
+		const projected = await renameEvents.next(
+			(event) =>
+				event.type === "bot_sessions" &&
+				event.bot === BOT &&
+				event.sessions.some((session) => session.id === renameSessionId),
+		);
+		assert(
+			projected.type === "bot_sessions",
+			"the rename emitted no bot_sessions",
+		);
+		const summary = projected.sessions.find(
+			(session) => session.id === renameSessionId,
+		);
+		assert(
+			summary?.title === RENAME_TITLE,
+			`the renamed summary carries title ${JSON.stringify(summary?.title)}, expected ${JSON.stringify(RENAME_TITLE)}`,
+		);
+		console.log(
+			`PASS phase 12 rename bot session: ${renameSessionId} carries title ${JSON.stringify(summary?.title)} in the bot_sessions projection`,
+		);
+	} finally {
+		renameEvents.abort();
+	}
+
+	// Phase 13: delete that session and prove both the projection and the ledger
+	// on disk dropped its turns and its title while keeping every other
+	// session's turns. The interval keeps committing to the current session, so
+	// only the pre-delete turn ids can be counted literally; a deleted-to-empty
+	// ledger would leave that count at zero and fail the assertion.
+	phase = 13;
+	const ledgerBeforeDelete = parseLedger(await readFile(ledgerPath, "utf8"));
+	const keptBefore = ledgerBeforeDelete.turns.filter(
+		(turn) => turn.sessionId !== renameSessionId,
+	);
+	const keptBeforeIds = new Set(keptBefore.map((turn) => turn.id));
+	const survivingIds = new Set(keptBefore.map((turn) => turn.sessionId));
+	assert(
+		keptBefore.length > 0 && survivingIds.size > 0,
+		`the ledger has no session other than ${renameSessionId} to survive, so the kept count proves nothing`,
+	);
+	const deleteEvents = openEvents(server.port);
+	try {
+		await deleteEvents.next((event) => event.type === "hello");
+		const deletedSession = await postJson(server.port, "/api/sessions/delete", {
+			bot: BOT,
+			id: renameSessionId,
+		});
+		assert(
+			deletedSession.status === 200,
+			`POST /api/sessions/delete returned ${deletedSession.status}`,
+		);
+		const projection = await deleteEvents.next(
+			(event) => event.type === "bot_sessions" && event.bot === BOT,
+		);
+		assert(
+			projection.type === "bot_sessions",
+			"the delete emitted no bot_sessions",
+		);
+		assert(
+			!projection.sessions.some((session) => session.id === renameSessionId),
+			`the projection still lists ${renameSessionId} after delete`,
+		);
+		const afterDelete = parseLedger(await readFile(ledgerPath, "utf8"));
+		const stillKept = afterDelete.turns.filter((turn) =>
+			keptBeforeIds.has(turn.id),
+		);
+		assert(
+			stillKept.length === keptBefore.length,
+			`the ledger kept ${stillKept.length} of the ${keptBefore.length} pre-delete turn(s), losing some alongside ${renameSessionId}`,
+		);
+		assert(
+			afterDelete.turns.every((turn) => turn.sessionId !== renameSessionId),
+			`the ledger still holds turns for ${renameSessionId} after delete`,
+		);
+		assert(
+			afterDelete.sessionTitles[renameSessionId] === undefined,
+			`the ledger still holds a title for ${renameSessionId} after delete`,
+		);
+		for (const sessionId of survivingIds) {
+			assert(
+				stillKept.some((turn) => turn.sessionId === sessionId),
+				`the surviving session ${sessionId} lost its turns to the delete`,
+			);
+		}
+		console.log(
+			`PASS phase 13 delete bot session: dropped ${renameSessionId}, the ledger keeps all ${stillKept.length} pre-delete turn(s) across ${survivingIds.size} surviving session(s) [${[...survivingIds].join(", ")}] and the projection lists ${projection.sessions.length} summary(ies)`,
+		);
+	} finally {
+		deleteEvents.abort();
+	}
+
+	// Phase 14: one search spans the workspace chat and every bot's sessions.
+	// The bot word is the phase-8 wake prompt, which the re-armed timer keeps
+	// recording, so a real prior wake turn must surface under a bot session
+	// with the word still in the bounded snippet. The chat half is driven with
+	// its own unique word, so neither half can pass because the other matched.
+	phase = 14;
+	const chatTerm = "quokkaterm";
+	const chatSent = await postJson(server.port, "/api/send", {
+		bot: WORKSPACE_BOT,
+		text: `Answer with exactly one word: ${chatTerm}`,
+	});
+	assert(
+		chatSent.status === 200,
+		`POST /api/send for ${WORKSPACE_BOT} returned ${chatSent.status}`,
+	);
+	const chatDeadline = Date.now() + ANSWER_TIMEOUT_MS;
+	let chatMatch: SearchResponse["chat"][number] | undefined;
+	while (Date.now() < chatDeadline) {
+		const probe = await getSearch(server.port, chatTerm);
+		assert(
+			probe.query === chatTerm,
+			`GET /api/search echoed ${JSON.stringify(probe.query)}, expected ${JSON.stringify(chatTerm)}`,
+		);
+		chatMatch = probe.chat.find((match) =>
+			match.hits.some((candidate) =>
+				candidate.text.toLowerCase().includes(chatTerm.toLowerCase()),
+			),
+		);
+		if (chatMatch !== undefined) break;
+		await delay(POLL_MS);
+	}
+	assert(
+		chatMatch !== undefined,
+		`the search for ${JSON.stringify(chatTerm)} never surfaced a chat match`,
+	);
+	const chatHit = chatMatch.hits.find((candidate) =>
+		candidate.text.toLowerCase().includes(chatTerm.toLowerCase()),
+	);
+	assert(
+		chatHit !== undefined,
+		`the chat match ${chatMatch.sessionId} has no snippet carrying ${JSON.stringify(chatTerm)}`,
+	);
+
+	const searchTerm = "tock";
+	const searchResponse = await getSearch(server.port, searchTerm);
+	assert(
+		searchResponse.query === searchTerm,
+		`GET /api/search echoed ${JSON.stringify(searchResponse.query)}, expected ${JSON.stringify(searchTerm)}`,
+	);
+	const searchedBot = searchResponse.bots.find((entry) => entry.bot === BOT);
+	assert(
+		searchedBot !== undefined,
+		`GET /api/search?q=${searchTerm} has no matches for ${BOT}`,
+	);
+	const sessionMatch = searchedBot.matches.find((match) =>
+		match.hits.some((candidate) =>
+			candidate.text.toLowerCase().includes(searchTerm.toLowerCase()),
+		),
+	);
+	assert(
+		sessionMatch !== undefined,
+		`the search for ${JSON.stringify(searchTerm)} surfaced no ${BOT} hit carrying it`,
+	);
+	const hit = sessionMatch.hits.find((candidate) =>
+		candidate.text.toLowerCase().includes(searchTerm.toLowerCase()),
+	);
+	assert(
+		hit !== undefined,
+		`the matched session ${sessionMatch.sessionId} has no snippet carrying ${JSON.stringify(searchTerm)}`,
+	);
+	// The wake prompt is the user half of the turn, so the first snippet
+	// carrying the word is a `user` message, not an assistant echo.
+	assert(
+		hit.role === "user",
+		`the ${BOT} hit role is ${JSON.stringify(hit.role)}, expected "user"`,
+	);
+	// The hit is a real prior turn of this workspace, not a snippet invented by
+	// the search: the ledger has that exact turn (same session and time) under
+	// the same root, and it is the interval wake the phase-8 timer committed.
+	const searchLedger = parseLedger(await readFile(ledgerPath, "utf8"));
+	const wakeTurn = searchLedger.turns.find(
+		(turn) => turn.sessionId === sessionMatch.sessionId && turn.at === hit.at,
+	);
+	assert(
+		wakeTurn !== undefined,
+		`the search hit session ${sessionMatch.sessionId} at ${hit.at} is not a ledger turn`,
+	);
+	assert(
+		wakeTurn.workspaceRoot === workspace,
+		`the matched turn's workspace is ${wakeTurn.workspaceRoot}, expected ${workspace}`,
+	);
+	assert(
+		wakeTurn.wake === "interval",
+		`the matched turn's wake is ${JSON.stringify(wakeTurn.wake)}, expected "interval"`,
+	);
+	console.log(
+		`PASS phase 14 search: GET /api/search?q=${searchTerm} echoed the query, hit ${BOT} session ${sessionMatch.sessionId} role=${hit.role} wake=${wakeTurn.wake} snippet=${JSON.stringify(hit.text)}, and q=${chatTerm} landed in chat session ${chatMatch.sessionId} role=${chatHit.role} snippet=${JSON.stringify(chatHit.text)}`,
+	);
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);
 	if (server !== undefined) console.error(server.output());
@@ -252,6 +769,45 @@ async function seedSession(root: string, text: string): Promise<string> {
 	const saved = await saveSession(session);
 	if (!saved.ok) throw new Error(saved.error);
 	return session.id;
+}
+
+// GET /user/balance spends no tokens. Only an explicit
+// is_available=false skips: a probe that fails leaves the key
+// merely unverified, so the phases run and report the real error.
+async function probeBalance(
+	apiKey: string,
+): Promise<{ isAvailable: boolean; figure: string } | undefined> {
+	try {
+		const response = await fetch(`${PRESETS.deepseek.baseURL}/user/balance`, {
+			headers: { authorization: `Bearer ${apiKey}` },
+			signal: AbortSignal.timeout(5000),
+		});
+		if (!response.ok) return undefined;
+		const body = (await response.json()) as {
+			balance_infos?: unknown;
+			is_available?: unknown;
+		};
+		if (typeof body.is_available !== "boolean") return undefined;
+		const info = Array.isArray(body.balance_infos)
+			? (body.balance_infos[0] as {
+					currency?: unknown;
+					total_balance?: unknown;
+				})
+			: undefined;
+		const amount =
+			typeof info?.total_balance === "string"
+				? info.total_balance
+				: typeof info?.total_balance === "number"
+					? String(info.total_balance)
+					: "unknown";
+		const currency = typeof info?.currency === "string" ? info.currency : "";
+		return {
+			isAvailable: body.is_available,
+			figure: currency === "" ? amount : `${amount} ${currency}`,
+		};
+	} catch {
+		return undefined;
+	}
 }
 
 // Resolves the workspace's own tsx so the child runs the same source as the
@@ -436,6 +992,24 @@ function openEvents(port: number): EventStream {
 	return { next, abort: () => controller.abort() };
 }
 
+// The hello a fresh event stream opens with: the snapshot the client renders
+// before any tail, read here to prove a route reached the roster.
+async function helloOnce(
+	port: number,
+): Promise<Extract<ServerEvent, { type: "hello" }>> {
+	const events = openEvents(port);
+	try {
+		const event = await events.next((candidate) => candidate.type === "hello");
+		assert(
+			event.type === "hello",
+			"the event stream did not start with a hello",
+		);
+		return event;
+	} finally {
+		events.abort();
+	}
+}
+
 async function waitForMemory(
 	filePath: string,
 	needle: string,
@@ -537,6 +1111,67 @@ async function waitForIntervalTurn(
 	);
 }
 
+// Polls the ledger for an interval turn committed after the wake was set whose
+// recorded user text carries the new prompt, so only a re-armed live timer can
+// satisfy it: the old prompt's turns are all in the baseline.
+async function waitForWakeTurn(
+	filePath: string,
+	baseline: ReadonlySet<string>,
+	prompt: string,
+	timeoutMs: number,
+): Promise<{ ms: number }> {
+	const start = Date.now();
+	const deadline = start + timeoutMs;
+	const needle = `[wake:interval] ${prompt}`;
+	while (Date.now() < deadline) {
+		const record = await readRecord(filePath);
+		if (record !== undefined) {
+			for (const turn of record.turns) {
+				if (baseline.has(turn.id) || turn.wake !== "interval") continue;
+				if (turnHasText(turn, needle)) return { ms: Date.now() - start };
+			}
+		}
+		await delay(POLL_MS);
+	}
+	throw new Error(
+		`no interval turn committed after the wake carried ${JSON.stringify(needle)} within ${timeoutMs} ms`,
+	);
+}
+
+async function getTranscript(
+	port: number,
+	bot: string,
+): Promise<BotTranscriptResponse> {
+	const response = await fetch(`${baseUrl(port)}/api/bots/${bot}/transcript`);
+	assert(
+		response.status === 200,
+		`GET /api/bots/${bot}/transcript returned ${response.status}`,
+	);
+	return (await response.json()) as BotTranscriptResponse;
+}
+
+async function getMemory(
+	port: number,
+	bot: string,
+): Promise<MemoryListResponse> {
+	const response = await fetch(`${baseUrl(port)}/api/bots/${bot}/memory`);
+	assert(
+		response.status === 200,
+		`GET /api/bots/${bot}/memory returned ${response.status}`,
+	);
+	return (await response.json()) as MemoryListResponse;
+}
+
+async function getSearch(port: number, query: string): Promise<SearchResponse> {
+	const encoded = encodeURIComponent(query);
+	const response = await fetch(`${baseUrl(port)}/api/search?q=${encoded}`);
+	assert(
+		response.status === 200,
+		`GET /api/search?q=${encoded} returned ${response.status}`,
+	);
+	return (await response.json()) as SearchResponse;
+}
+
 function assistantText(turn: Turn): string {
 	const parts: string[] = [];
 	for (const message of turn.messages) {
@@ -587,6 +1222,22 @@ function postJson(
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
+}
+
+function patchJson(
+	port: number,
+	route: string,
+	body: unknown,
+): Promise<Response> {
+	return fetch(`${baseUrl(port)}${route}`, {
+		method: "PATCH",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	});
+}
+
+function deleteJson(port: number, route: string): Promise<Response> {
+	return fetch(`${baseUrl(port)}${route}`, { method: "DELETE" });
 }
 
 function baseUrl(port: number): string {

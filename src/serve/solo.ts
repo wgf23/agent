@@ -3,6 +3,7 @@ import type {
 	BotInfo,
 	BotState,
 	ServerEvent,
+	SessionMatch,
 	SessionSummaryInfo,
 	TranscriptMessage,
 } from "../../shared/protocol.js";
@@ -17,11 +18,14 @@ import {
 	createAuthorizer,
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
-import type { Message } from "../providers/types.js";
+import type { ImagePart, Message } from "../providers/types.js";
 import {
+	deleteSession as deleteStoredSession,
+	latestSession,
 	listSessions,
 	loadSession,
 	newSession,
+	renameSession as renameStoredSession,
 	type SessionSummary,
 	type StoredSession,
 	saveSession,
@@ -30,10 +34,19 @@ import {
 import { createTaskTool } from "../tools/task.js";
 import { summarizeArgs } from "../tui/summarize.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
+import { parseImages } from "./images.js";
 import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
+import { MAX_SESSION_MATCHES, sessionMatch } from "./search.js";
 
 export const DEFAULT_BOT = "assistant";
 const DEFAULT_BOT_ROLE = "Your coding agent. Reads, edits, and runs things.";
+
+// One dispatched message: its text and the attachments that go with it. The
+// queue holds the same shape, so an interjection keeps its images.
+interface QueuedMessage {
+	text: string;
+	images: ImagePart[];
+}
 
 // The plan's deferred-start rule: a reconnect replays the current transcript
 // through the hello snapshot, and the live tail through subscribe. Both read
@@ -44,7 +57,9 @@ export class SoloHub extends EventBus implements Hub {
 	private session: StoredSession;
 	private sessions: SessionSummaryInfo[];
 	private status: BotState["status"] = "idle";
-	private readonly queue: string[] = [];
+	// A queued interjection keeps its attachments, so an image sent mid-turn is
+	// never silently dropped by the queue.
+	private readonly queue: QueuedMessage[] = [];
 	private controller: AbortController | null = null;
 	private disposed = false;
 	private approvalSeq = 0;
@@ -86,7 +101,7 @@ export class SoloHub extends EventBus implements Hub {
 		};
 	}
 
-	dispatch(bot: string, text: string): void {
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
 		if (bot !== DEFAULT_BOT) {
 			this.emit({
 				type: "error",
@@ -100,11 +115,19 @@ export class SoloHub extends EventBus implements Hub {
 			this.emit({ type: "error", bot, message: UNCONFIGURED_MESSAGE });
 			return;
 		}
-		if (this.status === "working" || this.status === "waiting_approval") {
-			this.queue.push(text);
+		// A second gate behind the route's: dispatch is also called in-process,
+		// so the caps hold wherever a turn starts.
+		const attachments = parseImages(images);
+		if (!attachments.ok) {
+			this.emit({ type: "error", bot, message: attachments.error });
 			return;
 		}
-		void this.startRun(text);
+		const message = { text, images: attachments.images };
+		if (this.status === "working" || this.status === "waiting_approval") {
+			this.queue.push(message);
+			return;
+		}
+		void this.startRun(message);
 	}
 
 	interrupt(bot: string): void {
@@ -176,13 +199,73 @@ export class SoloHub extends EventBus implements Hub {
 		this.emit({ type: "bot_status", state: this.state() });
 	}
 
+	// Deletes one stored session. Deleting the live one adopts the newest
+	// remaining session, or starts a fresh one when none remains, and announces
+	// it with `session_opened`. False when the file is absent (the route's 404).
+	async deleteSession(bot: string, id: string): Promise<boolean> {
+		if (bot !== DEFAULT_BOT) return false;
+		const deleted = await deleteStoredSession(this.options.workspaceRoot, id);
+		if (!deleted.ok) return false;
+		if (this.session.id === id) {
+			const latest = await latestSession(this.options.workspaceRoot);
+			this.session =
+				latest ??
+				newSession(this.options.workspaceRoot, this.options.settings.model);
+			this.setStatus("idle");
+			this.emit({
+				type: "session_opened",
+				bot: DEFAULT_BOT,
+				sessionId: this.session.id,
+				messages: toTranscript(this.session.messages),
+			});
+		}
+		await this.refreshSessions();
+		return true;
+	}
+
+	// Relabels one stored session. A label change leaves updatedAt and the
+	// messages alone, so the list order does not move.
+	async renameSession(
+		bot: string,
+		id: string,
+		title: string,
+	): Promise<boolean> {
+		if (bot !== DEFAULT_BOT) return false;
+		const renamed = await renameStoredSession(
+			this.options.workspaceRoot,
+			id,
+			title,
+		);
+		if (!renamed.ok) return false;
+		if (this.session.id === id) this.session.title = title;
+		await this.refreshSessions();
+		return true;
+	}
+
+	// The chat half of a search: every stored session for this workspace, newest
+	// first, capped. Read-only, so it never writes and emits no event.
+	async search(query: string, workspaceRoot: string): Promise<SessionMatch[]> {
+		const summaries = await listSessions(workspaceRoot);
+		const matches: SessionMatch[] = [];
+		for (const summary of summaries) {
+			const loaded = await loadSession(workspaceRoot, summary.id);
+			if (!loaded.ok) continue;
+			const match = sessionMatch(loaded.session, query);
+			if (match === null) continue;
+			matches.push(match);
+			if (matches.length >= MAX_SESSION_MATCHES) break;
+		}
+		return matches;
+	}
+
 	async dispose(): Promise<void> {
 		this.disposed = true;
 		this.controller?.abort();
 		this.denyPending("my-agent stopped before the approval was answered.");
 	}
 
-	private async startRun(prompt: string): Promise<void> {
+	private async startRun(message: QueuedMessage): Promise<void> {
+		const { text: prompt, images } = message;
 		if (this.disposed) return;
 		const controller = new AbortController();
 		this.controller = controller;
@@ -234,6 +317,7 @@ export class SoloHub extends EventBus implements Hub {
 				model: this.options.settings.model,
 				workspaceRoot: this.options.workspaceRoot,
 				prompt,
+				images,
 				history: this.session.messages,
 				maxSteps: this.options.settings.maxSteps,
 				thinking,
@@ -246,7 +330,11 @@ export class SoloHub extends EventBus implements Hub {
 				hooks: this.options.hooks,
 				drainInput: () => {
 					const queued = this.queue.splice(0);
-					return queued.map((text) => ({ role: "user", content: text }));
+					return queued.map((message) => ({
+						role: "user" as const,
+						content: message.text,
+						...(message.images.length > 0 ? { images: message.images } : {}),
+					}));
 				},
 				onEvent: (event: AgentEvent) => {
 					this.emit({ type: "agent_event", bot: DEFAULT_BOT, event });
@@ -278,7 +366,14 @@ export class SoloHub extends EventBus implements Hub {
 	private requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
 		const id = `ws-approval-${this.approvalSeq}`;
 		this.approvalSeq += 1;
-		const info: ApprovalRequestInfo = { id, bot: DEFAULT_BOT, ...request };
+		// The workspace chat arms no expiry, so there is no deadline to show;
+		// null says that rather than inventing one.
+		const info: ApprovalRequestInfo = {
+			id,
+			bot: DEFAULT_BOT,
+			expiresAt: null,
+			...request,
+		};
 		return new Promise<ApprovalDecision>((resolve) => {
 			this.pendingApprovals.set(id, { request: info, resolve });
 			this.setStatus("waiting_approval");
@@ -333,6 +428,7 @@ function toSessionSummaryInfo(summary: SessionSummary): SessionSummaryInfo {
 		updatedAt: summary.updatedAt,
 		messageCount: summary.messageCount,
 		firstUserText: summary.firstUserText,
+		title: summary.title,
 	};
 }
 

@@ -11,12 +11,14 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	deleteSession,
 	forkSession,
 	latestSession,
 	listSessions,
 	loadSession,
 	newSession,
 	projectSlug,
+	renameSession,
 	type StoredSession,
 	saveSession,
 	sessionsRoot,
@@ -264,18 +266,21 @@ describe("latestSession and listSessions", () => {
 				updatedAt: 3000,
 				messageCount: 2,
 				firstUserText: "latest words",
+				title: null,
 			},
 			{
 				id: middle.id,
 				updatedAt: 2000,
 				messageCount: 3,
 				firstUserText: "middle words",
+				title: null,
 			},
 			{
 				id: older.id,
 				updatedAt: 1000,
 				messageCount: 1,
 				firstUserText: "first words",
+				title: null,
 			},
 		]);
 	});
@@ -342,6 +347,73 @@ describe("forkSession", () => {
 		expect(forked.ok).toBe(false);
 		if (forked.ok) return;
 		expect(forked.error).toContain("Session file not found");
+	});
+});
+
+describe("deleteSession and renameSession", () => {
+	it("deletes the file and a second delete reports the literal message", async () => {
+		const session = makeSession();
+		await saveSession(session);
+		const filePath = sessionFile(workspaceRoot, session.id);
+		expect((await stat(filePath)).isFile()).toBe(true);
+
+		expect(await deleteSession(workspaceRoot, session.id)).toEqual({
+			ok: true,
+		});
+		expect((await stat(filePath).catch(() => undefined))?.isFile()).not.toBe(
+			true,
+		);
+		expect(await deleteSession(workspaceRoot, session.id)).toEqual({
+			ok: false,
+			error: `Session file not found: ${filePath}`,
+		});
+	});
+
+	it("sets the title, leaves messages and updatedAt alone, and survives a reload", async () => {
+		const session = makeSession({
+			messages: [{ role: "user", content: "hello" }],
+			updatedAt: 1710000000000,
+		});
+		await saveSession(session);
+
+		expect(await renameSession(workspaceRoot, session.id, "A title")).toEqual({
+			ok: true,
+			path: sessionFile(workspaceRoot, session.id),
+		});
+
+		const reloaded = await loadSession(workspaceRoot, session.id);
+		expect(reloaded.ok).toBe(true);
+		if (!reloaded.ok) return;
+		expect(reloaded.session.title).toBe("A title");
+		expect(reloaded.session.messages).toEqual(session.messages);
+		expect(reloaded.session.updatedAt).toBe(session.updatedAt);
+		expect(await listSessions(workspaceRoot)).toEqual([
+			expect.objectContaining({ id: session.id, title: "A title" }),
+		]);
+	});
+
+	it("loads a file written before the title field existed", async () => {
+		const session = makeSession({
+			messages: [{ role: "user", content: "legacy" }],
+		});
+		const filePath = sessionFile(workspaceRoot, session.id);
+		await mkdir(path.dirname(filePath), { recursive: true });
+		const legacy = { ...session };
+		delete (legacy as { title?: string }).title;
+		await writeFile(filePath, JSON.stringify(legacy), "utf8");
+
+		const reloaded = await loadSession(workspaceRoot, session.id);
+		expect(reloaded.ok).toBe(true);
+		if (!reloaded.ok) return;
+		expect(reloaded.session.title).toBeUndefined();
+		expect(reloaded.session.messages).toEqual(session.messages);
+	});
+
+	it("returns the load error for an unknown id", async () => {
+		const renamed = await renameSession(workspaceRoot, "ses_missing", "x");
+		expect(renamed.ok).toBe(false);
+		if (renamed.ok) return;
+		expect(renamed.error).toContain("Session file not found");
 	});
 });
 

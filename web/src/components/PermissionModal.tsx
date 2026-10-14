@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { formatCountdown, isUrgent, remainingSeconds } from "../countdown";
 import type { ApprovalChoice, ApprovalRequestInfo } from "../protocol";
 
 interface Props {
@@ -9,6 +10,17 @@ interface Props {
 
 export default function PermissionModal({ request, queued, onRespond }: Props) {
 	const allowOnceRef = useRef<HTMLButtonElement>(null);
+	// The tick owns its own state so a deadline change (a queued request that
+	// has just been promoted) restarts the countdown rather than inheriting the
+	// previous one's remaining time.
+	const [tick, setTick] = useState(() => Date.now());
+
+	useEffect(() => {
+		if (request.expiresAt === null) return;
+		setTick(Date.now());
+		const handle = setInterval(() => setTick(Date.now()), 1000);
+		return () => clearInterval(handle);
+	}, [request.expiresAt]);
 
 	useEffect(() => {
 		allowOnceRef.current?.focus();
@@ -42,6 +54,19 @@ export default function PermissionModal({ request, queued, onRespond }: Props) {
 						)}
 						{queued > 1 && (
 							<span className="badge">另有 {queued - 1} 项待处理</span>
+						)}
+						{request.expiresAt !== null && (
+							<span
+								className={`badge countdown ${
+									isUrgent(request.expiresAt, tick) ? "urgent" : ""
+								}`}
+								title="服务器会在超时后自动拒绝这次请求"
+								role="timer"
+								aria-live="off"
+							>
+								{formatCountdown(remainingSeconds(request.expiresAt, tick))}
+								<span className="countdown-label">后自动拒绝</span>
+							</span>
 						)}
 					</div>
 				</div>
@@ -91,7 +116,11 @@ export default function PermissionModal({ request, queued, onRespond }: Props) {
 						允许一次
 					</button>
 				</div>
-				<p className="modal-keyhint">按 Esc 拒绝</p>
+				<p className="modal-keyhint">
+					{request.expiresAt === null
+						? "按 Esc 拒绝"
+						: "按 Esc 拒绝 · 超时未答复将自动拒绝"}
+				</p>
 			</div>
 		</div>
 	);

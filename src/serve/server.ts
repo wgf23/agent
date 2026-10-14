@@ -9,15 +9,20 @@ import type {
 	AllowAllBody,
 	ApprovalBody,
 	BotDraft,
+	BotWake,
 	CancelAgentBody,
+	ForgetMemoryBody,
 	InstallAgentBody,
 	InterruptBody,
+	RenameSessionBody,
 	SaveProviderBody,
 	SendBody,
 	ServerEvent,
 	SessionCloseBody,
 	SessionNewBody,
 	SessionOpenBody,
+	SetWakeBody,
+	UpdateBotBody,
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import {
@@ -27,7 +32,9 @@ import {
 } from "../agents/supervisor.js";
 import { resolveConfig } from "../config/resolve.js";
 import type { Provider } from "../providers/types.js";
+import { UnknownRobError } from "../rob/team.js";
 import type { Hub } from "./hub.js";
+import { MAX_SEND_BODY_BYTES, parseImages } from "./images.js";
 import { openBrowser } from "./open-browser.js";
 import {
 	buildProvider,
@@ -35,6 +42,7 @@ import {
 	unconfiguredProvider,
 } from "./runtime.js";
 import type { SettingsService } from "./settings.js";
+import { UnknownMemoryEntryError } from "./team.js";
 import {
 	openWorkspace,
 	WorkspaceHub,
@@ -256,14 +264,25 @@ export async function buildServer(
 		request.raw.on("error", cleanup);
 	});
 
-	app.post("/api/send", (request, reply) => {
-		const body = request.body as Partial<SendBody> | undefined;
-		if (typeof body?.bot !== "string" || typeof body.text !== "string") {
-			return reply.code(400).send({ error: "expected {bot, text}" });
-		}
-		hub.dispatch(body.bot, body.text);
-		return reply.send({ ok: true });
-	});
+	// The only route that accepts attachments, so it is also the only one with
+	// a body limit large enough for a base64 image; every other route keeps the
+	// 1 MiB global limit.
+	app.post(
+		"/api/send",
+		{ bodyLimit: MAX_SEND_BODY_BYTES },
+		(request, reply) => {
+			const body = request.body as Partial<SendBody> | undefined;
+			if (typeof body?.bot !== "string" || typeof body.text !== "string") {
+				return reply.code(400).send({ error: "expected {bot, text}" });
+			}
+			const images = parseImages(body.images);
+			if (!images.ok) {
+				return reply.code(400).send({ error: images.error });
+			}
+			hub.dispatch(body.bot, body.text, images.images);
+			return reply.send({ ok: true });
+		},
+	);
 
 	app.post("/api/interrupt", (request, reply) => {
 		const body = request.body as Partial<InterruptBody> | undefined;
@@ -299,6 +318,25 @@ export async function buildServer(
 
 	app.get("/api/sessions", () => ({ sessions: hub.hello().sessions }));
 
+	// A read-only query is a GET: `q` is a literal, case-insensitive substring,
+	// and a missing or blank one is a 400 rather than a request for everything.
+	app.get("/api/search", async (request, reply) => {
+		const search = hub.search?.bind(hub);
+		if (search === undefined) {
+			return reply.code(501).send({ error: "this server cannot search" });
+		}
+		const query = readSearchQuery(request);
+		if (query === undefined) {
+			return reply.code(400).send({ error: "expected a non-empty q" });
+		}
+		try {
+			const response = await search(query, hub.hello().workspaceRoot);
+			return reply.send(response);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
 	app.post("/api/sessions/new", async (request, reply) => {
 		const body = request.body as Partial<SessionNewBody> | undefined;
 		if (typeof body?.bot !== "string") {
@@ -326,6 +364,54 @@ export async function buildServer(
 		return reply.send({ ok: true });
 	});
 
+	app.post("/api/sessions/delete", async (request, reply) => {
+		const deleteSession = hub.deleteSession?.bind(hub);
+		if (deleteSession === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot delete sessions" });
+		}
+		const body = request.body as Partial<SessionOpenBody> | undefined;
+		if (typeof body?.bot !== "string" || typeof body.id !== "string") {
+			return reply.code(400).send({ error: "expected {bot, id}" });
+		}
+		const deleted = await deleteSession(body.bot, body.id);
+		if (!deleted) {
+			return reply.code(404).send({ error: `Unknown session: ${body.id}` });
+		}
+		return reply.send({ ok: true });
+	});
+
+	app.post("/api/sessions/rename", async (request, reply) => {
+		const renameSession = hub.renameSession?.bind(hub);
+		if (renameSession === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot rename sessions" });
+		}
+		const body = request.body as Partial<RenameSessionBody> | undefined;
+		if (
+			typeof body?.bot !== "string" ||
+			typeof body.id !== "string" ||
+			typeof body.title !== "string"
+		) {
+			return reply.code(400).send({ error: "expected {bot, id, title}" });
+		}
+		// A title is trimmed and bounded here, before any hub sees it, so a blank
+		// or over-long label is a 400 and the stored value is the trimmed one.
+		const title = body.title.trim();
+		if (title === "" || title.length > 120) {
+			return reply
+				.code(400)
+				.send({ error: "title must be 1 to 120 characters" });
+		}
+		const renamed = await renameSession(body.bot, body.id, title);
+		if (!renamed) {
+			return reply.code(404).send({ error: `Unknown session: ${body.id}` });
+		}
+		return reply.send({ ok: true });
+	});
+
 	app.post("/api/bots", async (request, reply) => {
 		const createBot = hub.createBot?.bind(hub);
 		if (createBot === undefined) {
@@ -345,6 +431,161 @@ export async function buildServer(
 			return reply.send({ ok: true, bot });
 		} catch (error) {
 			return reply.code(400).send({ ok: false, error: errorText(error) });
+		}
+	});
+
+	app.delete("/api/bots/:bot", async (request, reply) => {
+		const removeBot = hub.removeBot?.bind(hub);
+		if (removeBot === undefined) {
+			return reply.code(501).send({ error: "this server cannot delete bots" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const removedBot = hub.hello().bots.find((entry) => entry.name === bot);
+		try {
+			const removed = await removeBot(bot);
+			if (!removed || removedBot === undefined) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send({ ok: true, bot: removedBot });
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.patch("/api/bots/:bot", async (request, reply) => {
+		const updateBot = hub.updateBot?.bind(hub);
+		if (updateBot === undefined) {
+			return reply.code(501).send({ error: "this server cannot edit bots" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const body = request.body as Partial<UpdateBotBody> | undefined;
+		if (typeof body?.role !== "string") {
+			return reply.code(400).send({ error: "expected {role}" });
+		}
+		try {
+			const updated = await updateBot(bot, {
+				role: body.role,
+				model: typeof body.model === "string" ? body.model : undefined,
+				backend: body.backend as BotDraft["backend"],
+			});
+			return reply.send({ ok: true, bot: updated });
+		} catch (error) {
+			// An unknown name is the same 404 the other bot routes answer;
+			// any other failure is the draft or the config (400).
+			if (error instanceof UnknownRobError) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.code(400).send({ ok: false, error: errorText(error) });
+		}
+	});
+
+	app.get("/api/bots/:bot/transcript", async (request, reply) => {
+		const readTranscript = hub.readTranscript?.bind(hub);
+		if (readTranscript === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot read bot transcripts" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		try {
+			const transcript = await readTranscript(bot);
+			if (transcript === null) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send(transcript);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.get("/api/bots/:bot/memory", async (request, reply) => {
+		const readMemory = hub.readMemory?.bind(hub);
+		if (readMemory === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot read bot memory" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		try {
+			const memory = await readMemory(bot);
+			if (memory === null) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send(memory);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.post("/api/bots/:bot/memory/forget", async (request, reply) => {
+		const forgetMemory = hub.forgetMemory?.bind(hub);
+		if (forgetMemory === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot edit bot memory" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const body = request.body as Partial<ForgetMemoryBody> | undefined;
+		if (typeof body?.id !== "string" || body.id === "") {
+			return reply.code(400).send({ error: "expected {id}" });
+		}
+		try {
+			const served = await forgetMemory(bot, body.id);
+			if (!served) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send({ ok: true });
+		} catch (error) {
+			// An id the bot's record has no entry for is the same
+			// 404 as an unknown bot; any other error is a 500.
+			if (error instanceof UnknownMemoryEntryError) {
+				return reply.code(404).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.post("/api/bots/:bot/wake", async (request, reply) => {
+		const setWake = hub.setWake?.bind(hub);
+		if (setWake === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot schedule bot wakes" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const body = request.body as Partial<SetWakeBody> | undefined;
+		const wake = parseWake(body);
+		if (wake === INVALID_WAKE) {
+			return reply
+				.code(400)
+				.send({ error: "expected {everyMs, prompt} or {clear: true}" });
+		}
+		try {
+			const served = await setWake(bot, wake);
+			if (!served) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send({ ok: true });
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
 		}
 	});
 
@@ -559,6 +800,42 @@ function requestToken(request: FastifyRequest): string | undefined {
 	}
 	const query = request.query as { token?: unknown };
 	return typeof query.token === "string" ? query.token : undefined;
+}
+
+function botParam(request: FastifyRequest): string | undefined {
+	const params = request.params as { bot?: unknown } | undefined;
+	return typeof params?.bot === "string" && params.bot !== ""
+		? params.bot
+		: undefined;
+}
+
+// The search query is the literal substring to find. A missing value or a blank
+// one is undefined, so the route answers 400 instead of matching everything.
+function readSearchQuery(request: FastifyRequest): string | undefined {
+	const query = request.query as { q?: unknown } | undefined;
+	return typeof query?.q === "string" && query.q.trim() !== ""
+		? query.q
+		: undefined;
+}
+
+// A sentinel so a body that is neither a valid set nor a clear is a 400, never
+// silently coerced into clearing the schedule.
+const INVALID_WAKE = Symbol("invalid-wake");
+
+function parseWake(
+	body: Partial<SetWakeBody> | undefined,
+): BotWake | null | typeof INVALID_WAKE {
+	if (body?.clear === true) return null;
+	if (
+		typeof body?.everyMs === "number" &&
+		Number.isInteger(body.everyMs) &&
+		body.everyMs >= 1000 &&
+		typeof body.prompt === "string" &&
+		body.prompt.length > 0
+	) {
+		return { everyMs: body.everyMs, prompt: body.prompt };
+	}
+	return INVALID_WAKE;
 }
 
 function errorText(error: unknown): string {

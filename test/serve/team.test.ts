@@ -1,13 +1,21 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerEvent } from "../../shared/protocol.js";
-import type { Turn } from "../../src/bot/schema.js";
+import type { MemoryEntry, Turn } from "../../src/bot/schema.js";
+import { type BotStore, createBotStore } from "../../src/bot/store.js";
+import { manualTimer, type Timer } from "../../src/bot/wake.js";
+import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
-import { summarizeSessions, TeamHub } from "../../src/serve/team.js";
+import { MAX_SESSION_MATCHES } from "../../src/serve/search.js";
+import {
+	summarizeSessions,
+	TeamHub,
+	UnknownMemoryEntryError,
+} from "../../src/serve/team.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
@@ -47,7 +55,12 @@ function slowProvider(): Provider {
 	};
 }
 
-function createHub(provider: Provider): TeamHub {
+function createHub(
+	provider: Provider,
+	timer?: Timer,
+	allowAll = createAllowAll(),
+	store?: BotStore,
+): TeamHub {
 	return new TeamHub({
 		workspaceRoot,
 		provider,
@@ -61,7 +74,9 @@ function createHub(provider: Provider): TeamHub {
 		},
 		robs: [{ name: "alpha", role: "a test rob" }],
 		providerEnv: {},
-		allowAll: createAllowAll(),
+		allowAll,
+		timer,
+		...(store === undefined ? {} : { store }),
 	});
 }
 
@@ -69,6 +84,32 @@ function collect(hub: TeamHub): ServerEvent[] {
 	const events: ServerEvent[] = [];
 	hub.subscribe((event) => events.push(event));
 	return events;
+}
+
+// Seeds one ledger turn for a bot session so the projection has something to
+// summarize; the caller names the session so a test can address it.
+async function seedSession(
+	sessionId: string,
+	text: string,
+	seq: number,
+	root: string = workspaceRoot,
+): Promise<void> {
+	const store = createBotStore();
+	const loaded = await store.load("alpha", {
+		role: "a test rob",
+		model: "deepseek-flash",
+	});
+	if (!loaded.ok) throw new Error(loaded.error);
+	const committed = await store.commit(loaded.record, {
+		id: `trn_${seq.toString(16).padStart(32, "0")}`,
+		seq,
+		sessionId,
+		workspaceRoot: root,
+		at: seq,
+		wake: "user",
+		messages: [{ role: "user", content: text }],
+	});
+	if (!committed.ok) throw new Error(committed.error);
 }
 
 async function waitFor(
@@ -105,6 +146,80 @@ describe("TeamHub", () => {
 		await hub.dispose();
 	});
 
+	it("puts the queue's deadline on the approval it emits", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "bash",
+					args: { command: "echo hi" },
+				},
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "go");
+		await waitFor(
+			() => events.some((event) => event.type === "approval_requested"),
+			"the approval request",
+		);
+
+		const requested = events.find(
+			(event) => event.type === "approval_requested",
+		);
+		expect(requested).toMatchObject({
+			type: "approval_requested",
+			request: { bot: "alpha", toolName: "bash" },
+		});
+		const expiresAt =
+			requested?.type === "approval_requested"
+				? requested.request.expiresAt
+				: 0;
+		// The queue armed a window on this request, so the client has a real
+		// deadline to count down rather than an invented one.
+		expect(typeof expiresAt).toBe("number");
+		expect(expiresAt as number).toBeGreaterThan(Date.now());
+
+		hub.resolveApproval(
+			requested?.type === "approval_requested" ? requested.request.id : "",
+			"deny",
+		);
+		await waitFor(
+			() => events.some((event) => event.type === "approval_resolved"),
+			"the approval to resolve",
+		);
+		await hub.dispose();
+	});
+
+	it("refuses a bad attachment with an error event, not a turn", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "ok" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "hi", [
+			{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+		]);
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "alpha",
+			message: expect.stringContaining("image/bmp"),
+		});
+		// Nothing reached the provider: the cap is enforced before the turn.
+		expect(provider.requests).toEqual([]);
+		await hub.dispose();
+	});
+
 	it("reports an unknown bot instead of throwing", async () => {
 		const hub = createHub(slowProvider());
 		const events = collect(hub);
@@ -113,6 +228,78 @@ describe("TeamHub", () => {
 			type: "error",
 			bot: "ghost",
 			message: "Unknown bot: ghost",
+		});
+		await hub.dispose();
+	});
+
+	it("forwards a sub-agent's events to the wire under the parent's name", async () => {
+		writeFileSync(path.join(workspaceRoot, "note.txt"), "hello sub\n");
+		// The parent delegates, the sub-agent reads a file (so a real
+		// tool_started is recorded), then both finish. The mock is shared, so
+		// the turns run in order: parent, sub-agent step 1, sub-agent step 2,
+		// parent step 2.
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "delegate",
+					args: { task: "read a file" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{
+					type: "tool_call",
+					id: "call_2",
+					name: "read_file",
+					args: { path: "note.txt" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "sub result" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "parent done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider, undefined, createAllowAll(true));
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "delegate please");
+		await waitFor(
+			() =>
+				events.some(
+					(event) =>
+						event.type === "subagent" && event.entry.event.type === "done",
+				),
+			"the sub-agent's done event",
+		);
+
+		const subagents = events.filter((event) => event.type === "subagent");
+		// Every entry is addressed to the bot that delegated, so the web keys
+		// its feed by the parent name.
+		expect(subagents.every((event) => event.bot === "alpha")).toBe(true);
+		expect(
+			subagents.find((event) => event.entry.event.type === "tool_started"),
+		).toMatchObject({
+			type: "subagent",
+			bot: "alpha",
+			entry: {
+				parent: "alpha",
+				id: "alpha-sub-0",
+				event: { type: "tool_started", name: "read_file" },
+			},
+		});
+		expect(
+			subagents.find((event) => event.entry.event.type === "done"),
+		).toMatchObject({
+			type: "subagent",
+			bot: "alpha",
+			entry: { parent: "alpha", event: { type: "done", reason: "finished" } },
 		});
 		await hub.dispose();
 	});
@@ -192,10 +379,11 @@ describe("TeamHub", () => {
 
 		await hub.closeSession("alpha", sessionId);
 		const sessionsEvent = events
-			.filter((event) => event.type === "sessions")
+			.filter((event) => event.type === "bot_sessions")
 			.at(-1);
 		expect(sessionsEvent).toMatchObject({
-			type: "sessions",
+			type: "bot_sessions",
+			bot: "alpha",
 			sessions: [
 				{
 					id: sessionId,
@@ -204,6 +392,8 @@ describe("TeamHub", () => {
 				},
 			],
 		});
+		// A bot's list is its own event: the chat's `sessions` must not fire here.
+		expect(events.some((event) => event.type === "sessions")).toBe(false);
 		await hub.dispose();
 	});
 
@@ -249,8 +439,452 @@ describe("TeamHub", () => {
 		] satisfies Turn[];
 
 		expect(summarizeSessions(turns)).toEqual([
-			{ id: "chs_a", updatedAt: 30, messageCount: 4, firstUserText: "hi a" },
-			{ id: "chs_b", updatedAt: 20, messageCount: 3, firstUserText: "hi b" },
+			{
+				id: "chs_a",
+				updatedAt: 30,
+				messageCount: 4,
+				firstUserText: "hi a",
+				title: null,
+			},
+			{
+				id: "chs_b",
+				updatedAt: 20,
+				messageCount: 3,
+				firstUserText: "hi b",
+				title: null,
+			},
 		]);
+	});
+
+	it("searches a bot's turns only for the current workspace", async () => {
+		// Deliberately fewer sessions than MAX_SESSION_MATCHES, so the cap
+		// cannot hide a leak: with the workspace filter absent, the other
+		// workspace's newer turn would appear at the head of this result.
+		await seedSession("chs_a", "needle one", 1);
+		await seedSession("chs_a", "needle two", 2);
+		await seedSession("chs_b", "needle three", 3);
+		const otherWorkspace = mkdtempSync(
+			path.join(tmpdir(), "my-agent-web-team-other-"),
+		);
+		await seedSession("chs_other", "needle other", 100, otherWorkspace);
+
+		const hub = createHub(slowProvider());
+		const results = await hub.search("NEEDLE", workspaceRoot);
+
+		expect(results).toHaveLength(1);
+		expect(results[0].bot).toBe("alpha");
+		const matches = results[0].matches;
+		expect(matches.length).toBeLessThan(MAX_SESSION_MATCHES);
+		// Grouped by session, newest turn first: chs_b's only turn is seq 3,
+		// chs_a's newest is seq 2. The other workspace is nowhere.
+		expect(matches.map((match) => match.sessionId)).toEqual(["chs_b", "chs_a"]);
+		expect(matches[0]).toMatchObject({
+			sessionId: "chs_b",
+			title: null,
+			firstUserText: "needle three",
+		});
+		expect(matches[1].firstUserText).toBe("needle one");
+		expect(matches[1].hits).toHaveLength(2);
+		await hub.dispose();
+	});
+
+	it("caps a bot's matches newest-first, dropping the oldest sessions", async () => {
+		// MAX_SESSION_MATCHES + 1 single-turn sessions all stay under the ring's
+		// cap of 24, so the result cap, not eviction, is what drops the tail.
+		for (let index = 0; index <= MAX_SESSION_MATCHES; index += 1) {
+			await seedSession(`chs_${index}`, `needle ${index}`, index + 1);
+		}
+
+		const hub = createHub(slowProvider());
+		const results = await hub.search("NEEDLE", workspaceRoot);
+
+		expect(results).toHaveLength(1);
+		const matches = results[0].matches;
+		// Literal kept list, newest-first: chs_20 down to chs_1; the oldest
+		// session chs_0 is the one the cap drops. An oldest-first cap would
+		// keep chs_0..chs_19 instead and fail here.
+		const expected = Array.from(
+			{ length: MAX_SESSION_MATCHES },
+			(_, offset) => `chs_${MAX_SESSION_MATCHES - offset}`,
+		);
+		expect(matches.map((match) => match.sessionId)).toEqual(expected);
+		expect(matches.map((match) => match.sessionId)).not.toContain("chs_0");
+		await hub.dispose();
+	});
+
+	it("reads the current transcript without clearing the rob's live history", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "hello there" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		hub.dispatch("alpha", "first");
+		await waitFor(
+			() => provider.requests.length === 1 && hub.states()[0].status === "idle",
+			"the first turn",
+		);
+		const before = hub.states()[0].messageCount;
+
+		const first = await hub.readTranscript("alpha");
+		const second = await hub.readTranscript("alpha");
+		expect(first).not.toBeNull();
+		expect(second).toEqual(first);
+		expect(
+			first?.messages.some(
+				(message) => message.role === "user" && message.text.includes("first"),
+			),
+		).toBe(true);
+		expect(
+			first?.messages.some(
+				(message) =>
+					message.role === "assistant" && message.text === "hello there",
+			),
+		).toBe(true);
+		// The read is a replay; the rob's live transcript is untouched.
+		expect(hub.states()[0].messageCount).toBe(before);
+		expect(await hub.readTranscript("ghost")).toBeNull();
+		await hub.dispose();
+	});
+
+	it("lists a bot's memory and forgets an entry by id", async () => {
+		const store = createBotStore();
+		const loaded = await store.load("alpha", {
+			role: "a test rob",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const fact: MemoryEntry = {
+			id: "mem_00000000000000000000000000000001",
+			at: 1,
+			kind: "fact",
+			text: "the sky is teal",
+			source: { sessionId: null, turnSeq: 0 },
+			supersedes: [],
+		};
+		const seeded = await store.commit(
+			loaded.record,
+			{
+				id: "trn_00000000000000000000000000000001",
+				seq: 1,
+				sessionId: "chs_seed",
+				workspaceRoot,
+				at: 1,
+				wake: "user",
+				messages: [],
+			},
+			{ upsert: [fact], drop: [] },
+		);
+		if (!seeded.ok) throw new Error(seeded.error);
+
+		const hub = createHub(slowProvider());
+		expect(await hub.readMemory("alpha")).toEqual({
+			bot: "alpha",
+			entries: [{ id: fact.id, at: 1, kind: "fact", text: "the sky is teal" }],
+		});
+		expect(await hub.readMemory("ghost")).toBeNull();
+
+		await expect(hub.forgetMemory("ghost", fact.id)).resolves.toBe(false);
+		await hub.forgetMemory("alpha", fact.id);
+		expect((await hub.readMemory("alpha"))?.entries).toEqual([]);
+		const record = readFileSync(
+			path.join(process.env.MY_AGENT_BOTS_DIR ?? "", "alpha.json"),
+			"utf8",
+		);
+		expect(record).not.toContain(fact.id);
+		await hub.dispose();
+	});
+
+	it("refuses to forget a memory id the record does not have", async () => {
+		const store = createBotStore();
+		const loaded = await store.load("alpha", {
+			role: "a test rob",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const fact: MemoryEntry = {
+			id: "mem_00000000000000000000000000000001",
+			at: 1,
+			kind: "fact",
+			text: "the sky is teal",
+			source: { sessionId: null, turnSeq: 0 },
+			supersedes: [],
+		};
+		const seeded = await store.commit(
+			loaded.record,
+			{
+				id: "trn_00000000000000000000000000000001",
+				seq: 1,
+				sessionId: "chs_seed",
+				workspaceRoot,
+				at: 1,
+				wake: "user",
+				messages: [],
+			},
+			{ upsert: [fact], drop: [] },
+		);
+		if (!seeded.ok) throw new Error(seeded.error);
+		const ledger = path.join(process.env.MY_AGENT_BOTS_DIR ?? "", "alpha.json");
+		const before = readFileSync(ledger, "utf8");
+
+		const hub = createHub(slowProvider());
+		await expect(hub.forgetMemory("alpha", "mem_missing")).rejects.toThrow(
+			UnknownMemoryEntryError,
+		);
+		// The failed forget wrote nothing.
+		expect(readFileSync(ledger, "utf8")).toBe(before);
+		// A real id still forgets.
+		await hub.forgetMemory("alpha", fact.id);
+		expect((await hub.readMemory("alpha"))?.entries).toEqual([]);
+		await hub.dispose();
+	});
+
+	it("sets and clears a bot's wake and re-arms the live timer", async () => {
+		writeFileSync(
+			projectFilePath(workspaceRoot),
+			`${JSON.stringify(
+				{ robs: [{ name: "alpha", role: "a test rob" }] },
+				null,
+				2,
+			)}\n`,
+		);
+		const manual = manualTimer();
+		const hub = createHub(slowProvider(), manual.timer);
+
+		await expect(hub.setWake("ghost", null)).resolves.toBe(false);
+
+		await hub.setWake("alpha", { everyMs: 60000, prompt: "tick" });
+		expect(hub.bots()[0].wake).toEqual({ everyMs: 60000, prompt: "tick" });
+		expect(manual.pending()).toEqual([
+			{ bot: "alpha", everyMs: 60000, text: "tick" },
+		]);
+		const saving = JSON.parse(
+			readFileSync(projectFilePath(workspaceRoot), "utf8"),
+		);
+		expect(saving.robs[0].wake).toEqual({ everyMs: 60000, prompt: "tick" });
+
+		await hub.setWake("alpha", null);
+		expect(hub.bots()[0].wake).toBeUndefined();
+		expect(manual.pending()).toEqual([]);
+		const cleared = JSON.parse(
+			readFileSync(projectFilePath(workspaceRoot), "utf8"),
+		);
+		expect(cleared.robs[0].wake).toBeUndefined();
+		await hub.dispose();
+	});
+
+	it("denies a pending approval when its bot is removed", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "bash",
+					args: { command: "echo hi" },
+				},
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "go");
+		await waitFor(
+			() => events.some((event) => event.type === "approval_requested"),
+			"the approval request",
+		);
+		const requested = events.find(
+			(event) => event.type === "approval_requested",
+		);
+		expect(hub.states().find((state) => state.bot === "alpha")?.status).toBe(
+			"waiting_approval",
+		);
+
+		expect(await hub.removeBot("alpha")).toBe(true);
+
+		// The pending approval resolved denied rather than hanging, and the rob
+		// reported the literal stopped status on its way out.
+		expect(events).toContainEqual({
+			type: "approval_resolved",
+			id: requested?.type === "approval_requested" ? requested.request.id : "",
+			decision: "deny",
+		});
+		expect(events).toContainEqual({
+			type: "bot_status",
+			state: expect.objectContaining({ bot: "alpha", status: "stopped" }),
+		});
+		expect(hub.bots()).toEqual([]);
+		expect(hub.states().some((state) => state.bot === "alpha")).toBe(false);
+
+		// A later dispatch to the removed name reports the literal unknown bot.
+		hub.dispatch("alpha", "again");
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "alpha",
+			message: "Unknown bot: alpha",
+		});
+		await hub.dispose();
+	});
+
+	it("deletes a removed bot's ledger", async () => {
+		const store = createBotStore();
+		const loaded = await store.load("alpha", {
+			role: "a test rob",
+			model: "deepseek-flash",
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		await store.commit(loaded.record, {
+			id: "trn_00000000000000000000000000000001",
+			seq: 1,
+			sessionId: "chs_seed",
+			workspaceRoot,
+			at: 1,
+			wake: "user",
+			messages: [],
+		});
+		const ledger = path.join(process.env.MY_AGENT_BOTS_DIR ?? "", "alpha.json");
+		expect(existsSync(ledger)).toBe(true);
+
+		const hub = createHub(slowProvider());
+		expect(await hub.removeBot("ghost")).toBe(false);
+		expect(await hub.removeBot("alpha")).toBe(true);
+		expect(existsSync(ledger)).toBe(false);
+		await hub.dispose();
+	});
+
+	it("surfaces a ledger failure and leaves the roster and events untouched", async () => {
+		const real = createBotStore();
+		const failing: BotStore = {
+			...real,
+			remove: () => Promise.reject(new Error("ledger remove failed")),
+		};
+		const hub = createHub(slowProvider(), undefined, undefined, failing);
+		const events = collect(hub);
+
+		await expect(hub.removeBot("alpha")).rejects.toThrow(
+			"ledger remove failed",
+		);
+
+		// The ledger goes first, so the failure left the bot on the roster and
+		// no `bots` event ever claimed it is gone.
+		expect(hub.bots().map((bot) => bot.name)).toEqual(["alpha"]);
+		expect(events.some((event) => event.type === "bots")).toBe(false);
+		await hub.dispose();
+	});
+
+	it("replaces a bot's role and model and keeps its wake", async () => {
+		writeFileSync(
+			projectFilePath(workspaceRoot),
+			`${JSON.stringify(
+				{
+					robs: [
+						{
+							name: "alpha",
+							role: "a test rob",
+							wake: { everyMs: 60000, prompt: "tick" },
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		const manual = manualTimer();
+		const hub = createHub(slowProvider(), manual.timer);
+
+		const updated = hub.replaceBot("alpha", {
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+			wake: { everyMs: 60000, prompt: "tick" },
+		});
+
+		expect(updated).toEqual({
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+			backend: "native",
+			wake: { everyMs: 60000, prompt: "tick" },
+		});
+		expect(hub.hello().bots[0]).toMatchObject({
+			name: "alpha",
+			role: "the edited rob",
+			model: "deepseek-chat",
+		});
+		expect(hub.hello().bots[0].wake).toEqual({
+			everyMs: 60000,
+			prompt: "tick",
+		});
+		expect(() => hub.replaceBot("ghost", { name: "ghost", role: "x" })).toThrow(
+			"Unknown rob: ghost",
+		);
+		await hub.dispose();
+	});
+
+	it("renames and deletes a bot session through the ledger", async () => {
+		await seedSession("chs_a", "hi a", 1);
+		await seedSession("chs_b", "hi b", 2);
+		const hub = createHub(slowProvider());
+		const events = collect(hub);
+
+		expect(await hub.renameSession("ghost", "chs_a", "x")).toBe(false);
+		expect(await hub.renameSession("alpha", "chs_missing", "x")).toBe(false);
+		expect(await hub.renameSession("alpha", "chs_a", "First")).toBe(true);
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "bot_sessions",
+				bot: "alpha",
+				sessions: expect.arrayContaining([
+					expect.objectContaining({ id: "chs_a", title: "First" }),
+				]),
+			}),
+		);
+
+		// Deleting a non-current session drops it from the projection and never
+		// emits the chat's own event.
+		expect(await hub.deleteSession("alpha", "chs_missing")).toBe(false);
+		expect(await hub.deleteSession("alpha", "chs_b")).toBe(true);
+		const afterDelete = events
+			.filter((event) => event.type === "bot_sessions")
+			.at(-1);
+		const listed =
+			afterDelete?.type === "bot_sessions" ? afterDelete.sessions : [];
+		expect(listed.map((session) => session.id)).toEqual(["chs_a"]);
+		expect(events.some((event) => event.type === "sessions")).toBe(false);
+		await hub.dispose();
+	});
+
+	it("opens a fresh channel when the deleted session is the current one", async () => {
+		await seedSession("chs_a", "hi a", 1);
+		await seedSession("chs_b", "hi b", 2);
+		const hub = createHub(slowProvider());
+		const events = collect(hub);
+
+		await hub.openSession("alpha", "chs_a");
+		const openedBefore = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(openedBefore).toMatchObject({ sessionId: "chs_a" });
+
+		expect(await hub.deleteSession("alpha", "chs_a")).toBe(true);
+
+		const openedAfter = events
+			.filter((event) => event.type === "session_opened")
+			.at(-1);
+		expect(openedAfter?.type).toBe("session_opened");
+		const newId =
+			openedAfter?.type === "session_opened" ? openedAfter.sessionId : "";
+		expect(newId).not.toBe("chs_a");
+		const afterDelete = events
+			.filter((event) => event.type === "bot_sessions")
+			.at(-1);
+		const listed =
+			afterDelete?.type === "bot_sessions" ? afterDelete.sessions : [];
+		expect(listed.map((session) => session.id)).toEqual(["chs_b"]);
+		await hub.dispose();
 	});
 });
