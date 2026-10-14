@@ -58,6 +58,10 @@ export interface Hub {
 	// still reported as the auth error.
 	renameSession: (bot: string, id: string, title: string) => Promise<void>;
 	deleteSession: (bot: string, id: string) => Promise<void>;
+	// A read-only search over the chat and every bot's sessions; a blank query
+	// is not sent, and the answer lands in state.search for the sidebar panel.
+	search: (query: string) => void;
+	clearSearch: () => void;
 	createBot: (draft: BotDraft) => Promise<void>;
 	// Rejects with the server's message so the settings panel can show it
 	// inline; a 401 is still reported as the auth error.
@@ -255,6 +259,29 @@ export function useHub(): Hub {
 		await api.createBot(draft);
 	}, []);
 
+	// A blank query is the server's 400; not sending it gets the same answer
+	// without the round trip. The result lands in the search slice, and a
+	// refusal is both reported (401 -> auth banner) and kept for the panel.
+	const search = useCallback(
+		(query: string) => {
+			const trimmed = query.trim();
+			if (trimmed === "") return;
+			dispatch({ type: "search_started", query: trimmed });
+			api
+				.search(trimmed)
+				.then((results) => dispatch({ type: "search_results", results }))
+				.catch((error) => {
+					reportError(error);
+					dispatch({ type: "search_failed", error: failureMessage(error) });
+				});
+		},
+		[reportError],
+	);
+
+	const clearSearch = useCallback(() => {
+		dispatch({ type: "search_cleared" });
+	}, []);
+
 	const updateBot = useCallback(
 		async (bot: string, draft: UpdateBotBody) => {
 			try {
@@ -367,6 +394,8 @@ export function useHub(): Hub {
 		closeBotSession,
 		renameSession,
 		deleteSession,
+		search,
+		clearSearch,
 		createBot,
 		updateBot,
 		removeBot,

@@ -128,6 +128,13 @@ const invocations: Array<{
 		body: { bot: "b", id: "s1" },
 	},
 	{
+		name: "search",
+		run: (api) => api.search("zed"),
+		path: "/api/search?q=zed",
+		method: "GET",
+		body: undefined,
+	},
+	{
 		name: "loadBotTranscript",
 		run: (api) => api.loadBotTranscript("b"),
 		path: "/api/bots/b/transcript",
@@ -293,6 +300,19 @@ describe("response handling", () => {
 		);
 	});
 
+	it("surfaces the server's refusal on search", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "query is required" }), {
+					status: 400,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.search("")).rejects.toThrow("query is required");
+		await expect(api.search("zed")).rejects.toMatchObject({ status: 400 });
+	});
+
 	it("returns the accepted provider and its warning from saveProvider", async () => {
 		const api = createApi({
 			token: "abc",
@@ -381,6 +401,7 @@ describe("response handling", () => {
 		await expect(api.deleteSession("b", "s1")).rejects.toMatchObject({
 			status: 401,
 		});
+		await expect(api.search("zed")).rejects.toMatchObject({ status: 401 });
 	});
 });
 

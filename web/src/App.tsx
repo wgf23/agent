@@ -132,6 +132,9 @@ export default function App() {
 				onCloseBotSession={hub.closeBotSession}
 				onRenameSession={hub.renameSession}
 				onDeleteSession={hub.deleteSession}
+				search={state.search}
+				onSearch={hub.search}
+				onClearSearch={hub.clearSearch}
 				onCreateBot={() => setDialogOpen(true)}
 				onOpenSettings={hub.openSettings}
 				usage={state.usage}

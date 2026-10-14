@@ -12,6 +12,7 @@ import type {
 	MemoryListResponse,
 	SaveProviderBody,
 	SaveProviderResponse,
+	SearchResponse,
 	SendBody,
 	SettingsResponse,
 	SetWakeBody,
@@ -39,6 +40,9 @@ export interface ApiClient {
 	renameSession(bot: string, id: string, title: string): Promise<void>;
 	// Removes a session and its transcript; irreversible.
 	deleteSession(bot: string, id: string): Promise<void>;
+	// A read-only search over the workspace chat and every bot's sessions; a
+	// blank query is refused by the server and never sent by the hub.
+	search(query: string): Promise<SearchResponse>;
 	createBot(draft: BotDraft): Promise<void>;
 	// Replaces a bot's role, model, and backend; the name rides in the path.
 	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
@@ -215,6 +219,17 @@ export function createApi(options: {
 				`POST /api/sessions/delete failed: ${response.status}`,
 			);
 		}
+	}
+
+	// A read-only search: the query is encoded into the path and the whole
+	// SearchResponse comes back; a refused response keeps its 401 observable.
+	async function search(query: string): Promise<SearchResponse> {
+		const path = `/api/search?q=${encodeURIComponent(query)}`;
+		const response = await request(path);
+		if (!response.ok) {
+			throw await failure(response, `GET ${path} failed: ${response.status}`);
+		}
+		return (await response.json()) as SearchResponse;
 	}
 
 	async function createBot(draft: BotDraft): Promise<void> {
@@ -417,6 +432,7 @@ export function createApi(options: {
 		closeBotSession,
 		renameSession,
 		deleteSession,
+		search,
 		createBot,
 		updateBot,
 		removeBot,
