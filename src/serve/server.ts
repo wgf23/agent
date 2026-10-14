@@ -39,6 +39,9 @@ import type { Provider } from "../providers/types.js";
 import { UnknownRobError } from "../rob/team.js";
 import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
 import {
+	BrowseError,
+	browseDirectories,
+	isInsideBrowseRoots,
 	listDirectory,
 	NotADirectoryError,
 	type PathStat,
@@ -162,6 +165,8 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			token,
 		},
 		{ supervisor },
+		undefined,
+		{ homeDir },
 	);
 
 	try {
@@ -208,6 +213,13 @@ export interface AgentsBinding {
 	supervisor: AgentSupervisor;
 }
 
+// The filesystem browser needs the real home directory, which the hub does not
+// own. A binding seam keeps it out of the hub, and defaulting to absent keeps
+// every existing test (which never hits the route) unchanged.
+export interface FilesBinding {
+	homeDir: string;
+}
+
 // The upload route streams each part straight to disk, so a large file never
 // lands in memory. The multipart parser caps one part at 100 MiB and the route
 // re-checks that count while it streams; the route's body limit sits above the
@@ -241,6 +253,7 @@ export async function buildServer(
 	settings?: SettingsBinding,
 	agents?: AgentsBinding,
 	upload?: UploadLimits,
+	files?: FilesBinding,
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
 	const uploadFileLimit = upload?.fileSize ?? MAX_UPLOAD_FILE_BYTES;
@@ -444,6 +457,45 @@ export async function buildServer(
 		reply.header("Content-Length", String(located.size));
 		reply.header("Content-Disposition", `attachment; filename="${filename}"`);
 		return reply.send(createReadStream(located.path));
+	});
+
+	// A filesystem-style directory browse bounded to the home directory and the
+	// active workspace root, so the picker can walk the disk without gaining
+	// access to anything else. The path is absolute; omitted means home. Only
+	// directories are listed. A path outside every root is a 400 and never
+	// reaches the disk; a missing path is a 404 and an unreadable one a 400.
+	app.get("/api/fs/dirs", async (request, reply) => {
+		if (files === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot browse directories" });
+		}
+		const query = request.query as { path?: unknown };
+		const home = path.resolve(files.homeDir);
+		const roots = [home, path.resolve(hub.hello().workspaceRoot)];
+		const raw = typeof query.path === "string" ? query.path : "";
+		const target = path.resolve(raw === "" ? home : raw);
+		if (!isInsideBrowseRoots(target, roots)) {
+			return reply
+				.code(400)
+				.send({ error: `Path is outside the browse roots: ${raw}` });
+		}
+		// The parent is offered only while it is still inside a root, so 上一级
+		// stops instead of climbing above the home or workspace boundary.
+		const candidate = path.dirname(target);
+		const parent = isInsideBrowseRoots(candidate, roots) ? candidate : null;
+		try {
+			const dirs = await browseDirectories(target);
+			return reply.send({ path: target, parent, dirs });
+		} catch (error) {
+			if (error instanceof NotADirectoryError) {
+				return reply.code(404).send({ error: errorText(error) });
+			}
+			if (error instanceof BrowseError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
+		}
 	});
 
 	// Streams one or more multipart files into a workspace directory. The fields

@@ -7,6 +7,7 @@ import type {
 	CancelAgentBody,
 	FileListResponse,
 	ForgetMemoryBody,
+	FsDirsResponse,
 	ImagePart,
 	InstallAgentBody,
 	InstallAgentStartResponse,
@@ -50,6 +51,10 @@ export interface ApiClient {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	): Promise<FileListResponse>;
+	// A read-only filesystem browse of directories, bounded by the server to
+	// the home directory and the active workspace root; an omitted path means
+	// home. A path outside every root rejects with the server's reason.
+	listDirs(path?: string): Promise<FsDirsResponse>;
 	// The same-origin URL that streams one workspace file, with the token in
 	// the query when the client holds one, so a plain <a download> works even
 	// on a token-gated bind where fetch headers cannot help.
@@ -292,6 +297,22 @@ export function createApi(options: {
 			throw await failure(response, `GET ${route} failed: ${response.status}`);
 		}
 		return (await response.json()) as FileListResponse;
+	}
+
+	// The browse path is absolute and percent-encoded into the query; an
+	// omitted path sends no query at all, which the server reads as home. A
+	// refusal (outside the roots, unreadable) keeps the server's reason and its
+	// status so the modal can show either inline.
+	async function listDirs(path?: string): Promise<FsDirsResponse> {
+		const route =
+			path === undefined
+				? "/api/fs/dirs"
+				: `/api/fs/dirs?path=${encodeURIComponent(path)}`;
+		const response = await request(route);
+		if (!response.ok) {
+			throw await failure(response, `GET ${route} failed: ${response.status}`);
+		}
+		return (await response.json()) as FsDirsResponse;
 	}
 
 	// The download URL is built as a literal string rather than through the
@@ -553,6 +574,7 @@ export function createApi(options: {
 		deleteSession,
 		search,
 		listFiles,
+		listDirs,
 		fileDownloadUrl,
 		upload,
 		createBot,

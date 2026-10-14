@@ -2,6 +2,7 @@ import type { SwitchWorkspaceResult } from "../api";
 import type {
 	BotInfo,
 	BotState,
+	FsDirsResponse,
 	SessionSummaryInfo,
 	UsageTotals,
 	WorkspaceOption,
@@ -25,6 +26,8 @@ interface Props {
 	workspaces: WorkspaceOption[];
 	workspaceRoot: string;
 	onSwitchWorkspace: (root: string) => Promise<SwitchWorkspaceResult>;
+	// Feeds the workspace browser modal; the browser owns the load state.
+	listDirs: (path?: string) => Promise<FsDirsResponse>;
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
 	// A bot's own session list and active id, keyed by bot name; kept separate
@@ -64,6 +67,7 @@ export default function Sidebar(props: Props) {
 		workspaces,
 		workspaceRoot,
 		onSwitchWorkspace,
+		listDirs,
 		sessions,
 		activeSessionId,
 		botSessions,
@@ -114,6 +118,7 @@ export default function Sidebar(props: Props) {
 				<WorkspacePicker
 					workspaces={workspaces}
 					activeRoot={workspaceRoot}
+					listDirs={listDirs}
 					onSwitch={onSwitchWorkspace}
 				/>
 			</div>

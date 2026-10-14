@@ -195,6 +195,13 @@ const invocations: Array<{
 		body: undefined,
 	},
 	{
+		name: "listDirs",
+		run: (api) => api.listDirs("/home/x"),
+		path: "/api/fs/dirs?path=%2Fhome%2Fx",
+		method: "GET",
+		body: undefined,
+	},
+	{
 		name: "loadBotTranscript",
 		run: (api) => api.loadBotTranscript("b"),
 		path: "/api/bots/b/transcript",

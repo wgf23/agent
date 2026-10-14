@@ -114,6 +114,7 @@ export default function App() {
 				workspaces={state.workspaces}
 				workspaceRoot={state.workspaceRoot}
 				onSwitchWorkspace={hub.switchWorkspace}
+				listDirs={hub.listDirs}
 				sessions={state.sessions}
 				activeSessionId={state.activeSessionId}
 				botSessions={state.botSessions}

@@ -11,6 +11,7 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	FileListResponse,
+	FsDirsResponse,
 	ImagePart,
 	SaveProviderBody,
 	ServerEvent,
@@ -75,6 +76,9 @@ export interface Hub {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	) => Promise<FileListResponse>;
+	// A read-only filesystem browse of directories for the workspace modal,
+	// bounded by the server to home and the active root; the modal owns state.
+	listDirs: (path?: string) => Promise<FsDirsResponse>;
 	// The token-aware download URL for one file, so a plain <a download> in
 	// the panel authenticates on a non-loopback bind.
 	fileDownloadUrl: (path: string) => string;
@@ -311,6 +315,8 @@ export function useHub(): Hub {
 		[],
 	);
 
+	const listDirs = useCallback((path?: string) => api.listDirs(path), []);
+
 	// Pure URL construction: no request, so a plain anchor can carry it.
 	const fileDownloadUrl = useCallback(
 		(path: string) => api.fileDownloadUrl(path),
@@ -440,6 +446,7 @@ export function useHub(): Hub {
 		search,
 		clearSearch,
 		listFiles,
+		listDirs,
 		fileDownloadUrl,
 		upload,
 		createBot,
