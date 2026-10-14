@@ -69,6 +69,9 @@ export interface Hub {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	) => Promise<FileListResponse>;
+	// The token-aware download URL for one file, so a plain <a download> in
+	// the panel authenticates on a non-loopback bind.
+	fileDownloadUrl: (path: string) => string;
 	createBot: (draft: BotDraft) => Promise<void>;
 	// Rejects with the server's message so the settings panel can show it
 	// inline; a 401 is still reported as the auth error.
@@ -295,6 +298,12 @@ export function useHub(): Hub {
 		[],
 	);
 
+	// Pure URL construction: no request, so a plain anchor can carry it.
+	const fileDownloadUrl = useCallback(
+		(path: string) => api.fileDownloadUrl(path),
+		[],
+	);
+
 	const updateBot = useCallback(
 		async (bot: string, draft: UpdateBotBody) => {
 			try {
@@ -410,6 +419,7 @@ export function useHub(): Hub {
 		search,
 		clearSearch,
 		listFiles,
+		fileDownloadUrl,
 		createBot,
 		updateBot,
 		removeBot,

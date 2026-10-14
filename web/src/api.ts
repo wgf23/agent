@@ -50,6 +50,10 @@ export interface ApiClient {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	): Promise<FileListResponse>;
+	// The same-origin URL that streams one workspace file, with the token in
+	// the query when the client holds one, so a plain <a download> works even
+	// on a token-gated bind where fetch headers cannot help.
+	fileDownloadUrl(path: string): string;
 	createBot(draft: BotDraft): Promise<void>;
 	// Replaces a bot's role, model, and backend; the name rides in the path.
 	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
@@ -256,6 +260,15 @@ export function createApi(options: {
 		return (await response.json()) as FileListResponse;
 	}
 
+	// The download URL is built as a literal string rather than through the
+	// fetch path: an <a download> navigates the browser itself, so the path and
+	// the token ride percent-encoded in the query. The token is appended only
+	// when present, keeping the loopback URL token-free like eventsUrl.
+	function fileDownloadUrl(path: string): string {
+		const base = `/api/files/download?path=${encodeURIComponent(path)}`;
+		return token === null ? base : `${base}&token=${encodeURIComponent(token)}`;
+	}
+
 	async function createBot(draft: BotDraft): Promise<void> {
 		const response = await request("/api/bots", {
 			method: "POST",
@@ -458,6 +471,7 @@ export function createApi(options: {
 		deleteSession,
 		search,
 		listFiles,
+		fileDownloadUrl,
 		createBot,
 		updateBot,
 		removeBot,

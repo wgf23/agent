@@ -225,6 +225,20 @@ describe("eventsUrl", () => {
 	});
 });
 
+describe("fileDownloadUrl", () => {
+	it("percent-encodes the path and appends the token so a plain link authenticates", () => {
+		expect(createApi({ token: "abc" }).fileDownloadUrl("docs/a b.txt")).toBe(
+			"/api/files/download?path=docs%2Fa%20b.txt&token=abc",
+		);
+	});
+
+	it("stays token-free without a token", () => {
+		expect(createApi({ token: null }).fileDownloadUrl("docs/a b.txt")).toBe(
+			"/api/files/download?path=docs%2Fa%20b.txt",
+		);
+	});
+});
+
 describe("request construction", () => {
 	it("attaches the bearer token to every method", async () => {
 		for (const call of invocations) {
