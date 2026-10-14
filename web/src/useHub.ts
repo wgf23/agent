@@ -82,6 +82,9 @@ export interface Hub {
 	// The token-aware download URL for one file, so a plain <a download> in
 	// the panel authenticates on a non-loopback bind.
 	fileDownloadUrl: (path: string) => string;
+	// The token-aware zip URL for one directory, so a directory row's 打包下载
+	// anchor authenticates the same way.
+	fileArchiveUrl: (path: string) => string;
 	// Uploads one file into a workspace directory and reports its progress; the
 	// panel owns the per-file list and the overwrite retry.
 	upload: (
@@ -329,6 +332,11 @@ export function useHub(): Hub {
 		[],
 	);
 
+	const fileArchiveUrl = useCallback(
+		(path: string) => api.fileArchiveUrl(path),
+		[],
+	);
+
 	// Forwarded whole so the panel keeps the per-file progress callback and the
 	// overwrite retry; a refusal rejects with the server's message.
 	const upload = useCallback(
@@ -470,6 +478,7 @@ export function useHub(): Hub {
 		listFiles,
 		listDirs,
 		fileDownloadUrl,
+		fileArchiveUrl,
 		upload,
 		mkdir,
 		renameEntry,

@@ -21,6 +21,7 @@ import {
 	ChevronRightIcon,
 	FileIcon,
 	FolderIcon,
+	PackageIcon,
 	RefreshIcon,
 	SymlinkIcon,
 } from "./icons";
@@ -35,6 +36,9 @@ interface Props {
 	// A same-origin download URL, token included when the bind needs one, so
 	// the row anchor lets the browser stream the file itself.
 	fileDownloadUrl: (path: string) => string;
+	// A same-origin zip URL for one directory, token included, so a directory
+	// row's 打包下载 anchor downloads the tree itself.
+	fileArchiveUrl: (path: string) => string;
 	// Uploads one file into a directory and reports its own progress; the panel
 	// owns the per-file list and the overwrite retry.
 	upload: (
@@ -96,6 +100,7 @@ interface PendingDelete {
 export default function FileTree({
 	listFiles,
 	fileDownloadUrl,
+	fileArchiveUrl,
 	upload,
 	mkdir,
 	renameEntry,
@@ -582,15 +587,26 @@ export default function FileTree({
 						</span>
 					)}
 					{isDir ? (
-						<button
-							type="button"
-							className="file-upload"
-							title={`上传到 ${entry.name}`}
-							aria-label={`上传到 ${entry.name}`}
-							onClick={() => pickFiles(entry.path)}
-						>
-							<ArrowUpIcon size={13} />
-						</button>
+						<>
+							<button
+								type="button"
+								className="file-upload"
+								title={`上传到 ${entry.name}`}
+								aria-label={`上传到 ${entry.name}`}
+								onClick={() => pickFiles(entry.path)}
+							>
+								<ArrowUpIcon size={13} />
+							</button>
+							<a
+								className="file-download"
+								href={fileArchiveUrl(entry.path)}
+								download={`${entry.name}.zip`}
+								title={`打包下载 ${entry.name}`}
+								aria-label={`打包下载 ${entry.name}`}
+							>
+								<PackageIcon size={13} />
+							</a>
+						</>
 					) : (
 						<a
 							className="file-download"

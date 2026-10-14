@@ -272,6 +272,7 @@ export default function App() {
 			<FileTree
 				listFiles={hub.listFiles}
 				fileDownloadUrl={hub.fileDownloadUrl}
+				fileArchiveUrl={hub.fileArchiveUrl}
 				upload={hub.upload}
 				mkdir={hub.mkdir}
 				renameEntry={hub.renameEntry}

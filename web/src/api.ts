@@ -59,6 +59,9 @@ export interface ApiClient {
 	// the query when the client holds one, so a plain <a download> works even
 	// on a token-gated bind where fetch headers cannot help.
 	fileDownloadUrl(path: string): string;
+	// The same-origin URL that streams a whole workspace directory as a zip,
+	// token included like fileDownloadUrl, so a plain <a download> works.
+	fileArchiveUrl(path: string): string;
 	// Streams one file into `path` (relative, "" is the root) as
 	// multipart/form-data, using XMLHttpRequest so the caller can show upload
 	// progress (fetch has none). Resolves with the per-file result the server
@@ -333,6 +336,13 @@ export function createApi(options: {
 	// when present, keeping the loopback URL token-free like eventsUrl.
 	function fileDownloadUrl(path: string): string {
 		const base = `/api/files/download?path=${encodeURIComponent(path)}`;
+		return token === null ? base : `${base}&token=${encodeURIComponent(token)}`;
+	}
+
+	// The directory counterpart to fileDownloadUrl: the same literal-string
+	// construction, so the anchor carries the path and the token unchanged.
+	function fileArchiveUrl(path: string): string {
+		const base = `/api/files/archive?path=${encodeURIComponent(path)}`;
 		return token === null ? base : `${base}&token=${encodeURIComponent(token)}`;
 	}
 
@@ -621,6 +631,7 @@ export function createApi(options: {
 		listFiles,
 		listDirs,
 		fileDownloadUrl,
+		fileArchiveUrl,
 		upload,
 		mkdir,
 		renameEntry,

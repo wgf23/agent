@@ -327,6 +327,20 @@ describe("fileDownloadUrl", () => {
 	});
 });
 
+describe("fileArchiveUrl", () => {
+	it("percent-encodes the path and appends the token so a plain link authenticates", () => {
+		expect(createApi({ token: "abc" }).fileArchiveUrl("docs/my dir")).toBe(
+			"/api/files/archive?path=docs%2Fmy%20dir&token=abc",
+		);
+	});
+
+	it("stays token-free without a token", () => {
+		expect(createApi({ token: null }).fileArchiveUrl("docs/my dir")).toBe(
+			"/api/files/archive?path=docs%2Fmy%20dir",
+		);
+	});
+});
+
 describe("upload", () => {
 	it("posts FormData with the path, token, and progress", async () => {
 		const calls: XhrCall[] = [];
