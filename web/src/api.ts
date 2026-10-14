@@ -54,6 +54,16 @@ export interface ApiClient {
 	// the query when the client holds one, so a plain <a download> works even
 	// on a token-gated bind where fetch headers cannot help.
 	fileDownloadUrl(path: string): string;
+	// Streams one file into `path` (relative, "" is the root) as
+	// multipart/form-data, using XMLHttpRequest so the caller can show upload
+	// progress (fetch has none). Resolves with the per-file result the server
+	// reports and rejects with the server's reason on a request-level refusal
+	// (an escaped target, an over-cap file, a 5xx).
+	upload(
+		path: string,
+		file: File,
+		options?: UploadOptions,
+	): Promise<UploadResult>;
 	createBot(draft: BotDraft): Promise<void>;
 	// Replaces a bot's role, model, and backend; the name rides in the path.
 	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
@@ -88,6 +98,24 @@ export type SavedProvider = Extract<SaveProviderResponse, { ok: true }>;
 
 export type SwitchWorkspaceResult = { ok: true } | { ok: false; error: string };
 
+// The whole answer to one upload: the relative posix paths that landed and the
+// name plus reason of every part that did not. The route answers `ok: false`
+// with `failed` populated rather than rejecting, so the panel can offer an
+// overwrite for an `exists` reason.
+export interface UploadResult {
+	ok: boolean;
+	written: string[];
+	failed: Array<{ name: string; reason: string }>;
+}
+
+export interface UploadOptions {
+	// Replaces an existing target instead of failing that part with `exists`.
+	overwrite?: boolean;
+	// Called as the request body uploads. `total` is the whole multipart body,
+	// so a caller that uploads one file sees that file's progress.
+	onProgress?: (progress: { loaded: number; total: number }) => void;
+}
+
 type ApiInit = Omit<RequestInit, "headers"> & {
 	headers?: Record<string, string>;
 };
@@ -98,9 +126,15 @@ type ApiInit = Omit<RequestInit, "headers"> & {
 export function createApi(options: {
 	token: string | null;
 	fetchImpl?: typeof fetch;
+	// Injected so a node test can drive upload without a DOM; the browser uses
+	// the real XMLHttpRequest, which is the only way to read upload progress.
+	xhrImpl?: typeof XMLHttpRequest;
 }): ApiClient {
 	const { token } = options;
 	const doFetch = options.fetchImpl ?? fetch;
+	// Read through globalThis so a node import that never uploads cannot throw
+	// on a missing XMLHttpRequest.
+	const Xhr = options.xhrImpl ?? globalThis.XMLHttpRequest;
 
 	function request(path: string, init: ApiInit = {}): Promise<Response> {
 		const { headers, ...rest } = init;
@@ -267,6 +301,54 @@ export function createApi(options: {
 	function fileDownloadUrl(path: string): string {
 		const base = `/api/files/download?path=${encodeURIComponent(path)}`;
 		return token === null ? base : `${base}&token=${encodeURIComponent(token)}`;
+	}
+
+	// One file is posted per request so the caller sees that file's own upload
+	// progress. The body is multipart/form-data and the browser sets its own
+	// boundary, so only the auth header is added. A non-2xx answer rejects with
+	// the server's reason; a 2xx `{ ok: false }` resolves because a per-file
+	// refusal is a result the caller must show, not a dropped request.
+	function upload(
+		path: string,
+		file: File,
+		uploadOptions: UploadOptions = {},
+	): Promise<UploadResult> {
+		return new Promise((resolve, reject) => {
+			const form = new FormData();
+			form.append("path", path);
+			if (uploadOptions.overwrite === true) form.append("overwrite", "1");
+			// The third argument keeps the real name on the part so the server
+			// can validate it.
+			form.append("file", file, file.name);
+
+			const xhr = new Xhr();
+			xhr.open("POST", "/api/files/upload");
+			for (const [key, value] of Object.entries(authHeaders(token))) {
+				xhr.setRequestHeader(key, value);
+			}
+			if (uploadOptions.onProgress !== undefined) {
+				const onProgress = uploadOptions.onProgress;
+				xhr.upload.onprogress = (event) => {
+					onProgress({ loaded: event.loaded, total: event.total });
+				};
+			}
+			xhr.onload = () => {
+				const result = parseUploadResult(xhr.responseText);
+				if (xhr.status >= 200 && xhr.status < 300 && result !== null) {
+					resolve(result);
+					return;
+				}
+				reject(
+					new ApiError(
+						xhr.status,
+						uploadErrorReason(xhr.responseText, xhr.status),
+					),
+				);
+			};
+			xhr.onerror = () => reject(new ApiError(0, "上传失败"));
+			xhr.onabort = () => reject(new ApiError(0, "上传已取消"));
+			xhr.send(form);
+		});
 	}
 
 	async function createBot(draft: BotDraft): Promise<void> {
@@ -472,6 +554,7 @@ export function createApi(options: {
 		search,
 		listFiles,
 		fileDownloadUrl,
+		upload,
 		createBot,
 		updateBot,
 		removeBot,
@@ -482,4 +565,34 @@ export function createApi(options: {
 		cancelAgent,
 		switchWorkspace,
 	};
+}
+
+// A 2xx upload body is the route's UploadResult; anything else (an error object,
+// an HTML error page) is not, so the caller falls back to the status.
+function parseUploadResult(text: string): UploadResult | null {
+	try {
+		const body = JSON.parse(text) as Partial<UploadResult>;
+		if (
+			typeof body.ok === "boolean" &&
+			Array.isArray(body.written) &&
+			Array.isArray(body.failed)
+		) {
+			return body as UploadResult;
+		}
+	} catch {
+		// not JSON: the caller reports the status
+	}
+	return null;
+}
+
+// The server names the request-level refusal (an escaped path, an over-cap
+// file); fall back to the status when the body carries no reason.
+function uploadErrorReason(text: string, status: number): string {
+	try {
+		const body = JSON.parse(text) as { error?: unknown };
+		if (typeof body.error === "string" && body.error !== "") return body.error;
+	} catch {
+		// not JSON: fall through to the status
+	}
+	return `上传失败 (${status})`;
 }

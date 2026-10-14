@@ -22,7 +22,7 @@ green, and the branch is pushed.
 | --- | --- | --- |
 | M1 | Read-only file tree: `src/serve/files.ts` list + `GET /api/files`, `FileTree` panel with lazy load, hidden/ignored toggles | LANDED e42e3a5 |
 | M2 | Download: `GET /api/files/download` streamed, tree download button | LANDED 3f1527f |
-| M3 | Upload: `@fastify/multipart` route, target dir, progress, overwrite policy, refresh | PENDING |
+| M3 | Upload: `@fastify/multipart` route, target dir, progress, overwrite policy, refresh | LANDED 5d88c2d |
 | M4 | Directory browser: `GET /api/fs/dirs` bounded to home + workspace, `WorkspacePicker` modal | PENDING |
 | M5 | Structure ops: mkdir / rename / move / delete with confirm and boundary checks | PENDING |
 | M6 | Folder zip download: `GET /api/files/archive` | PENDING |

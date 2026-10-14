@@ -1,10 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FileListResponse } from "../../shared/protocol.js";
 import type { Hub } from "../../src/serve/hub.js";
-import { buildServer } from "../../src/serve/server.js";
+import {
+	buildServer,
+	type UploadLimits,
+	type UploadResult,
+} from "../../src/serve/server.js";
 
 let root: string;
 
@@ -177,6 +182,205 @@ describe("GET /api/files/download", () => {
 		await expect(directory.json()).resolves.toEqual({
 			error: "directories cannot be downloaded",
 		});
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+});
+
+// Builds a multipart/form-data body in process so no `form-data` dependency is
+// needed. Fields are emitted before file parts, matching the browser FormData
+// order the route relies on.
+function multipartBody(
+	fields: Record<string, string>,
+	files: Array<{ name: string; data: Buffer }>,
+): { body: Uint8Array; contentType: string } {
+	const boundary = "----my-agent-upload-boundary";
+	const chunks: Buffer[] = [];
+	for (const [key, value] of Object.entries(fields)) {
+		chunks.push(
+			Buffer.from(
+				`--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`,
+			),
+		);
+	}
+	for (const file of files) {
+		chunks.push(
+			Buffer.from(
+				`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+			),
+		);
+		chunks.push(file.data);
+		chunks.push(Buffer.from("\r\n"));
+	}
+	chunks.push(Buffer.from(`--${boundary}--\r\n`));
+	// A plain Uint8Array is what fetch's BodyInit accepts; a Node Buffer is the
+	// same bytes and works at runtime, but the DOM type union rejects it.
+	const body = new Uint8Array(
+		chunks.reduce((total, chunk) => total + chunk.length, 0),
+	);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return {
+		body,
+		contentType: `multipart/form-data; boundary=${boundary}`,
+	};
+}
+
+// Starts the server with an optional upload-limit override and returns a poster
+// that builds the body in process. A smaller `fileSize` lets a test drive a 413
+// without posting a real 100 MiB body.
+async function startUploadServer(limits?: UploadLimits) {
+	const app = await buildServer(
+		stubHub(root),
+		undefined,
+		undefined,
+		undefined,
+		limits,
+	);
+	await app.listen({ port: 0, host: "127.0.0.1" });
+	const address = app.server.address();
+	const port =
+		typeof address === "object" && address !== null ? address.port : 0;
+	const post = (
+		fields: Record<string, string>,
+		files: Array<{ name: string; data: Buffer }>,
+	) => {
+		const { body, contentType } = multipartBody(fields, files);
+		return fetch(`http://127.0.0.1:${port}/api/files/upload`, {
+			method: "POST",
+			headers: { "Content-Type": contentType },
+			// Node runs this body fine; the cast is only for the DOM BodyInit union.
+			body: body as unknown as BodyInit,
+		});
+	};
+	return { app, post };
+}
+
+describe("POST /api/files/upload", () => {
+	it("streams a small file into a seeded directory byte-for-byte", async () => {
+		const { app, post } = await startUploadServer();
+		const data = Buffer.from([0, 1, 2, 255, 10, 13]);
+		const response = await post({ path: "src" }, [{ name: "hello.bin", data }]);
+		expect(response.status).toBe(200);
+		const result = (await response.json()) as UploadResult;
+		expect(result).toEqual({
+			ok: true,
+			written: ["src/hello.bin"],
+			failed: [],
+		});
+		const onDisk = await readFile(path.join(root, "src", "hello.bin"));
+		expect(onDisk.equals(data)).toBe(true);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+
+	it("accepts a body over 1 MiB, proving the route is not bound by the global limit", async () => {
+		const size = 3 * 1024 * 1024 + 37;
+		const data = Buffer.alloc(size);
+		for (let i = 0; i < size; i += 1) data[i] = i % 251;
+		const { app, post } = await startUploadServer();
+		const response = await post({ path: "" }, [{ name: "big.bin", data }]);
+		expect(response.status).toBe(200);
+		const result = (await response.json()) as UploadResult;
+		expect(result.ok).toBe(true);
+		expect(result.written).toEqual(["big.bin"]);
+		const onDisk = await readFile(path.join(root, "big.bin"));
+		expect(onDisk.length).toBe(size);
+		expect(onDisk.equals(data)).toBe(true);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	}, 30000);
+
+	it("refuses an existing name, then replaces it with overwrite", async () => {
+		const original = Buffer.from("original");
+		await writeFile(path.join(root, "src", "keep.txt"), original);
+		const { app, post } = await startUploadServer();
+
+		const first = await post({ path: "src" }, [
+			{ name: "keep.txt", data: Buffer.from("second") },
+		]);
+		expect(first.status).toBe(200);
+		const firstResult = (await first.json()) as UploadResult;
+		expect(firstResult.ok).toBe(false);
+		expect(firstResult.written).toEqual([]);
+		expect(firstResult.failed).toEqual([
+			{ name: "keep.txt", reason: "exists" },
+		]);
+		// The original bytes are untouched.
+		const kept = await readFile(path.join(root, "src", "keep.txt"));
+		expect(kept.equals(original)).toBe(true);
+
+		const second = await post({ path: "src", overwrite: "1" }, [
+			{ name: "keep.txt", data: Buffer.from("replaced") },
+		]);
+		expect(second.status).toBe(200);
+		const secondResult = (await second.json()) as UploadResult;
+		expect(secondResult).toEqual({
+			ok: true,
+			written: ["src/keep.txt"],
+			failed: [],
+		});
+		const replaced = await readFile(path.join(root, "src", "keep.txt"));
+		expect(replaced.toString("utf8")).toBe("replaced");
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+
+	it("rejects a traversal name, an escaped target, and an over-cap file", async () => {
+		const { app, post } = await startUploadServer({ fileSize: 64 });
+
+		// `../evil.txt` is refused on the name and never lands.
+		const evil = await post({ path: "src" }, [
+			{ name: "../evil.txt", data: Buffer.from("x") },
+		]);
+		expect(evil.status).toBe(200);
+		const evilResult = (await evil.json()) as UploadResult;
+		expect(evilResult.ok).toBe(false);
+		expect(evilResult.written).toEqual([]);
+		expect(evilResult.failed[0]?.name).toBe("../evil.txt");
+		expect(existsSync(path.join(root, "evil.txt"))).toBe(false);
+		expect(existsSync(path.join(root, "src", "evil.txt"))).toBe(false);
+
+		// A target that escapes the workspace is a 400 before any write.
+		const escaped = await post({ path: "../../etc" }, [
+			{ name: "passwd", data: Buffer.from("x") },
+		]);
+		expect(escaped.status).toBe(400);
+		expect(typeof (await escaped.json()).error).toBe("string");
+
+		// A file over the single-file cap is a 413 and leaves nothing behind.
+		const tooBig = await post({ path: "src" }, [
+			{ name: "big.bin", data: Buffer.alloc(100, 1) },
+		]);
+		expect(tooBig.status).toBe(413);
+		expect(typeof (await tooBig.json()).error).toBe("string");
+		expect(existsSync(path.join(root, "src", "big.bin"))).toBe(false);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+
+	it("answers ok:false with the good file written and the bad name failed", async () => {
+		const good = Buffer.from("good-bytes");
+		const { app, post } = await startUploadServer();
+		const response = await post({ path: "src" }, [
+			{ name: "good.txt", data: good },
+			{ name: "../bad.txt", data: Buffer.from("bad") },
+		]);
+		expect(response.status).toBe(200);
+		const result = (await response.json()) as UploadResult;
+		expect(result.ok).toBe(false);
+		expect(result.written).toEqual(["src/good.txt"]);
+		expect(result.failed.map((entry) => entry.name)).toEqual(["../bad.txt"]);
+		const onDisk = await readFile(path.join(root, "src", "good.txt"));
+		expect(onDisk.equals(good)).toBe(true);
 
 		app.server.closeAllConnections?.();
 		await app.close();

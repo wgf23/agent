@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useReducer } from "react";
-import { ApiError, createApi, type SwitchWorkspaceResult } from "./api";
+import {
+	ApiError,
+	createApi,
+	type SwitchWorkspaceResult,
+	type UploadOptions,
+	type UploadResult,
+} from "./api";
 import { readToken } from "./auth";
 import type {
 	ApprovalChoice,
@@ -72,6 +78,13 @@ export interface Hub {
 	// The token-aware download URL for one file, so a plain <a download> in
 	// the panel authenticates on a non-loopback bind.
 	fileDownloadUrl: (path: string) => string;
+	// Uploads one file into a workspace directory and reports its progress; the
+	// panel owns the per-file list and the overwrite retry.
+	upload: (
+		path: string,
+		file: File,
+		options?: UploadOptions,
+	) => Promise<UploadResult>;
 	createBot: (draft: BotDraft) => Promise<void>;
 	// Rejects with the server's message so the settings panel can show it
 	// inline; a 401 is still reported as the auth error.
@@ -304,6 +317,14 @@ export function useHub(): Hub {
 		[],
 	);
 
+	// Forwarded whole so the panel keeps the per-file progress callback and the
+	// overwrite retry; a refusal rejects with the server's message.
+	const upload = useCallback(
+		(path: string, file: File, options?: UploadOptions) =>
+			api.upload(path, file, options),
+		[],
+	);
+
 	const updateBot = useCallback(
 		async (bot: string, draft: UpdateBotBody) => {
 			try {
@@ -420,6 +441,7 @@ export function useHub(): Hub {
 		clearSearch,
 		listFiles,
 		fileDownloadUrl,
+		upload,
 		createBot,
 		updateBot,
 		removeBot,

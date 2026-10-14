@@ -1,7 +1,11 @@
-import { randomBytes } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
+import { rename, stat, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { type Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { type FastifyInstance, type FastifyRequest, fastify } from "fastify";
 import { type AgentId, agentById } from "../../shared/agents.js";
@@ -33,7 +37,7 @@ import {
 import { resolveConfig } from "../config/resolve.js";
 import type { Provider } from "../providers/types.js";
 import { UnknownRobError } from "../rob/team.js";
-import { PathEscapeError } from "../util/paths.js";
+import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
 import {
 	listDirectory,
 	NotADirectoryError,
@@ -204,13 +208,57 @@ export interface AgentsBinding {
 	supervisor: AgentSupervisor;
 }
 
+// The upload route streams each part straight to disk, so a large file never
+// lands in memory. The multipart parser caps one part at 100 MiB and the route
+// re-checks that count while it streams; the route's body limit sits above the
+// single-file cap so the server's global 1 MiB limit never rejects a legal
+// streaming body.
+export const MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024;
+const UPLOAD_FILES_LIMIT = 20;
+const UPLOAD_FIELDS_LIMIT = 10;
+const MAX_UPLOAD_BODY_BYTES = MAX_UPLOAD_FILE_BYTES + 1024 * 1024;
+
+// A test seam: tightening a limit lets a test drive a 413 without posting a
+// real 100 MiB body. Production leaves every field at its default.
+export interface UploadLimits {
+	fileSize?: number;
+	files?: number;
+	fields?: number;
+}
+
+// What one upload request answers: every relative posix path that landed, and
+// the name plus reason of every part that did not. `ok` is true only when the
+// two lists account for every part and `failed` is empty.
+export interface UploadResult {
+	ok: boolean;
+	written: string[];
+	failed: Array<{ name: string; reason: string }>;
+}
+
 export async function buildServer(
 	hub: Hub,
 	webDist: string | undefined,
 	settings?: SettingsBinding,
 	agents?: AgentsBinding,
+	upload?: UploadLimits,
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
+	const uploadFileLimit = upload?.fileSize ?? MAX_UPLOAD_FILE_BYTES;
+
+	// The parser is registered before the routes so `request.parts()` is
+	// decorated. A file over the part cap is flagged on its stream rather than
+	// thrown, so the route can answer 413 itself and clean up its temp file.
+	await app.register(fastifyMultipart, {
+		throwFileSizeLimit: false,
+		// Keep the client's raw filename so a traversal is seen and refused here
+		// rather than silently flattened to its basename by the parser.
+		preservePath: true,
+		limits: {
+			fileSize: uploadFileLimit,
+			files: upload?.files ?? UPLOAD_FILES_LIMIT,
+			fields: upload?.fields ?? UPLOAD_FIELDS_LIMIT,
+		},
+	});
 
 	const token = settings?.token;
 	if (token !== undefined) {
@@ -397,6 +445,92 @@ export async function buildServer(
 		reply.header("Content-Disposition", `attachment; filename="${filename}"`);
 		return reply.send(createReadStream(located.path));
 	});
+
+	// Streams one or more multipart files into a workspace directory. The fields
+	// arrive before the file parts: `path` is the relative target directory ("" is
+	// the root) and `overwrite` opts into replacing an existing name. Each file
+	// part is checked by name, streamed to a temp sibling in the target directory,
+	// then renamed into place over any existing file. A bad name or an existing
+	// name is a per-file reason, so one bad part does not cost the good ones; an
+	// escaped target or an over-cap file fails the whole request (400/413).
+	app.post(
+		"/api/files/upload",
+		{ bodyLimit: MAX_UPLOAD_BODY_BYTES },
+		async (request, reply) => {
+			if (typeof request.isMultipart !== "function" || !request.isMultipart()) {
+				return reply.code(400).send({ error: "expected multipart/form-data" });
+			}
+			const workspaceRoot = hub.hello().workspaceRoot;
+			const written: string[] = [];
+			const failed: UploadResult["failed"] = [];
+			let relDir = "";
+			let targetDir: string;
+			let overwrite = false;
+			try {
+				targetDir = resolveInWorkspace(workspaceRoot, relDir);
+			} catch (error) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+
+			try {
+				for await (const part of request.parts()) {
+					if (part.type === "field") {
+						if (part.fieldname === "path" && typeof part.value === "string") {
+							relDir = part.value;
+							targetDir = resolveInWorkspace(workspaceRoot, relDir);
+						} else if (part.fieldname === "overwrite") {
+							overwrite = isTruthyFlag(part.value);
+						}
+						continue;
+					}
+
+					const file = part.file;
+					const nameError = uploadNameError(part.filename);
+					if (nameError !== null) {
+						// The name is refused, but busboy will not yield the next
+						// part until this file stream is consumed.
+						await drainStream(file);
+						failed.push({ name: part.filename, reason: nameError });
+						continue;
+					}
+
+					// The stored name is the basename, never a client-supplied path.
+					const name = path.basename(part.filename);
+					const saved = await saveUpload(
+						file,
+						targetDir,
+						name,
+						uploadFileLimit,
+					);
+					if ("tooLarge" in saved) {
+						return reply
+							.code(413)
+							.send({ error: "file exceeds the upload size limit" });
+					}
+					const targetPath = path.join(targetDir, name);
+					if (!overwrite && (await pathExists(targetPath))) {
+						await unlink(saved.tempPath).catch(() => undefined);
+						failed.push({ name, reason: "exists" });
+						continue;
+					}
+					await rename(saved.tempPath, targetPath);
+					written.push(joinRelative(relDir, name));
+				}
+			} catch (error) {
+				if (error instanceof PathEscapeError) {
+					return reply.code(400).send({ error: errorText(error) });
+				}
+				return reply.code(httpStatus(error)).send({ error: errorText(error) });
+			}
+
+			const result: UploadResult = {
+				ok: failed.length === 0,
+				written,
+				failed,
+			};
+			return reply.send(result);
+		},
+	);
 
 	app.post("/api/sessions/new", async (request, reply) => {
 		const body = request.body as Partial<SessionNewBody> | undefined;
@@ -933,6 +1067,117 @@ function parseWake(
 		return { everyMs: body.everyMs, prompt: body.prompt };
 	}
 	return INVALID_WAKE;
+}
+
+// The route's own over-cap signal: the multipart parser truncates a part at
+// the same limit, and the counting transform here raises this only if it ever
+// sees more, keeping the cap enforced on the bytes that actually reach disk.
+class UploadTooLargeError extends Error {
+	constructor() {
+		super("upload exceeds the single-file limit");
+		this.name = "UploadTooLargeError";
+	}
+}
+
+// Streams one file part to a temp sibling in the target directory until it
+// ends, counting bytes. The temp name is unique, so two uploads of the same
+// name never collide and a crash never leaves a half-written target; the
+// caller renames it into place only after a clean finish. On any failure the
+// temp file is removed and the error rethrown.
+async function saveUpload(
+	file: Readable & { truncated: boolean },
+	targetDir: string,
+	name: string,
+	maxBytes: number,
+): Promise<{ tempPath: string } | { tooLarge: true }> {
+	const tempPath = path.join(targetDir, `.${name}.${randomUUID()}.upload`);
+	let bytes = 0;
+	const counter = new Transform({
+		transform(chunk: Buffer, _encoding, callback) {
+			bytes += chunk.length;
+			if (bytes > maxBytes) {
+				callback(new UploadTooLargeError());
+				return;
+			}
+			callback(null, chunk);
+		},
+	});
+
+	try {
+		await pipeline(file, counter, createWriteStream(tempPath, { mode: 0o600 }));
+	} catch (error) {
+		await unlink(tempPath).catch(() => undefined);
+		if (error instanceof UploadTooLargeError) return { tooLarge: true };
+		throw error;
+	}
+
+	// The parser truncates and flags a part that crossed its limit, so a clean
+	// pipeline can still have stopped short of the real bytes.
+	if (file.truncated) {
+		await unlink(tempPath).catch(() => undefined);
+		return { tooLarge: true };
+	}
+	return { tempPath };
+}
+
+// A refused file still has to be read: busboy will not yield the next part
+// until the current file stream reaches its end.
+async function drainStream(stream: Readable): Promise<void> {
+	for await (const chunk of stream) {
+		void chunk;
+	}
+}
+
+// A client filename is never trusted as a path: an empty name, a traversal
+// token, or any name carrying a separator or NUL is refused before a write.
+// The basename is taken only after this passes, so an accepted name can never
+// name a directory.
+function uploadNameError(rawName: string): string | null {
+	if (rawName === "") return "file name is empty";
+	if (rawName === "." || rawName === "..") return "file name is not allowed";
+	if (
+		rawName.includes("/") ||
+		rawName.includes("\\") ||
+		rawName.includes("\0")
+	) {
+		return "file name must not contain a path separator";
+	}
+	return null;
+}
+
+// The overwrite check only needs to know whether the target is already there; a
+// missing path is false and any other stat failure propagates so the route can
+// report it.
+async function pathExists(target: string): Promise<boolean> {
+	try {
+		await stat(target);
+		return true;
+	} catch (error) {
+		if (isMissingPathError(error)) return false;
+		throw error;
+	}
+}
+
+function isMissingPathError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null || !("code" in error)) {
+		return false;
+	}
+	const code = (error as { code?: unknown }).code;
+	return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function joinRelative(base: string, name: string): string {
+	return base === "" ? name : `${base}/${name}`;
+}
+
+// Multipart limit errors carry their own status (413 for too many files or
+// fields); anything else without one is a server failure.
+function httpStatus(error: unknown): number {
+	if (typeof error === "object" && error !== null && "statusCode" in error) {
+		const status = (error as { statusCode?: unknown }).statusCode;
+		if (typeof status === "number") return status;
+	}
+	return 500;
 }
 
 function errorText(error: unknown): string {
