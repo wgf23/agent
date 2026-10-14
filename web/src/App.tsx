@@ -3,6 +3,7 @@ import AgentsPanel from "./components/AgentsPanel";
 import BotHeader from "./components/BotHeader";
 import BotMemoryPanel from "./components/BotMemoryPanel";
 import BotPlaza from "./components/BotPlaza";
+import BotSettingsPanel from "./components/BotSettingsPanel";
 import Composer from "./components/Composer";
 import MessageList from "./components/MessageList";
 import NewBotDialog from "./components/NewBotDialog";
@@ -24,12 +25,13 @@ const CHAT_BOT: BotInfo = {
 	backend: "native",
 };
 
-type BotTab = "chat" | "memory" | "wake";
+type BotTab = "chat" | "memory" | "wake" | "settings";
 
 const BOT_TABS: readonly { id: BotTab; label: string }[] = [
 	{ id: "chat", label: "对话" },
 	{ id: "memory", label: "记忆" },
 	{ id: "wake", label: "唤醒" },
+	{ id: "settings", label: "设置" },
 ];
 
 export default function App() {
@@ -231,12 +233,26 @@ export default function App() {
 								onForget={hub.forgetMemory}
 								onRefresh={() => hub.selectBot(currentBot.name)}
 							/>
-						) : (
+						) : tab === "wake" ? (
 							<WakeEditor
 								key={`${currentBot.name}:wake`}
 								bot={currentBot.name}
 								wake={selectedRob.wake ?? null}
 								onSetWake={hub.setWake}
+							/>
+						) : (
+							<BotSettingsPanel
+								key={currentBot.name}
+								bot={selectedRob}
+								agents={state.agents}
+								onUpdateBot={hub.updateBot}
+								onRemoveBot={async (name) => {
+									// A successful delete leaves the bot view; the hub
+									// has already dropped it from the roster.
+									await hub.removeBot(name);
+									openBot(null);
+								}}
+								onInstall={hub.installAgent}
 							/>
 						)}
 					</section>

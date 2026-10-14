@@ -11,6 +11,7 @@ import {
 	applyAgentEvent,
 	clientReducer,
 	initialState,
+	robBots,
 } from "../../web/src/state";
 
 // The reducer is the whole SSE-to-UI mapping, so these tests call it the way
@@ -120,6 +121,42 @@ describe("clientReducer", () => {
 		expect(state.bots.map((bot) => bot.name)).toEqual(["writer", "reader"]);
 		expect(state.bots.some((bot) => bot.name === "assistant")).toBe(false);
 		expect(state.botStates.reader.status).toBe("idle");
+	});
+
+	// Deleting a bot makes the server re-emit the roster without it; the reducer
+	// must drop it so the App can no longer resolve the selected name.
+	it("drops a deleted bot on the next bots event so it cannot stay selected", () => {
+		const selected = "reader";
+		const added = apply([
+			hello,
+			{
+				type: "bots",
+				bots: [
+					...hello.bots,
+					{
+						name: selected,
+						role: "reads docs",
+						model: "deepseek-flash",
+						backend: "native",
+					},
+				],
+				states: hello.states,
+			},
+		]);
+		expect(robBots(added.bots).some((bot) => bot.name === selected)).toBe(true);
+
+		const afterDelete = clientReducer(added, {
+			type: "server",
+			event: { type: "bots", bots: hello.bots, states: hello.states },
+		});
+		expect(afterDelete.bots.some((bot) => bot.name === selected)).toBe(false);
+		expect(robBots(afterDelete.bots).some((bot) => bot.name === selected)).toBe(
+			false,
+		);
+		// The App looks the selected name up in the roster; it is gone now.
+		expect(
+			robBots(afterDelete.bots).find((bot) => bot.name === selected),
+		).toBeUndefined();
 	});
 
 	it("accumulates streaming text and tool calls onto one assistant message", () => {

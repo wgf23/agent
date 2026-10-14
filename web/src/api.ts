@@ -15,6 +15,7 @@ import type {
 	SendBody,
 	SettingsResponse,
 	SetWakeBody,
+	UpdateBotBody,
 } from "./protocol";
 
 export interface ApiClient {
@@ -34,6 +35,10 @@ export interface ApiClient {
 	setWake(bot: string, body: SetWakeBody): Promise<void>;
 	closeBotSession(bot: string, id: string): Promise<void>;
 	createBot(draft: BotDraft): Promise<void>;
+	// Replaces a bot's role, model, and backend; the name rides in the path.
+	updateBot(bot: string, draft: UpdateBotBody): Promise<void>;
+	// Removes a bot's configuration and its memory; irreversible.
+	removeBot(bot: string): Promise<void>;
 	loadSettings(): Promise<SettingsResponse>;
 	// Returns the accepted provider so the caller can apply it immediately
 	// instead of waiting for the server's broadcast.
@@ -197,6 +202,31 @@ export function createApi(options: {
 		}
 	}
 
+	async function updateBot(bot: string, draft: UpdateBotBody): Promise<void> {
+		const path = `/api/bots/${encodeURIComponent(bot)}`;
+		const response = await request(path, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(draft),
+		});
+		if (!response.ok) {
+			// The server's reason (an unknown bot, a refused draft) is what the
+			// settings panel shows inline; failure keeps the 401 observable.
+			throw await failure(response, `PATCH ${path} failed: ${response.status}`);
+		}
+	}
+
+	async function removeBot(bot: string): Promise<void> {
+		const path = `/api/bots/${encodeURIComponent(bot)}`;
+		const response = await request(path, { method: "DELETE" });
+		if (!response.ok) {
+			throw await failure(
+				response,
+				`DELETE ${path} failed: ${response.status}`,
+			);
+		}
+	}
+
 	async function loadSettings(): Promise<SettingsResponse> {
 		const response = await request("/api/settings");
 		if (!response.ok) {
@@ -349,6 +379,8 @@ export function createApi(options: {
 		setWake,
 		closeBotSession,
 		createBot,
+		updateBot,
+		removeBot,
 		loadSettings,
 		saveProvider,
 		loadAgents,

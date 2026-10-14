@@ -8,6 +8,7 @@ import type {
 	SaveProviderBody,
 	ServerEvent,
 	SetWakeBody,
+	UpdateBotBody,
 } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
@@ -54,6 +55,12 @@ export interface Hub {
 	setWake: (bot: string, body: SetWakeBody) => Promise<void>;
 	closeBotSession: (bot: string, id: string) => void;
 	createBot: (draft: BotDraft) => Promise<void>;
+	// Rejects with the server's message so the settings panel can show it
+	// inline; a 401 is still reported as the auth error.
+	updateBot: (bot: string, draft: UpdateBotBody) => Promise<void>;
+	// Resolves once the server accepts; the hub drops the bot from the roster
+	// immediately so a deleted bot cannot stay selected, then rejects on failure.
+	removeBot: (bot: string) => Promise<void>;
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
 	closeSettings: () => void;
@@ -215,6 +222,45 @@ export function useHub(): Hub {
 		await api.createBot(draft);
 	}, []);
 
+	const updateBot = useCallback(
+		async (bot: string, draft: UpdateBotBody) => {
+			try {
+				await api.updateBot(bot, draft);
+			} catch (error) {
+				// Same as setWake: a non-401 refusal lands on the error banner.
+				// The panel also owns the message, so the promise is handed back
+				// rather than dropped.
+				reportError(error);
+				throw error instanceof Error ? error : new Error(failureMessage(error));
+			}
+		},
+		[reportError],
+	);
+
+	const removeBot = useCallback(
+		async (bot: string) => {
+			try {
+				await api.removeBot(bot);
+				// The server broadcasts the fresh roster, but drop the bot here too
+				// so a deleted bot cannot stay selected until that event arrives.
+				dispatch({
+					type: "server",
+					event: {
+						type: "bots",
+						bots: state.bots.filter((entry) => entry.name !== bot),
+						states: Object.values(state.botStates).filter(
+							(entry) => entry.bot !== bot,
+						),
+					},
+				});
+			} catch (error) {
+				reportError(error);
+				throw error instanceof Error ? error : new Error(failureMessage(error));
+			}
+		},
+		[reportError, state.bots, state.botStates],
+	);
+
 	const loadSettings = useCallback(async () => {
 		const body = await api.loadSettings();
 		dispatch({ type: "settings_presets", presets: body.presets });
@@ -287,6 +333,8 @@ export function useHub(): Hub {
 		setWake,
 		closeBotSession,
 		createBot,
+		updateBot,
+		removeBot,
 		loadSettings,
 		openSettings,
 		closeSettings,

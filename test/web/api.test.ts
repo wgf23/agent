@@ -149,6 +149,20 @@ const invocations: Array<{
 		body: { name: "b", role: "r" },
 	},
 	{
+		name: "updateBot",
+		run: (api) => api.updateBot("atlas", { role: "editor" }),
+		path: "/api/bots/atlas",
+		method: "PATCH",
+		body: { role: "editor" },
+	},
+	{
+		name: "removeBot",
+		run: (api) => api.removeBot("atlas"),
+		path: "/api/bots/atlas",
+		method: "DELETE",
+		body: undefined,
+	},
+	{
 		name: "loadSettings",
 		run: (api) => api.loadSettings(),
 		path: "/api/settings",
@@ -233,6 +247,21 @@ describe("response handling", () => {
 		);
 	});
 
+	it("surfaces the server's error on updateBot and removeBot", async () => {
+		const api = createApi({
+			token: "abc",
+			fetchImpl: (async () =>
+				new Response(JSON.stringify({ error: "Unknown bot: atlas" }), {
+					status: 404,
+					headers: { "Content-Type": "application/json" },
+				})) as typeof fetch,
+		});
+		await expect(api.updateBot("atlas", { role: "r" })).rejects.toThrow(
+			"Unknown bot: atlas",
+		);
+		await expect(api.removeBot("atlas")).rejects.toThrow("Unknown bot: atlas");
+	});
+
 	it("returns the accepted provider and its warning from saveProvider", async () => {
 		const api = createApi({
 			token: "abc",
@@ -309,6 +338,10 @@ describe("response handling", () => {
 		await expect(api.setWake("b", { clear: true })).rejects.toMatchObject({
 			status: 401,
 		});
+		await expect(api.updateBot("b", { role: "r" })).rejects.toMatchObject({
+			status: 401,
+		});
+		await expect(api.removeBot("b")).rejects.toMatchObject({ status: 401 });
 	});
 });
 
