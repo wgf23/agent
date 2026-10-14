@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { agentByCommand, missingCommandMessage } from "../../shared/agents.js";
 import {
 	type ApprovalChoice,
 	type BotDraft,
@@ -11,12 +10,10 @@ import {
 	type UpdateBotBody,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
-import type { AgentSupervisor } from "../agents/supervisor.js";
 import { addRob, removeRob, updateRob } from "../config/project-file.js";
 import type { ImagePart } from "../providers/types.js";
 import { UnknownRobError } from "../rob/team.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
-import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
 import {
 	type ApplyRuntimeResult,
@@ -43,21 +40,18 @@ export class CompositeHub extends EventBus implements Hub {
 	private readonly robs: TeamHub;
 	private readonly workspaceRoot: string;
 	private readonly runtime: ProviderRuntime | undefined;
-	private readonly agents: AgentSupervisor | undefined;
 
 	constructor(
 		workspace: SoloHub,
 		robs: TeamHub,
 		workspaceRoot: string,
 		runtime?: ProviderRuntime,
-		agents?: AgentSupervisor,
 	) {
 		super();
 		this.workspace = workspace;
 		this.robs = robs;
 		this.workspaceRoot = workspaceRoot;
 		this.runtime = runtime;
-		this.agents = agents;
 		this.workspace.subscribe((event) => this.emit(event));
 		this.robs.subscribe((event) => this.emit(event));
 	}
@@ -174,7 +168,7 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 
 	async createBot(draft: BotDraft): Promise<BotInfo> {
-		const parsed = await this.validatedDraft(draft);
+		const parsed = this.validatedDraft(draft);
 		if (this.robs.bots().some((bot) => bot.name === parsed.name)) {
 			throw new BotDraftError(`A bot named "${parsed.name}" already exists.`);
 		}
@@ -206,11 +200,11 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 
 	// Replaces a bot's role, model, and backend in place. The same validation
-	// and install check the create path runs gate the draft; the ledger, memory,
-	// and wake are untouched, and the runtime restarts so the new config takes
-	// effect. UnknownRobError names a bot the roster never had (404).
+	// the create path runs gates the draft; the ledger, memory, and wake are
+	// untouched, and the runtime restarts so the new config takes effect.
+	// UnknownRobError names a bot the roster never had (404).
 	async updateBot(name: string, draft: UpdateBotBody): Promise<BotInfo> {
-		const parsed = await this.validatedDraft({ ...draft, name });
+		const parsed = this.validatedDraft({ ...draft, name });
 		const existing = this.robs.bots().find((bot) => bot.name === name);
 		if (existing === undefined) throw new UnknownRobError(name);
 		const saved = await updateRob(this.workspaceRoot, name, parsed);
@@ -222,33 +216,21 @@ export class CompositeHub extends EventBus implements Hub {
 		return this.robs.replaceBot(name, runtime);
 	}
 
-	// The draft-to-config check both the create and the update path run, so a
-	// cli backend is refused with the same wording wherever it is entered.
-	private async validatedDraft(draft: BotDraft): Promise<RobConfig> {
+	// The draft-to-config check both the create and the update path run. The web
+	// API only offers the built-in backend, and the wire can carry anything, so
+	// a cli backend is refused with one wording wherever it is entered.
+	private validatedDraft(draft: BotDraft): RobConfig {
+		const backend = draft.backend as { kind?: unknown } | undefined;
+		if (backend !== undefined && backend?.kind !== "native") {
+			throw new BotDraftError(
+				'Only the "native" backend is supported. A "cli" backend is no longer accepted.',
+			);
+		}
 		const parsed = robConfigSchema.safeParse(toRobConfig(draft));
 		if (!parsed.success) {
 			throw new BotDraftError(z.prettifyError(parsed.error));
 		}
-		if (
-			parsed.data.backend?.kind === "cli" &&
-			!(await this.commandInstalled(parsed.data.backend.command))
-		) {
-			throw new BotDraftError(
-				missingCommandMessage(parsed.data.backend.command),
-			);
-		}
 		return parsed.data;
-	}
-
-	// Detection and creation must agree: ask the supervisor (which also sees a
-	// binary installed off PATH) when it is available, else fall back to a plain
-	// PATH check.
-	private async commandInstalled(command: string): Promise<boolean> {
-		if (this.agents === undefined) return commandExists(command);
-		const row = agentByCommand(command);
-		const states = await this.agents.list();
-		const state = states.find((candidate) => candidate.id === row?.id);
-		return state?.presence.kind === "installed";
 	}
 
 	async dispose(): Promise<void> {
@@ -257,19 +239,11 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 }
 
+// The web Bot surface is native-only, so a draft always yields a native
+// backend: an omitted one is persisted explicitly rather than left absent.
 function toRobConfig(draft: BotDraft): RobConfig {
 	const config: RobConfig = { name: draft.name, role: draft.role };
 	if (draft.model !== undefined) config.model = draft.model;
-	if (draft.backend !== undefined) {
-		config.backend =
-			draft.backend.kind === "native"
-				? { kind: "native" }
-				: {
-						kind: "cli",
-						command: draft.backend.command,
-						provider: draft.backend.provider,
-						model: draft.backend.model,
-					};
-	}
+	config.backend = { kind: "native" };
 	return config;
 }

@@ -81,11 +81,6 @@ export default function App() {
 		loadAgents().catch(() => {});
 	}, [view, loadAgents]);
 
-	// Load once too, so the create dialog knows which backends are installed.
-	useEffect(() => {
-		loadAgents().catch(() => {});
-	}, [loadAgents]);
-
 	// Re-detect once a job settles so a finished install stops reading as missing.
 	const settledJobs = Object.values(state.agentJobs)
 		.filter((job) => !isLivePhase(job.phase))
@@ -256,7 +251,6 @@ export default function App() {
 							<BotSettingsPanel
 								key={currentBot.name}
 								bot={selectedRob}
-								agents={state.agents}
 								onUpdateBot={hub.updateBot}
 								onRemoveBot={async (name) => {
 									// A successful delete leaves the bot view; the hub
@@ -264,7 +258,6 @@ export default function App() {
 									await hub.removeBot(name);
 									openBot(null);
 								}}
-								onInstall={hub.installAgent}
 							/>
 						)}
 					</section>
@@ -282,9 +275,7 @@ export default function App() {
 			{dialogOpen && (
 				<NewBotDialog
 					model={state.model}
-					agents={state.agents}
 					onCreateBot={hub.createBot}
-					onInstall={hub.installAgent}
 					onClose={() => setDialogOpen(false)}
 				/>
 			)}

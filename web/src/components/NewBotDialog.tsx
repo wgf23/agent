@@ -1,92 +1,47 @@
 import { type FormEvent, useState } from "react";
-import type {
-	AgentStatusView,
-	BotBackendDraft,
-	BotDraft,
-	RobCommand,
-} from "../protocol";
-import { agentById, ROB_COMMANDS } from "../protocol";
+import type { BotBackendDraft, BotDraft } from "../protocol";
 
 interface Props {
 	model: string;
-	agents: AgentStatusView[];
 	onCreateBot: (draft: BotDraft) => Promise<void>;
-	onInstall: (id: string) => Promise<void> | void;
 	onClose: () => void;
 }
 
-type BackendChoice = "native" | RobCommand;
+// The web Bot surface only offers the built-in backend. The constant stays
+// shared with the edit panel so create and edit cannot drift on the choice.
+export const BACKEND_CHOICES = [{ value: "native", label: "内置" }] as const;
 
-export type { BackendChoice };
+export type BackendChoice = (typeof BACKEND_CHOICES)[number]["value"];
 
-// Shared with the edit panel so create and edit cannot drift on the choices.
-export const BACKEND_CHOICES: readonly {
-	value: BackendChoice;
-	label: string;
-}[] = [
-	{ value: "native", label: "内置" },
-	...ROB_COMMANDS.map((command) => ({
-		value: command,
-		label: agentById(command)?.label ?? command,
-	})),
-];
-
-// One place turns a chosen backend into the wire draft, so the create dialog
+// One place turns the chosen backend into the wire draft, so the create dialog
 // and the settings panel send byte-for-byte the same body.
-export function backendDraft(
-	choice: BackendChoice,
-	provider: string,
-	backendModel: string,
-): BotBackendDraft {
-	return choice === "native"
-		? { kind: "native" }
-		: {
-				kind: "cli",
-				command: choice,
-				provider: provider.trim() || undefined,
-				model: backendModel.trim() || undefined,
-			};
+export function backendDraft(choice: BackendChoice): BotBackendDraft {
+	return { kind: choice };
 }
 
 const NAME_RULE = /^[a-z][a-z0-9-]{0,31}$/;
 
-export default function NewBotDialog({
-	model,
-	agents,
-	onCreateBot,
-	onInstall,
-	onClose,
-}: Props) {
+export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 	const [name, setName] = useState("");
 	const [role, setRole] = useState("");
 	const [botModel, setBotModel] = useState(model);
 	const [backend, setBackend] = useState<BackendChoice>("native");
-	const [provider, setProvider] = useState("");
-	const [backendModel, setBackendModel] = useState("");
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
 	const nameValid = NAME_RULE.test(name);
 	const roleValid = role.trim() !== "";
-	// pi (and any future catalog row that asks for it) needs an explicit
-	// provider + model; the other CLI agents resolve them from the user's setup.
-	const piNeedsFields =
-		backend !== "native" && agentById(backend)?.needsProviderAndModel === true;
-	const providerValid = !piNeedsFields || provider.trim() !== "";
-	const backendModelValid = !piNeedsFields || backendModel.trim() !== "";
 
 	const submit = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!nameValid || !roleValid || !providerValid || !backendModelValid) {
-			return;
-		}
+		if (!nameValid || !roleValid) return;
 		setSubmitting(true);
 		setError(null);
 		const draft: BotDraft = {
 			name: name.trim(),
 			role: role.trim(),
 			model: botModel.trim() || undefined,
-			backend: backendDraft(backend, provider, backendModel),
+			backend: backendDraft(backend),
 		};
 		try {
 			await onCreateBot(draft);
@@ -149,80 +104,21 @@ export default function NewBotDialog({
 						<div className="field">
 							<span className="field-label">后端</span>
 							<div className="backend-options" role="radiogroup">
-								{BACKEND_CHOICES.map(({ value, label }) => {
-									const status =
-										value === "native"
-											? undefined
-											: agents.find((agent) => agent.id === value);
-									// A known-but-missing CLI stays visible but disabled,
-									// with an install affordance instead of a dead end.
-									if (status !== undefined && !status.installed) {
-										return (
-											<div key={value} className="backend-option disabled">
-												<span>{label}</span>
-												<button
-													type="button"
-													className="backend-install"
-													onClick={() => {
-														setError(null);
-														Promise.resolve(onInstall(value)).catch(
-															(installError) => {
-																setError(
-																	installError instanceof Error
-																		? installError.message
-																		: String(installError),
-																);
-															},
-														);
-													}}
-												>
-													未安装 · 安装
-												</button>
-											</div>
-										);
-									}
-									return (
-										<button
-											key={value}
-											type="button"
-											className={`backend-option ${
-												backend === value ? "active" : ""
-											}`}
-											onClick={() => setBackend(value)}
-										>
-											{label}
-										</button>
-									);
-								})}
+								{BACKEND_CHOICES.map(({ value, label }) => (
+									<button
+										key={value}
+										type="button"
+										className={`backend-option ${
+											backend === value ? "active" : ""
+										}`}
+										onClick={() => setBackend(value)}
+									>
+										{label}
+									</button>
+								))}
 							</div>
+							<span className="field-hint">仅支持内置后端</span>
 						</div>
-
-						{backend !== "native" && (
-							<div className="field-row">
-								<label className="field">
-									<span className="field-label">
-										提供方{piNeedsFields ? " *" : ""}
-									</span>
-									<input
-										className="field-input"
-										value={provider}
-										onChange={(event) => setProvider(event.target.value)}
-										placeholder="例如 anthropic"
-									/>
-								</label>
-								<label className="field">
-									<span className="field-label">
-										后端模型{piNeedsFields ? " *" : ""}
-									</span>
-									<input
-										className="field-input"
-										value={backendModel}
-										onChange={(event) => setBackendModel(event.target.value)}
-										placeholder="例如 claude-sonnet-4-5"
-									/>
-								</label>
-							</div>
-						)}
 
 						{error !== null && (
 							<div className="dialog-error" role="alert">
@@ -243,13 +139,7 @@ export default function NewBotDialog({
 						<button
 							type="submit"
 							className="btn allow-once"
-							disabled={
-								submitting ||
-								!nameValid ||
-								!roleValid ||
-								!providerValid ||
-								!backendModelValid
-							}
+							disabled={submitting || !nameValid || !roleValid}
 						>
 							{submitting ? "创建中…" : "创建"}
 						</button>

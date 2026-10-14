@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	addPermissionRule,
+	migrateRobsToNative,
 	readProjectConfig,
 	removeRob,
 	updateRob,
@@ -236,6 +237,75 @@ describe("updateRob", () => {
 		});
 
 		expect(result.ok).toBe(false);
+	});
+});
+
+describe("migrateRobsToNative", () => {
+	it("rewrites a cli rob to native, keeps every other key, and is idempotent", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify(
+				{
+					custom: { keep: true },
+					permissions: { bash: [{ pattern: "git *", action: "allow" }] },
+					robs: [
+						{
+							name: "dmtest",
+							role: "help",
+							backend: {
+								kind: "cli",
+								command: "pi",
+								provider: "deepseek",
+								model: "deepseek-chat",
+								sessionDir: "sessions",
+							},
+						},
+						{ name: "native-bot", role: "stay", backend: { kind: "native" } },
+					],
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const first = await migrateRobsToNative(workspace);
+		expect(first).toEqual({ ok: true, migrated: 1 });
+
+		const after = await readFile(join(workspace, "my-agent.json"), "utf8");
+		const parsed = JSON.parse(after);
+		expect(parsed.robs[0]).toEqual({
+			name: "dmtest",
+			role: "help",
+			backend: { kind: "native" },
+		});
+		expect(parsed.robs[1]).toEqual({
+			name: "native-bot",
+			role: "stay",
+			backend: { kind: "native" },
+		});
+		expect(parsed.permissions).toEqual({
+			bash: [{ pattern: "git *", action: "allow" }],
+		});
+		expect(parsed.custom).toEqual({ keep: true });
+
+		// A second call finds no cli rob and writes nothing: the bytes are the
+		// same file the first call wrote.
+		const second = await migrateRobsToNative(workspace);
+		expect(second).toEqual({ ok: true, migrated: 0 });
+		expect(await readFile(join(workspace, "my-agent.json"), "utf8")).toBe(
+			after,
+		);
+	});
+
+	it("writes nothing when the file is missing", async () => {
+		expect(await migrateRobsToNative(workspace)).toEqual({
+			ok: true,
+			migrated: 0,
+		});
+		await expect(
+			readFile(join(workspace, "my-agent.json"), "utf8"),
+		).rejects.toThrow();
 	});
 });
 

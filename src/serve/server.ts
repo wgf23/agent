@@ -122,7 +122,6 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		homeDir,
 		cliModel: options.model,
 		cliMaxSteps: options.maxSteps,
-		agents: supervisor,
 	};
 
 	let scope: WorkspaceScope;

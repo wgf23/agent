@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ServerEvent } from "../../shared/protocol.js";
+import type { BotDraft, ServerEvent } from "../../shared/protocol.js";
 import { type BotStore, createBotStore } from "../../src/bot/store.js";
 import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
@@ -73,6 +73,17 @@ function readRobs(): unknown {
 	return JSON.parse(readFileSync(projectFilePath(workspaceRoot), "utf8")).robs;
 }
 
+// The wire used to carry a cli backend; the narrowed type no longer names one,
+// so the test feeds the old shape through the same cast the route uses.
+function cliBackend(): BotDraft["backend"] {
+	return {
+		kind: "cli",
+		command: "pi",
+		provider: "deepseek",
+		model: "deepseek-chat",
+	} as unknown as BotDraft["backend"];
+}
+
 describe("CompositeHub.createBot", () => {
 	it("keeps the workspace bot and adds a rob", async () => {
 		const hub = createHub();
@@ -96,7 +107,9 @@ describe("CompositeHub.createBot", () => {
 		expect(hello.bots.map((bot) => bot.name)).toEqual(["writer"]);
 		expect(hello.states.map((state) => state.bot)).toContain("assistant");
 		expect(events.some((event) => event.type === "bots")).toBe(true);
-		expect(readRobs()).toEqual([{ name: "writer", role: "drafts prose" }]);
+		expect(readRobs()).toEqual([
+			{ name: "writer", role: "drafts prose", backend: { kind: "native" } },
+		]);
 		await hub.dispose();
 	});
 
@@ -134,42 +147,25 @@ describe("CompositeHub.createBot", () => {
 		await hub.dispose();
 	});
 
-	it("rejects an invalid name and an incomplete cli backend", async () => {
+	it("rejects an invalid name", async () => {
 		const hub = createHub();
 		await expect(
 			hub.createBot({ name: "Bad Name", role: "x" }),
 		).rejects.toThrow();
+		await hub.dispose();
+	});
+
+	it("rejects a cli backend with the native-only message", async () => {
+		const hub = createHub();
 		await expect(
 			hub.createBot({
 				name: "pibot",
 				role: "x",
-				backend: { kind: "cli", command: "pi" },
+				backend: cliBackend(),
 			}),
-		).rejects.toThrow();
-		await hub.dispose();
-	});
-
-	it("rejects a cli backend whose command is not on PATH", async () => {
-		const hub = createHub();
-		const emptyDir = mkdtempSync(path.join(tmpdir(), "my-agent-empty-path-"));
-		const previous = process.env.PATH;
-		process.env.PATH = emptyDir;
-		try {
-			await expect(
-				hub.createBot({
-					name: "pibot",
-					role: "x",
-					backend: {
-						kind: "cli",
-						command: "pi",
-						provider: "deepseek",
-						model: "deepseek-chat",
-					},
-				}),
-			).rejects.toThrow(/PATH/);
-		} finally {
-			process.env.PATH = previous;
-		}
+		).rejects.toThrow(
+			'Only the "native" backend is supported. A "cli" backend is no longer accepted.',
+		);
 		await hub.dispose();
 	});
 });
@@ -215,36 +211,27 @@ describe("CompositeHub.updateBot", () => {
 				name: "writer",
 				role: "edits prose",
 				model: "deepseek-chat",
+				backend: { kind: "native" },
 				wake: { everyMs: 5000, prompt: "tick" },
 			},
 		]);
 		await hub.dispose();
 	});
 
-	it("rejects an unknown bot and a cli backend not on PATH", async () => {
+	it("rejects an unknown bot and a cli backend with the native-only message", async () => {
 		const hub = createHub();
 		await expect(hub.updateBot("ghost", { role: "x" })).rejects.toThrow(
 			"Unknown rob: ghost",
 		);
 
-		const emptyDir = mkdtempSync(path.join(tmpdir(), "my-agent-empty-path-"));
-		const previous = process.env.PATH;
-		process.env.PATH = emptyDir;
-		try {
-			await expect(
-				hub.updateBot("ghost", {
-					role: "x",
-					backend: {
-						kind: "cli",
-						command: "pi",
-						provider: "deepseek",
-						model: "deepseek-chat",
-					},
-				}),
-			).rejects.toThrow(/PATH/);
-		} finally {
-			process.env.PATH = previous;
-		}
+		await expect(
+			hub.updateBot("ghost", {
+				role: "x",
+				backend: cliBackend(),
+			}),
+		).rejects.toThrow(
+			'Only the "native" backend is supported. A "cli" backend is no longer accepted.',
+		);
 		await hub.dispose();
 	});
 });
@@ -285,7 +272,9 @@ describe("CompositeHub.removeBot", () => {
 		// failure left both the roster and my-agent.json intact and no `bots`
 		// event claimed the bot is gone.
 		expect(hub.hello().bots.map((bot) => bot.name)).toEqual(["writer"]);
-		expect(readRobs()).toEqual([{ name: "writer", role: "drafts" }]);
+		expect(readRobs()).toEqual([
+			{ name: "writer", role: "drafts", backend: { kind: "native" } },
+		]);
 		expect(events.some((event) => event.type === "bots")).toBe(false);
 		await hub.dispose();
 	});

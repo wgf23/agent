@@ -523,6 +523,91 @@ async function writeRobRemoval(
 	return { ok: true };
 }
 
+export type MigrateRobsResult =
+	| { ok: true; migrated: number }
+	| { ok: false; error: string };
+
+// The web Bot surface is native-only, so a `cli` rob written by an older
+// config is rewritten to the built-in backend when the server opens the
+// workspace. Every other key and every other rob is preserved; a missing file
+// or a file with no cli rob is a no-op that writes nothing.
+export function migrateRobsToNative(
+	workspaceRoot: string,
+): Promise<MigrateRobsResult> {
+	const run = writeChain.then(() => migrateRobs(workspaceRoot));
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+async function migrateRobs(workspaceRoot: string): Promise<MigrateRobsResult> {
+	const filePath = projectFilePath(workspaceRoot);
+
+	let text: string;
+	try {
+		text = await readFile(filePath, "utf8");
+	} catch (error) {
+		if (isEnoent(error)) return { ok: true, migrated: 0 };
+		return {
+			ok: false,
+			error: `Failed to read ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(text);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Invalid JSON in ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	const parsed = projectFileSchema.safeParse(parsedJson);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(parsed.error)}`,
+		};
+	}
+	const raw = parsedJson as Record<string, unknown>;
+	const robs = Array.isArray(raw.robs) ? raw.robs : [];
+
+	let migrated = 0;
+	const nextRobs = robs.map((entry) => {
+		if (typeof entry !== "object" || entry === null) return entry;
+		const rob = entry as Record<string, unknown>;
+		const backend = rob.backend as { kind?: unknown } | undefined;
+		if (backend?.kind !== "cli") return rob;
+		migrated += 1;
+		// Replacing the whole backend drops the cli-only fields (command,
+		// provider, model, sessionDir) along with the kind.
+		return { ...rob, backend: { kind: "native" } };
+	});
+	if (migrated === 0) return { ok: true, migrated: 0 };
+
+	const nextRaw = { ...raw, robs: nextRobs };
+	const validated = projectFileSchema.safeParse(nextRaw);
+	if (!validated.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(validated.error)}`,
+		};
+	}
+
+	try {
+		await writeFile(filePath, `${JSON.stringify(nextRaw, null, 2)}\n`, "utf8");
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to write ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true, migrated };
+}
+
 function isEnoent(error: unknown): boolean {
 	return (
 		typeof error === "object" &&

@@ -1,9 +1,9 @@
 // Wire types shared by the my-agent server (src/serve) and the web client
 // (web/). This file has no runtime imports: its only import is the erased
-// type-only `RobCommand` from ./agents.js, so tsc and Vite both read it
+// type-only `AgentId` from ./agents.js, so tsc and Vite both read it
 // directly. AgentEvent mirrors src/agent/events.ts.
 
-import type { AgentId, RobCommand } from "./agents.js";
+import type { AgentId } from "./agents.js";
 
 export const DEFAULT_PORT = 4317;
 
@@ -65,14 +65,9 @@ export interface WorkspaceOption {
 	active: boolean;
 }
 
-export type BotBackendDraft =
-	| { kind: "native" }
-	| {
-			kind: "cli";
-			command: RobCommand;
-			provider?: string;
-			model?: string;
-	  };
+// The web Bot surface only offers the built-in backend; a hand-written config
+// and the TUI may still carry a `cli` backend, but the API rejects one.
+export type BotBackendDraft = { kind: "native" };
 
 export interface BotDraft {
 	name: string;

@@ -13,9 +13,9 @@ import type {
 	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
-import type { AgentSupervisor } from "../agents/supervisor.js";
 import { createBotStore } from "../bot/store.js";
 import { verifyApiKey } from "../cli/setup.js";
+import { migrateRobsToNative } from "../config/project-file.js";
 import { resolveConfig } from "../config/resolve.js";
 import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
@@ -63,9 +63,6 @@ export interface OpenWorkspaceInput {
 	homeDir: string;
 	cliModel?: string;
 	cliMaxSteps?: number;
-	// Workspace-independent: the installed-CLI supervisor is shared by every
-	// scope so a create in one workspace sees what another detected.
-	agents?: AgentSupervisor;
 }
 
 // Builds everything a root owns. This is the runServe construction step moved
@@ -76,6 +73,17 @@ export async function openWorkspace(
 ): Promise<WorkspaceScope> {
 	const { root, runtime, env, homeDir } = input;
 	await assertDirectory(root);
+
+	// The web Bot surface is native-only: rewrite any existing cli rob in this
+	// workspace to the built-in backend before the config is read, so the
+	// roster never starts a backend the API no longer accepts.
+	const migration = await migrateRobsToNative(root);
+	if (!migration.ok) throw new Error(migration.error);
+	if (migration.migrated > 0) {
+		process.stderr.write(
+			`migrated ${migration.migrated} cli bot(s) to the native backend\n`,
+		);
+	}
 
 	const resolved = resolveConfig({
 		cliModel: input.cliModel,
@@ -146,7 +154,7 @@ export async function openWorkspace(
 		providerEnv: runtime.current().providerEnv,
 		store: createBotStore(),
 	});
-	const hub = new CompositeHub(workspace, robHub, root, runtime, input.agents);
+	const hub = new CompositeHub(workspace, robHub, root, runtime);
 
 	const settings = new SettingsService({
 		homeDir,
