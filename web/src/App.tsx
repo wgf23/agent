@@ -10,6 +10,7 @@ import NewBotDialog from "./components/NewBotDialog";
 import PermissionModal from "./components/PermissionModal";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
+import SubagentFeed from "./components/SubagentFeed";
 import WakeEditor from "./components/WakeEditor";
 import type { BotInfo } from "./protocol";
 import { WORKSPACE_BOT } from "./protocol";
@@ -25,10 +26,11 @@ const CHAT_BOT: BotInfo = {
 	backend: "native",
 };
 
-type BotTab = "chat" | "memory" | "wake" | "settings";
+type BotTab = "chat" | "subagent" | "memory" | "wake" | "settings";
 
 const BOT_TABS: readonly { id: BotTab; label: string }[] = [
 	{ id: "chat", label: "对话" },
+	{ id: "subagent", label: "子 Agent" },
 	{ id: "memory", label: "记忆" },
 	{ id: "wake", label: "唤醒" },
 	{ id: "settings", label: "设置" },
@@ -225,6 +227,11 @@ export default function App() {
 									onInterrupt={() => hub.interrupt(currentBot.name)}
 								/>
 							</>
+						) : tab === "subagent" ? (
+							<SubagentFeed
+								key={currentBot.name}
+								entries={state.subagents[currentBot.name] ?? []}
+							/>
 						) : tab === "memory" ? (
 							<BotMemoryPanel
 								key={currentBot.name}

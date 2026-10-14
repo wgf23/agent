@@ -1070,6 +1070,28 @@ input.switch:checked::before {
 	overflow-wrap: anywhere;
 }
 
+/* ---------- Sub-agent feed ---------- */
+
+.subagent-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-width: 760px;
+	margin: 0 auto;
+	padding: 0;
+	list-style: none;
+}
+
+.subagent-row {
+	padding: 3px 8px;
+	border-radius: var(--radius-sm);
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: var(--text-2);
+	overflow-wrap: anywhere;
+}
+
 /* ---------- Wake editor ---------- */
 
 .wake-form {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+	AgentEvent,
 	ApprovalRequestInfo,
 	MemoryEntryView,
 	ServerEvent,
@@ -12,6 +13,7 @@ import {
 	clientReducer,
 	initialState,
 	robBots,
+	SUBAGENT_FEED_MAX,
 } from "../../web/src/state";
 
 // The reducer is the whole SSE-to-UI mapping, so these tests call it the way
@@ -356,6 +358,51 @@ describe("clientReducer", () => {
 		]);
 		// The chat's transcript is untouched by a bot's channel switch.
 		expect(after.transcripts[WORKSPACE_BOT]).toEqual([]);
+	});
+
+	it("appends a bot's sub-agent entries in order under its parent", () => {
+		const entry = (at: number, inner: AgentEvent): ServerEvent => ({
+			type: "subagent",
+			bot: "writer",
+			entry: { parent: "writer", id: "writer-sub-0", at, event: inner },
+		});
+		const state = apply([
+			hello,
+			entry(1, {
+				type: "tool_started",
+				id: "t1",
+				name: "read_file",
+				args: {},
+			}),
+			entry(2, { type: "done", reason: "finished", steps: 1 }),
+		]);
+
+		// The order the events arrived in is the order the feed renders.
+		expect(state.subagents.writer).toHaveLength(2);
+		expect(state.subagents.writer[0].event.type).toBe("tool_started");
+		expect(state.subagents.writer[1].event.type).toBe("done");
+	});
+
+	it("caps a bot's sub-agent feed at the newest entries", () => {
+		const events: ServerEvent[] = [hello];
+		for (let index = 0; index < SUBAGENT_FEED_MAX + 5; index += 1) {
+			events.push({
+				type: "subagent",
+				bot: "writer",
+				entry: {
+					parent: "writer",
+					id: `writer-sub-${index}`,
+					at: index,
+					event: { type: "text_delta", text: `line ${index}` },
+				},
+			});
+		}
+		const state = apply(events);
+
+		expect(state.subagents.writer).toHaveLength(SUBAGENT_FEED_MAX);
+		// The oldest five dropped; the newest is kept.
+		expect(state.subagents.writer[0].at).toBe(5);
+		expect(state.subagents.writer.at(-1)?.at).toBe(SUBAGENT_FEED_MAX + 4);
 	});
 
 	it("fills a bot's memory and flags a 401 as an auth error", () => {

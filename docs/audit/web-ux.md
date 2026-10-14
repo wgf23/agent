@@ -143,3 +143,11 @@ Named rather than assumed:
   turn could not run here even with a browser.
 - **External-CLI backends were not driven at all**, and the interval wake remains the only
   trigger. Both are unchanged from the bot-architecture run.
+- **The sub-agent feed has no live e2e phase by design.** Whether a real model calls `delegate`
+  is not deterministic, and a flaky phase is worse than none, so no phase asks one to spawn a
+  sub-agent. What is proven is the real path from a rob's `runSubagent` through `TeamHub` to the
+  `{ type: "subagent" }` wire event (`test/serve/team.test.ts`, driven with the stub provider)
+  and the reducer's ordered, capped feed (`test/web/state.test.ts`).
+- **A page reload starts the sub-agent feed empty.** `hello` does not carry past sub-agent
+  activity, so only events that arrive after the client connects are shown. The rendered feed
+  itself was not exercised in a browser here.

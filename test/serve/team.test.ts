@@ -54,7 +54,11 @@ function slowProvider(): Provider {
 	};
 }
 
-function createHub(provider: Provider, timer?: Timer): TeamHub {
+function createHub(
+	provider: Provider,
+	timer?: Timer,
+	allowAll = createAllowAll(),
+): TeamHub {
 	return new TeamHub({
 		workspaceRoot,
 		provider,
@@ -68,7 +72,7 @@ function createHub(provider: Provider, timer?: Timer): TeamHub {
 		},
 		robs: [{ name: "alpha", role: "a test rob" }],
 		providerEnv: {},
-		allowAll: createAllowAll(),
+		allowAll,
 		timer,
 	});
 }
@@ -195,6 +199,78 @@ describe("TeamHub", () => {
 			type: "error",
 			bot: "ghost",
 			message: "Unknown bot: ghost",
+		});
+		await hub.dispose();
+	});
+
+	it("forwards a sub-agent's events to the wire under the parent's name", async () => {
+		writeFileSync(path.join(workspaceRoot, "note.txt"), "hello sub\n");
+		// The parent delegates, the sub-agent reads a file (so a real
+		// tool_started is recorded), then both finish. The mock is shared, so
+		// the turns run in order: parent, sub-agent step 1, sub-agent step 2,
+		// parent step 2.
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "delegate",
+					args: { task: "read a file" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{
+					type: "tool_call",
+					id: "call_2",
+					name: "read_file",
+					args: { path: "note.txt" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "sub result" },
+				{ type: "finish", reason: "stop" },
+			],
+			[
+				{ type: "text_delta", text: "parent done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider, undefined, createAllowAll(true));
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "delegate please");
+		await waitFor(
+			() =>
+				events.some(
+					(event) =>
+						event.type === "subagent" && event.entry.event.type === "done",
+				),
+			"the sub-agent's done event",
+		);
+
+		const subagents = events.filter((event) => event.type === "subagent");
+		// Every entry is addressed to the bot that delegated, so the web keys
+		// its feed by the parent name.
+		expect(subagents.every((event) => event.bot === "alpha")).toBe(true);
+		expect(
+			subagents.find((event) => event.entry.event.type === "tool_started"),
+		).toMatchObject({
+			type: "subagent",
+			bot: "alpha",
+			entry: {
+				parent: "alpha",
+				id: "alpha-sub-0",
+				event: { type: "tool_started", name: "read_file" },
+			},
+		});
+		expect(
+			subagents.find((event) => event.entry.event.type === "done"),
+		).toMatchObject({
+			type: "subagent",
+			bot: "alpha",
+			entry: { parent: "alpha", event: { type: "done", reason: "finished" } },
 		});
 		await hub.dispose();
 	});

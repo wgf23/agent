@@ -419,6 +419,11 @@ export class TeamHub extends EventBus implements Hub {
 				});
 				return;
 			case "subagent":
+				this.emit({
+					type: "subagent",
+					bot: event.entry.parent,
+					entry: event.entry,
+				});
 				return;
 			case "channel":
 				this.emitBotStatus(event.bot);

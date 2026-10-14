@@ -13,12 +13,17 @@ import type {
 	ProviderView,
 	ServerEvent,
 	SessionSummaryInfo,
+	SubagentView,
 	ToolCallView,
 	TranscriptMessage,
 	UsageTotals,
 	WorkspaceOption,
 } from "./protocol";
 import { WORKSPACE_BOT } from "./protocol";
+
+// A bot's retained sub-agent activity is capped so a long run cannot grow the
+// client without bound; the oldest entries drop first.
+export const SUBAGENT_FEED_MAX = 200;
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -46,6 +51,8 @@ export interface ClientState {
 	botActiveSession: Record<string, string | null>;
 	// A bot's memory, replaced wholesale after each read or edit.
 	memory: Record<string, MemoryEntryView[]>;
+	// A bot's sub-agent activity, appended per event and capped oldest-first.
+	subagents: Record<string, SubagentView[]>;
 	transcripts: Record<string, TranscriptMessage[]>;
 	approvals: ApprovalRequestInfo[];
 	allowAll: boolean;
@@ -95,6 +102,7 @@ export function initialState(): ClientState {
 		botSessions: {},
 		botActiveSession: {},
 		memory: {},
+		subagents: {},
 		transcripts: {},
 		approvals: [],
 		allowAll: false,
@@ -319,6 +327,20 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 					break;
 			}
 			return next;
+		}
+
+		// A sub-agent's activity belongs to its parent bot's feed. Only the line
+		// with text is rendered; the cap drops the oldest so a long run cannot
+		// grow the client without bound.
+		case "subagent": {
+			const existing = state.subagents[event.bot] ?? [];
+			return {
+				...state,
+				subagents: {
+					...state.subagents,
+					[event.bot]: [...existing, event.entry].slice(-SUBAGENT_FEED_MAX),
+				},
+			};
 		}
 
 		// A queued request is announced twice: once with no deadline, then again when
