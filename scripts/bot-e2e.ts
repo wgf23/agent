@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import type {
 	BotTranscriptResponse,
 	MemoryListResponse,
+	SearchResponse,
 	ServerEvent,
 } from "../shared/protocol.js";
 import {
@@ -611,6 +612,53 @@ try {
 	} finally {
 		deleteEvents.abort();
 	}
+
+	// Phase 14: one search spans the workspace chat and every bot's sessions.
+	// The word is the phase-8 wake prompt, which the re-armed timer keeps
+	// recording, so a real prior turn must surface under a bot session with the
+	// word still in the bounded snippet.
+	phase = 14;
+	const searchTerm = "tock";
+	const searchResponse = await getSearch(server.port, searchTerm);
+	assert(
+		searchResponse.query === searchTerm,
+		`GET /api/search echoed ${JSON.stringify(searchResponse.query)}, expected ${JSON.stringify(searchTerm)}`,
+	);
+	const searchedBot = searchResponse.bots.find((entry) => entry.bot === BOT);
+	assert(
+		searchedBot !== undefined,
+		`GET /api/search?q=${searchTerm} has no matches for ${BOT}`,
+	);
+	const sessionMatch = searchedBot.matches.find((match) =>
+		match.hits.some((candidate) =>
+			candidate.text.toLowerCase().includes(searchTerm.toLowerCase()),
+		),
+	);
+	assert(
+		sessionMatch !== undefined,
+		`the search for ${JSON.stringify(searchTerm)} surfaced no ${BOT} hit carrying it`,
+	);
+	const hit = sessionMatch.hits.find((candidate) =>
+		candidate.text.toLowerCase().includes(searchTerm.toLowerCase()),
+	);
+	assert(
+		hit !== undefined,
+		`the matched session ${sessionMatch.sessionId} has no snippet carrying ${JSON.stringify(searchTerm)}`,
+	);
+	// The hit is a real prior turn of this workspace, not a snippet invented by
+	// the search: the ledger has a turn for that session under the same root.
+	const searchLedger = parseLedger(await readFile(ledgerPath, "utf8"));
+	assert(
+		searchLedger.turns.some(
+			(turn) =>
+				turn.sessionId === sessionMatch.sessionId &&
+				turn.workspaceRoot === workspace,
+		),
+		`the search hit session ${sessionMatch.sessionId} is not a ${workspace} session in the ledger`,
+	);
+	console.log(
+		`PASS phase 14 search: GET /api/search?q=${searchTerm} echoed the query, ${searchResponse.chat.length} chat match(es), and hit ${BOT} session ${sessionMatch.sessionId} role=${hit.role} snippet=${JSON.stringify(hit.text)}`,
+	);
 } catch (error) {
 	console.error(`FAIL phase ${phase}: ${errorText(error)}`);
 	if (server !== undefined) console.error(server.output());
@@ -1035,6 +1083,16 @@ async function getMemory(
 		`GET /api/bots/${bot}/memory returned ${response.status}`,
 	);
 	return (await response.json()) as MemoryListResponse;
+}
+
+async function getSearch(port: number, query: string): Promise<SearchResponse> {
+	const encoded = encodeURIComponent(query);
+	const response = await fetch(`${baseUrl(port)}/api/search?q=${encoded}`);
+	assert(
+		response.status === 200,
+		`GET /api/search?q=${encoded} returned ${response.status}`,
+	);
+	return (await response.json()) as SearchResponse;
 }
 
 function assistantText(turn: Turn): string {

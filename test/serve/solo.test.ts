@@ -360,6 +360,36 @@ describe("SoloHub", () => {
 		);
 		await hub.dispose();
 	});
+
+	it("searches the chat's stored sessions and reports a hit's role", async () => {
+		const provider = createMockProvider([]);
+		const match = newSession(workspaceRoot, settings.model);
+		match.messages = [{ role: "user", content: "the needle is here" }];
+		await saveSession(match);
+		const miss = newSession(workspaceRoot, settings.model);
+		miss.messages = [{ role: "user", content: "nothing to see" }];
+		await saveSession(miss);
+		const hub = new SoloHub(hubOptions(provider), {
+			session: newSession(workspaceRoot, settings.model),
+			sessions: [],
+		});
+
+		// The query is matched case-insensitively and echoed into the snippet.
+		const found = await hub.search("NEEDLE", workspaceRoot);
+		expect(found).toEqual([
+			{
+				sessionId: match.id,
+				title: null,
+				firstUserText: "the needle is here",
+				hits: [
+					{ role: "user", text: "the needle is here", at: match.updatedAt },
+				],
+			},
+		]);
+		// The "nothing found" case is an empty list, not every session.
+		expect(await hub.search("absent", workspaceRoot)).toEqual([]);
+		await hub.dispose();
+	});
 });
 
 describe("SoloHub interrupt", () => {

@@ -318,6 +318,25 @@ export async function buildServer(
 
 	app.get("/api/sessions", () => ({ sessions: hub.hello().sessions }));
 
+	// A read-only query is a GET: `q` is a literal, case-insensitive substring,
+	// and a missing or blank one is a 400 rather than a request for everything.
+	app.get("/api/search", async (request, reply) => {
+		const search = hub.search?.bind(hub);
+		if (search === undefined) {
+			return reply.code(501).send({ error: "this server cannot search" });
+		}
+		const query = readSearchQuery(request);
+		if (query === undefined) {
+			return reply.code(400).send({ error: "expected a non-empty q" });
+		}
+		try {
+			const response = await search(query, hub.hello().workspaceRoot);
+			return reply.send(response);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
 	app.post("/api/sessions/new", async (request, reply) => {
 		const body = request.body as Partial<SessionNewBody> | undefined;
 		if (typeof body?.bot !== "string") {
@@ -787,6 +806,15 @@ function botParam(request: FastifyRequest): string | undefined {
 	const params = request.params as { bot?: unknown } | undefined;
 	return typeof params?.bot === "string" && params.bot !== ""
 		? params.bot
+		: undefined;
+}
+
+// The search query is the literal substring to find. A missing value or a blank
+// one is undefined, so the route answers 400 instead of matching everything.
+function readSearchQuery(request: FastifyRequest): string | undefined {
+	const query = request.query as { q?: unknown } | undefined;
+	return typeof query?.q === "string" && query.q.trim() !== ""
+		? query.q
 		: undefined;
 }
 

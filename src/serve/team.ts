@@ -1,6 +1,7 @@
 import type {
 	ApprovalChoice,
 	BotInfo,
+	BotMatches,
 	BotState,
 	BotTranscriptResponse,
 	BotWake,
@@ -32,6 +33,7 @@ import {
 	type RuntimeSnapshot,
 	UNCONFIGURED_MESSAGE,
 } from "./runtime.js";
+import { turnMatches } from "./search.js";
 import { toTranscript } from "./solo.js";
 
 export interface TeamHubOptions extends HubOptions {
@@ -341,6 +343,28 @@ export class TeamHub extends EventBus implements Hub {
 		if (!this.hasBot(bot)) return null;
 		const entries = await this.store.memory(bot);
 		return { bot, entries: entries.map(toMemoryEntryView) };
+	}
+
+	// The bot half of a search: every roster rob's turns for this workspace,
+	// grouped by session. Read-only, so it neither emits an event nor changes a
+	// status. A bot with a broken ledger or no match is simply omitted.
+	async search(query: string, workspaceRoot: string): Promise<BotMatches[]> {
+		const results: BotMatches[] = [];
+		for (const rob of this.roster) {
+			const loaded = await this.store.load(rob.name, {
+				role: rob.role,
+				model: rob.model ?? this.options.settings.model,
+			});
+			if (!loaded.ok) continue;
+			const matches = turnMatches(
+				loaded.record.turns,
+				workspaceRoot,
+				loaded.record.sessionTitles,
+				query,
+			);
+			if (matches.length > 0) results.push({ bot: rob.name, matches });
+		}
+		return results;
 	}
 
 	// Forgets one memory entry outside a turn. False when the bot is

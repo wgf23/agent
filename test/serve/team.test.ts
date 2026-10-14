@@ -10,6 +10,7 @@ import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
+import { MAX_SESSION_MATCHES } from "../../src/serve/search.js";
 import {
 	summarizeSessions,
 	TeamHub,
@@ -89,6 +90,7 @@ async function seedSession(
 	sessionId: string,
 	text: string,
 	seq: number,
+	root: string = workspaceRoot,
 ): Promise<void> {
 	const store = createBotStore();
 	const loaded = await store.load("alpha", {
@@ -100,7 +102,7 @@ async function seedSession(
 		id: `trn_${seq.toString(16).padStart(32, "0")}`,
 		seq,
 		sessionId,
-		workspaceRoot,
+		workspaceRoot: root,
 		at: seq,
 		wake: "user",
 		messages: [{ role: "user", content: text }],
@@ -450,6 +452,45 @@ describe("TeamHub", () => {
 				title: null,
 			},
 		]);
+	});
+
+	it("searches a bot's turns across sessions for the current workspace, capped", async () => {
+		// 21 matching turns stay under the ring's cap of 24, so the result cap,
+		// not eviction, is what drops the tail.
+		for (let index = 0; index < 18; index += 1) {
+			await seedSession(
+				`chs_extra_${index}`,
+				`needle extra ${index}`,
+				4 + index,
+			);
+		}
+		await seedSession("chs_a", "needle one", 1);
+		await seedSession("chs_a", "needle two", 2);
+		await seedSession("chs_b", "needle three", 3);
+		const otherWorkspace = mkdtempSync(
+			path.join(tmpdir(), "my-agent-web-team-other-"),
+		);
+		await seedSession("chs_other", "needle other", 100, otherWorkspace);
+
+		const hub = createHub(slowProvider());
+		const results = await hub.search("NEEDLE", workspaceRoot);
+
+		expect(results).toHaveLength(1);
+		expect(results[0].bot).toBe("alpha");
+		const matches = results[0].matches;
+		// Turns group by session, newest turn order preserved: chs_a owns two
+		// hits, chs_b one, and the extra sessions fill out the cap.
+		expect(matches).toHaveLength(MAX_SESSION_MATCHES);
+		expect(matches[0]).toMatchObject({
+			sessionId: "chs_a",
+			title: null,
+			firstUserText: "needle one",
+		});
+		expect(matches[0].hits).toHaveLength(2);
+		expect(matches.map((match) => match.sessionId)).toContain("chs_b");
+		// A turn recorded in another workspace never surfaces in this one.
+		expect(matches.map((match) => match.sessionId)).not.toContain("chs_other");
+		await hub.dispose();
 	});
 
 	it("reads the current transcript without clearing the rob's live history", async () => {

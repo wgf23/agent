@@ -2,10 +2,13 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	BotMatches,
 	BotTranscriptResponse,
 	BotWake,
 	MemoryListResponse,
+	SearchResponse,
 	ServerEvent,
+	SessionMatch,
 	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
@@ -74,6 +77,13 @@ export interface Hub {
 	readMemory?(bot: string): Promise<MemoryListResponse | null>;
 	forgetMemory?(bot: string, id: string): Promise<boolean>;
 	setWake?(bot: string, wake: BotWake | null): Promise<boolean>;
+	// A read-only search. The composite hub answers the whole SearchResponse;
+	// the chat and team halves each expose their own slice, so the one optional
+	// member admits every return shape. It writes nothing and emits no event.
+	search?(
+		query: string,
+		workspaceRoot: string,
+	): Promise<SearchResponse | BotMatches[] | SessionMatch[]>;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;

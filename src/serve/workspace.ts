@@ -9,6 +9,7 @@ import type {
 	BotTranscriptResponse,
 	BotWake,
 	MemoryListResponse,
+	SearchResponse,
 	UpdateBotBody,
 	WorkspaceOption,
 } from "../../shared/protocol.js";
@@ -330,6 +331,10 @@ export class WorkspaceHub extends EventBus implements Hub {
 
 	setWake(bot: string, wake: BotWake | null): Promise<boolean> {
 		return this.scope.hub.setWake?.(bot, wake) ?? Promise.resolve(false);
+	}
+
+	search(query: string, workspaceRoot: string): Promise<SearchResponse> {
+		return this.scope.hub.search(query, workspaceRoot);
 	}
 
 	applyRuntime(next: RuntimeSnapshot): Promise<ApplyRuntimeResult> {

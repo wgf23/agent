@@ -7,6 +7,7 @@ import {
 	type BotTranscriptResponse,
 	type BotWake,
 	type MemoryListResponse,
+	type SearchResponse,
 	type UpdateBotBody,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
@@ -149,6 +150,15 @@ export class CompositeHub extends EventBus implements Hub {
 	// against the rob roster only.
 	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
 		return this.robs.readTranscript(bot);
+	}
+
+	// One read-only search across both halves: the workspace chat's sessions and
+	// every bot's turns for this workspace. It emits nothing and changes no
+	// status.
+	async search(query: string, workspaceRoot: string): Promise<SearchResponse> {
+		const chat = await this.workspace.search(query, workspaceRoot);
+		const bots = await this.robs.search(query, workspaceRoot);
+		return { query, chat, bots };
 	}
 
 	readMemory(bot: string): Promise<MemoryListResponse | null> {
