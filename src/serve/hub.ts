@@ -55,6 +55,7 @@ export interface Hub {
 	// Only a hub with a rob roster manages rooms.
 	createRoom?(config: RoomConfig): RoomCreateOutcome;
 	sendToRoom?(room: string, text: string): RoomSendOutcome;
+	interruptRoom?(room: string): void;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;

@@ -9,6 +9,7 @@ import type {
 	BotDraft,
 	CreateRoomBody,
 	InterruptBody,
+	RoomInterruptBody,
 	RoomSendBody,
 	SaveProviderBody,
 	SendBody,
@@ -349,6 +350,23 @@ export async function buildServer(
 				.code(400)
 				.send({ error: renderRoomOutcome(outcome, body.room) });
 		}
+		return reply.send({ ok: true });
+	});
+
+	app.post("/api/rooms/interrupt", (request, reply) => {
+		const interruptRoom = hub.interruptRoom?.bind(hub);
+		if (interruptRoom === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot interrupt rooms" });
+		}
+		const body = request.body as Partial<RoomInterruptBody> | undefined;
+		if (typeof body?.room !== "string") {
+			return reply.code(400).send({ error: "expected {room}" });
+		}
+		// An unknown room is a no-op, like Team.interruptRoom; the room may
+		// have finished between the click and this request.
+		interruptRoom(body.room);
 		return reply.send({ ok: true });
 	});
 

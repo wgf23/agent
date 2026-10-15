@@ -124,6 +124,10 @@ export class CompositeHub extends EventBus implements Hub {
 		return this.robs.sendToRoom(room, text);
 	}
 
+	interruptRoom(room: string): void {
+		this.robs.interruptRoom(room);
+	}
+
 	async createBot(draft: BotDraft): Promise<BotInfo> {
 		const parsed = robConfigSchema.safeParse(toRobConfig(draft));
 		if (!parsed.success) {

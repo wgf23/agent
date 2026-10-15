@@ -209,6 +209,10 @@ export interface RoomSendBody {
 	text: string;
 }
 
+export interface RoomInterruptBody {
+	room: string;
+}
+
 export type ToolStatus = "running" | "ok" | "error" | "blocked";
 
 export interface ToolCallView {

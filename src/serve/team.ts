@@ -159,6 +159,10 @@ export class TeamHub extends EventBus implements Hub {
 		return this.team.sendToRoom(room, text);
 	}
 
+	interruptRoom(room: string): void {
+		this.team.interruptRoom(room);
+	}
+
 	resolveApproval(id: string, decision: ApprovalChoice): void {
 		try {
 			this.team.resolveApproval(id, decision);
