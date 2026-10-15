@@ -155,6 +155,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			<TeamApp
 				team={team}
 				robs={robs}
+				rooms={rooms}
 				model={settings.model}
 				allowAll={allowAll}
 			/>,

@@ -59,7 +59,7 @@ describe("robSuggestions", () => {
 describe("teamSuggestions", () => {
 	it("matches the team command set by prefix", () => {
 		expect(teamSuggestions("/", ["planner"]).map((item) => item.value)).toEqual(
-			["/help", "/dm", "/sub", "/quit", "/allow-all"],
+			["/help", "/dm", "/sub", "/room", "/rooms", "/quit", "/allow-all"],
 		);
 		expect(
 			teamSuggestions("/d", ["planner"]).map((item) => item.value),

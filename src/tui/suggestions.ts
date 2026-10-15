@@ -29,6 +29,8 @@ export const TEAM_COMMANDS: readonly CommandSpec[] = [
 	{ name: "/help", hint: "list the commands" },
 	{ name: "/dm", hint: "open direct messages" },
 	{ name: "/sub", hint: "open sub-agents" },
+	{ name: "/room", hint: "create, select, or update a room" },
+	{ name: "/rooms", hint: "list the rooms" },
 	{ name: "/quit", hint: "exit my-agent" },
 	{ name: "/allow-all", hint: "auto-approve every tool call" },
 ];
@@ -58,9 +60,10 @@ export function commandSuggestions(
 ): Suggestion[] {
 	const query = leadingQuery(input, "/");
 	if (query === null) return [];
+	// The command set is small and static, so it is not capped like names;
+	// a command missing from the menu is a command nobody finds.
 	return commands
 		.filter((command) => command.name.slice(1).toLowerCase().startsWith(query))
-		.slice(0, MAX_SUGGESTIONS)
 		.map((command) => ({
 			value: command.name,
 			label: command.name,

@@ -7,6 +7,14 @@ import {
 } from "../../permissions/allow-all.js";
 import type { ApprovalChoice } from "../../permissions/authorizer.js";
 import type { TeamListener } from "../../rob/events.js";
+import type {
+	RoomConfig,
+	RoomCreateOutcome,
+	RoomMembershipOutcome,
+	RoomName,
+	RoomSendOutcome,
+} from "../../rob/room.js";
+import { renderRoomOutcome } from "../../rob/room-text.js";
 import { MessageList } from "../components/MessageList.js";
 import { PermissionDialog } from "../components/PermissionDialog.js";
 import { PromptInput } from "../components/PromptInput.js";
@@ -14,12 +22,15 @@ import type { TuiStatus } from "../state.js";
 import { isMenuOpen, teamSuggestions } from "../suggestions.js";
 import { useAllowAllState } from "../use-allow-all.js";
 import { DmView } from "./components/DmView.js";
-import { RobList } from "./components/RobList.js";
+import { RoomTranscript } from "./components/RoomTranscript.js";
 import { SubagentView } from "./components/SubagentView.js";
+import { TeamList } from "./components/TeamList.js";
 import { TeamStatusBar } from "./components/TeamStatusBar.js";
 import {
 	initialTeamState,
 	selectedRob,
+	selectedRoom,
+	suggestionNames,
 	type TeamRobState,
 	type TeamView,
 	teamReducer,
@@ -32,11 +43,18 @@ export interface TeamController {
 	dispatch(name: string, text: string): void;
 	interject(name: string, text: string): void;
 	resolveApproval(id: string, decision: ApprovalChoice): void;
+	createRoom(config: RoomConfig): RoomCreateOutcome;
+	sendToRoom(room: RoomName, text: string): RoomSendOutcome;
+	setRoomMembers(
+		room: RoomName,
+		members: readonly RoomName[],
+	): RoomMembershipOutcome;
 }
 
 export interface TeamAppProps {
 	team: TeamController;
 	robs: readonly { name: string }[];
+	rooms?: readonly { name: string; members: readonly string[] }[];
 	model: string;
 	allowAll: AllowAll;
 	onExit?: () => void;
@@ -45,6 +63,7 @@ export interface TeamAppProps {
 export function TeamApp({
 	team,
 	robs,
+	rooms,
 	model,
 	allowAll,
 	onExit,
@@ -53,7 +72,7 @@ export function TeamApp({
 	const exit = onExit ?? app.exit;
 	const [state, dispatch] = useReducer(
 		teamReducer,
-		{ robs, model },
+		{ robs, rooms: rooms ?? [], model },
 		initialTeamState,
 	);
 	const allowAllOn = useAllowAllState(allowAll);
@@ -111,10 +130,10 @@ export function TeamApp({
 
 	useInput((input, key) => {
 		const dialogOpen = state.approvals.length > 0;
-		const robNames = state.robs.map((rob) => rob.name);
+		const names = suggestionNames(state);
 		const menuOpen = isMenuOpen(
 			state.menu,
-			teamSuggestions(state.input, robNames),
+			teamSuggestions(state.input, names),
 		);
 		if (key.ctrl && input === "a") {
 			setAllowAll("");
@@ -142,6 +161,63 @@ export function TeamApp({
 		}
 	});
 
+	// Command output belongs to the selected entry: a rob's transcript or a
+	// room's local notes. It never touches a room transcript.
+	const dispatchToCurrent = useCallback(
+		(text: string) => {
+			const room = selectedRoom(state);
+			if (room !== undefined) {
+				dispatch({ type: "room_system", room: room.name, text });
+				return;
+			}
+			const rob = selectedRob(state);
+			if (rob !== undefined) {
+				dispatch({ type: "system", rob: rob.name, text });
+			}
+		},
+		[state],
+	);
+
+	const runRoom = useCallback(
+		(arg: string) => {
+			const [name, ...members] = arg.split(/\s+/).filter((part) => part !== "");
+			if (name === undefined) {
+				dispatchToCurrent("Usage: /room <name> <member> <member> [member ...]");
+				return;
+			}
+			const known = state.rooms.find((room) => room.name === name);
+			if (known === undefined) {
+				const outcome = team.createRoom({ name, members });
+				if (outcome.status === "rejected") {
+					dispatchToCurrent(renderRoomOutcome(outcome, name));
+					return;
+				}
+				dispatch({ type: "select_name", name });
+				return;
+			}
+			if (members.length > 0) {
+				const outcome = team.setRoomMembers(name, members);
+				if (outcome.status === "rejected") {
+					dispatchToCurrent(renderRoomOutcome(outcome, name));
+					return;
+				}
+			}
+			dispatch({ type: "select_name", name });
+		},
+		[team, state.rooms, dispatchToCurrent],
+	);
+
+	const listRooms = useCallback(() => {
+		const rooms = state.rooms;
+		dispatchToCurrent(
+			rooms.length === 0
+				? "No rooms. Use /room <name> <member> <member> to create one."
+				: `Rooms: ${rooms
+						.map((room) => `${room.name} (${room.members.join(", ")})`)
+						.join("; ")}`,
+		);
+	}, [state.rooms, dispatchToCurrent]);
+
 	const submit = useCallback(
 		(raw: string) => {
 			const text = raw.trim();
@@ -150,15 +226,27 @@ export function TeamApp({
 				runCommand(text, {
 					exit,
 					view: (view) => dispatch({ type: "view", view }),
-					system: (line) => {
-						const rob = selectedRob(state);
-						if (rob !== undefined) {
-							dispatch({ type: "system", rob: rob.name, text: line });
-						}
-					},
+					system: dispatchToCurrent,
 					allowAll: setAllowAll,
+					room: runRoom,
+					rooms: listRooms,
 				});
 				dispatch({ type: "set_input", text: "" });
+				return;
+			}
+			const room = selectedRoom(state);
+			if (room !== undefined) {
+				// The room parses @mentions itself, and the entry event is the
+				// only append: the surface never writes to the transcript.
+				dispatch({ type: "set_input", text: "" });
+				const outcome = team.sendToRoom(room.name, text);
+				if (outcome.status === "rejected") {
+					dispatch({
+						type: "room_system",
+						room: room.name,
+						text: renderRoomOutcome(outcome, room.name),
+					});
+				}
 				return;
 			}
 			const target = parseTarget(text, state.robs, state.selected);
@@ -185,12 +273,13 @@ export function TeamApp({
 			if (interjection) team.interject(rob.name, target.text);
 			else team.dispatch(rob.name, target.text);
 		},
-		[team, state, exit, setAllowAll],
+		[team, state, exit, setAllowAll, dispatchToCurrent, runRoom, listRooms],
 	);
 
 	const selected = selectedRob(state);
+	const room = selectedRoom(state);
 	const head = state.approvals[0];
-	const robNames = state.robs.map((rob) => rob.name);
+	const names = suggestionNames(state);
 	const promptStatus: TuiStatus =
 		state.approvals.length > 0
 			? "awaiting_permission"
@@ -202,7 +291,11 @@ export function TeamApp({
 		<Box flexDirection="column">
 			<TeamStatusBar state={state} allowAll={allowAllOn} />
 			<Box flexDirection="row">
-				<RobList robs={state.robs} selected={state.selected} />
+				<TeamList
+					robs={state.robs}
+					rooms={state.rooms}
+					selected={state.selected}
+				/>
 				<Box flexDirection="column" flexGrow={1}>
 					{state.view === "transcript" && selected !== undefined ? (
 						<MessageList
@@ -210,6 +303,9 @@ export function TeamApp({
 							expandTools={state.expandTools}
 							expandReasoning={state.expandReasoning}
 						/>
+					) : null}
+					{state.view === "transcript" && room !== undefined ? (
+						<RoomTranscript room={room} />
 					) : null}
 					{state.view === "dms" ? <DmView dms={state.dms} /> : null}
 					{state.view === "subagents" ? (
@@ -241,7 +337,7 @@ export function TeamApp({
 					active={state.approvals.length === 0}
 					status={promptStatus}
 					menu={state.menu}
-					suggestionsFor={(text) => teamSuggestions(text, robNames)}
+					suggestionsFor={(text) => teamSuggestions(text, names)}
 					onChange={(text) => dispatch({ type: "set_input", text })}
 					onSubmit={submit}
 					onHistoryPrev={() => dispatch({ type: "history_prev" })}
@@ -266,6 +362,8 @@ interface CommandContext {
 	view: (view: TeamView) => void;
 	system: (line: string) => void;
 	allowAll: (arg: string) => void;
+	room: (arg: string) => void;
+	rooms: () => void;
 }
 
 function runCommand(text: string, context: CommandContext): void {
@@ -280,12 +378,18 @@ function runCommand(text: string, context: CommandContext): void {
 		case "/sub":
 			context.view("subagents");
 			return;
+		case "/room":
+			context.room(text.slice(command.length).trim());
+			return;
+		case "/rooms":
+			context.rooms();
+			return;
 		case "/allow-all":
 			context.allowAll(text.slice(command.length).trim());
 			return;
 		case "/help":
 			context.system(
-				"Commands: /help, /allow-all, /dm, /sub, /quit. Keys: tab cycles robs, ctrl+a allow-all, ctrl+d DMs, ctrl+s sub-agents, ctrl+o tools, ctrl+t reasoning.",
+				"Commands: /help, /allow-all, /dm, /sub, /room, /rooms, /quit. Keys: tab cycles robs and rooms, ctrl+a allow-all, ctrl+d DMs, ctrl+s sub-agents, ctrl+o tools, ctrl+t reasoning.",
 			);
 			return;
 		default:

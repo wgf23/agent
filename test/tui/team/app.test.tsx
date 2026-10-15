@@ -236,6 +236,52 @@ describe("TeamApp", () => {
 		await waitFor(() => expect(lastFrame()).toContain("planner wrote it"));
 	});
 
+	it("creates a room, routes input to it, and shows the shared transcript", async () => {
+		const providers = {
+			planner: createMockProvider([
+				[
+					{
+						type: "tool_call",
+						id: "call_1",
+						name: "room_reply",
+						args: { text: "I can take the parser fix." },
+					},
+					{ type: "finish", reason: "tool_calls" },
+				],
+				[
+					{ type: "text_delta", text: "done" },
+					{ type: "finish", reason: "stop" },
+				],
+			]),
+			worker: createMockProvider([
+				[
+					{ type: "text_delta", text: "nothing to add" },
+					{ type: "finish", reason: "stop" },
+				],
+			]),
+		};
+		const { stdin, lastFrame } = renderTeam(makeTeam(providers));
+		await waitFor(() => expect(lastFrame()).toContain("> planner"));
+
+		stdin.write("/room ship-it planner worker");
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("> ship-it"));
+
+		stdin.write("who takes the parser?");
+		stdin.write("\r");
+		await waitFor(() =>
+			expect(lastFrame()).toContain("user: who takes the parser?"),
+		);
+		await waitFor(() =>
+			expect(lastFrame()).toContain("planner: I can take the parser fix."),
+		);
+
+		// The room is the only writer: the user line appears once, so no
+		// optimistic copy was appended before the room's entry event.
+		const frame = lastFrame() ?? "";
+		expect(frame.split("user: who takes the parser?").length - 1).toBe(1);
+	});
+
 	it("does not accept input or write to the team in read-only views", async () => {
 		const calls: string[] = [];
 		const team: TeamController = {
@@ -251,6 +297,9 @@ describe("TeamApp", () => {
 			resolveApproval: (id) => {
 				calls.push(`resolve ${id}`);
 			},
+			createRoom: () => ({ status: "rejected", reason: "invalid_name" }),
+			sendToRoom: () => ({ status: "rejected", reason: "unknown_room" }),
+			setRoomMembers: () => ({ status: "rejected", reason: "unknown_room" }),
 		};
 		const { stdin, lastFrame } = renderTeam(team);
 		await waitFor(() => expect(lastFrame()).toContain("> planner"));

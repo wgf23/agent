@@ -1,10 +1,17 @@
 import type { ApprovalRequest } from "../../rob/approvals.js";
 import type { TeamEvent } from "../../rob/events.js";
+import type {
+	RoomEntry,
+	RoomEvent,
+	RoomRun,
+	RunOutcome,
+} from "../../rob/room.js";
 import type { DmEntry, RobStatus, SubagentEntry } from "../../rob/types.js";
 import {
 	applyAgentEvent,
 	type TranscriptState,
 	type TuiMessage,
+	type TuiSystemMessage,
 } from "../state.js";
 import {
 	acceptMenu,
@@ -22,8 +29,27 @@ export interface TeamRobState extends TranscriptState {
 	robStatus: RobStatus;
 }
 
+/** A room as the surface holds it: the events it applied plus surface-local
+ *  command output. `notes` never goes back to the room; the room is the only
+ *  writer of `transcript`. */
+export interface TeamRoomState {
+	name: string;
+	members: string[];
+	transcript: RoomEntry[];
+	run: RoomRun;
+	lastOutcome: RunOutcome | null;
+	notes: TuiSystemMessage[];
+	nextNoteId: number;
+}
+
+export interface TeamEntry {
+	readonly kind: "rob" | "room";
+	readonly name: string;
+}
+
 export interface TeamState {
 	robs: TeamRobState[];
+	rooms: TeamRoomState[];
 	selected: number;
 	view: TeamView;
 	approvals: ApprovalRequest[];
@@ -40,6 +66,7 @@ export interface TeamState {
 
 export interface TeamInit {
 	robs: readonly { name: string }[];
+	rooms?: readonly { name: string; members: readonly string[] }[];
 	model: string;
 }
 
@@ -48,7 +75,9 @@ export type TeamAction =
 	| { type: "set_input"; text: string }
 	| { type: "user_message"; rob: string; text: string; interjection: boolean }
 	| { type: "system"; rob: string; text: string }
+	| { type: "room_system"; room: string; text: string }
 	| { type: "select"; index: number }
+	| { type: "select_name"; name: string }
 	| { type: "cycle"; direction: 1 | -1 }
 	| { type: "view"; view: TeamView }
 	| { type: "close_view" }
@@ -71,6 +100,10 @@ export function initialTeamState(init: TeamInit): TeamState {
 			lastError: null,
 			nextId: 1,
 		})),
+		rooms: (init.rooms ?? []).map((room) => ({
+			...emptyRoom(room.name),
+			members: [...room.members],
+		})),
 		selected: 0,
 		view: "transcript",
 		approvals: [],
@@ -87,7 +120,29 @@ export function initialTeamState(init: TeamInit): TeamState {
 }
 
 export function selectedRob(state: TeamState): TeamRobState | undefined {
+	if (state.selected >= state.robs.length) return undefined;
 	return state.robs[state.selected];
+}
+
+export function selectedRoom(state: TeamState): TeamRoomState | undefined {
+	const index = state.selected - state.robs.length;
+	if (index < 0) return undefined;
+	return state.rooms[index];
+}
+
+/** The one place the selection order lives: robs first, then rooms. */
+export function teamEntries(state: TeamState): readonly TeamEntry[] {
+	return [
+		...state.robs.map((rob) => ({ kind: "rob" as const, name: rob.name })),
+		...state.rooms.map((room) => ({ kind: "room" as const, name: room.name })),
+	];
+}
+
+/** The @ suggestions follow the selection: a room suggests its members. */
+export function suggestionNames(state: TeamState): string[] {
+	const room = selectedRoom(state);
+	if (room !== undefined) return [...room.members];
+	return state.robs.map((rob) => rob.name);
 }
 
 export function teamTokens(state: TeamState): {
@@ -136,13 +191,30 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 				appendMessage(rob, { role: "system", text: action.text }),
 			);
 
-		case "select":
-			if (action.index < 0 || action.index >= state.robs.length) return state;
+		case "room_system":
+			return updateRoom(state, action.room, (room) => ({
+				...room,
+				notes: appendNote(room, action.text),
+				nextNoteId: room.nextNoteId + 1,
+			}));
+
+		case "select": {
+			const count = state.robs.length + state.rooms.length;
+			if (action.index < 0 || action.index >= count) return state;
 			return { ...state, selected: action.index };
+		}
+
+		case "select_name": {
+			const index = teamEntries(state).findIndex(
+				(entry) => entry.name === action.name,
+			);
+			if (index === -1) return state;
+			return { ...state, selected: index };
+		}
 
 		case "cycle": {
-			if (state.robs.length === 0) return state;
-			const count = state.robs.length;
+			const count = state.robs.length + state.rooms.length;
+			if (count === 0) return state;
 			return {
 				...state,
 				selected: (state.selected + action.direction + count) % count,
@@ -166,7 +238,7 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 				...state,
 				menu: moveMenu(
 					state.menu,
-					teamSuggestions(action.text, robNames(state)),
+					teamSuggestions(action.text, suggestionNames(state)),
 					action.delta,
 				),
 			};
@@ -175,7 +247,7 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 			const accepted = acceptMenu(
 				action.text,
 				state.menu,
-				teamSuggestions(action.text, robNames(state)),
+				teamSuggestions(action.text, suggestionNames(state)),
 			);
 			if (accepted === null) return state;
 			return {
@@ -219,10 +291,6 @@ export function teamReducer(state: TeamState, action: TeamAction): TeamState {
 	}
 }
 
-function robNames(state: TeamState): string[] {
-	return state.robs.map((rob) => rob.name);
-}
-
 function applyTeamEvent(state: TeamState, event: TeamEvent): TeamState {
 	switch (event.kind) {
 		case "rob_event":
@@ -260,8 +328,70 @@ function applyTeamEvent(state: TeamState, event: TeamEvent): TeamState {
 				approvals: state.approvals.filter((item) => item.id !== event.id),
 			};
 		case "room":
+			return applyRoomEvent(state, event.event);
+	}
+}
+
+function applyRoomEvent(state: TeamState, event: RoomEvent): TeamState {
+	switch (event.kind) {
+		case "members":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				members: [...event.members],
+			}));
+		case "entry":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				transcript: [...room.transcript, { ...event.entry }],
+			}));
+		case "run":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				run: { ...event.run },
+			}));
+		case "run_ended":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				run: { phase: "idle" },
+				lastOutcome: event.outcome,
+			}));
+		case "turn":
+			// A turn only annotates the round that just closed, and the run
+			// snapshot already names the current speaker, so there is no state.
 			return state;
 	}
+}
+
+function emptyRoom(name: string): TeamRoomState {
+	return {
+		name,
+		members: [],
+		transcript: [],
+		run: { phase: "idle" },
+		lastOutcome: null,
+		notes: [],
+		nextNoteId: 1,
+	};
+}
+
+/** Room events can arrive before a create returns; an unknown room is created
+ *  on the spot so an event is never dropped. */
+function updateRoom(
+	state: TeamState,
+	name: string,
+	update: (room: TeamRoomState) => TeamRoomState,
+): TeamState {
+	const index = state.rooms.findIndex((room) => room.name === name);
+	if (index === -1) {
+		return { ...state, rooms: [...state.rooms, update(emptyRoom(name))] };
+	}
+	const rooms = state.rooms.slice();
+	rooms[index] = update(rooms[index]);
+	return { ...state, rooms };
+}
+
+function appendNote(room: TeamRoomState, text: string): TuiSystemMessage[] {
+	return [...room.notes, { id: room.nextNoteId, role: "system", text }];
 }
 
 function updateRob(
