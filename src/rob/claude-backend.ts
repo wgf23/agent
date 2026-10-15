@@ -16,7 +16,7 @@ import {
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
-import { teamMcpShim } from "./gateway/shims.js";
+import { TEAM_MCP_SERVER, teamMcpShim } from "./gateway/shims.js";
 import { renderTeamPreamble } from "./roster.js";
 import type { Inbound, RobName } from "./types.js";
 
@@ -24,15 +24,12 @@ const CLAUDE_COMMAND = "claude";
 const DEFAULT_TURN_TIMEOUT_MS = 600_000;
 const SUMMARY_MAX_CHARS = 200;
 const UI_OUTPUT_MAX_CHARS = 4000;
-const MAX_STDERR_CHARS = 1000;
-
-// The MCP server name is also the prefix in every team tool's claude name,
-// "mcp__myagent-team__send_message" and friends.
-const TEAM_MCP_SERVER = "myagent-team";
-const TEAM_MCP_FILE = "team-mcp.mjs";
-const TEAM_MCP_CONFIG_FILE = "team-mcp.json";
+const STDERR_MAX_CHARS = 1000;
 
 export const CLAUDE_CONFIG_DIR_ENV = "MY_AGENT_CLAUDE_CONFIG_DIR";
+
+const TEAM_MCP_FILE = "team-mcp.mjs";
+const TEAM_MCP_CONFIG_FILE = "team-mcp.json";
 
 // Our tool name to Claude Code's built-in tool name.
 const CLAUDE_TOOLS: ReadonlyArray<readonly [string, string]> = [
@@ -121,19 +118,15 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 		async run(turn) {
 			await mkdir(configDir, { recursive: true });
 
-			const { allowed, disallowed } = claudeToolAllowlist(turn.rules);
-			const defs = turn.bridge.tools.map(toolDefinition);
-			const teamTools = defs.map(
-				(def) => `mcp__${TEAM_MCP_SERVER}__${def.name}`,
-			);
-			// The bridge env is opaque to this backend, so it travels whole. The
-			// MCP config lives in a file so the per-turn secret stays out of argv.
+			// The bridge env is opaque to this backend, so it travels whole into
+			// the shim's MCP config rather than by key name.
 			const childEnv = turn.bridge.childEnv();
+			const defs = turn.bridge.tools.map(toolDefinition);
 			let mcpConfigFile: string | undefined;
 			if (defs.length > 0) {
 				const shimFile = path.join(configDir, TEAM_MCP_FILE);
-				mcpConfigFile = path.join(configDir, TEAM_MCP_CONFIG_FILE);
 				await writeFile(shimFile, teamMcpShim({ defs }), "utf8");
+				mcpConfigFile = path.join(configDir, TEAM_MCP_CONFIG_FILE);
 				await writeFile(
 					mcpConfigFile,
 					JSON.stringify({
@@ -148,9 +141,15 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 					"utf8",
 				);
 			}
-			const prompt = turn.inbound.map(promptFor).join("\n\n");
-			const allowedTools = [...allowed, ...teamTools];
 
+			const { allowed, disallowed } = claudeToolAllowlist(turn.rules);
+			// The gateway authorizes a team call, so claude gates nothing there: a
+			// team tool's allowed entry only carries the call to the shim.
+			const teamTools = defs.map(
+				(def) => `mcp__${TEAM_MCP_SERVER}__${def.name}`,
+			);
+			const allowedTools = [...allowed, ...teamTools];
+			const prompt = turn.inbound.map(promptFor).join("\n\n");
 			const args = [
 				"-p",
 				prompt,
@@ -164,8 +163,6 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 					roster: turn.bridge.roster(),
 					tools: turn.bridge.tools,
 				}),
-				// A team call is let through here and authorized by the gateway,
-				// the same way the pi and opencode backends expose their tools.
 				...(allowedTools.length > 0
 					? ["--allowedTools", allowedTools.join(",")]
 					: []),
@@ -490,8 +487,8 @@ function stderrDiagnostics(stderr: string): string {
 }
 
 function capStderr(text: string): string {
-	return text.length > MAX_STDERR_CHARS
-		? text.slice(0, MAX_STDERR_CHARS)
+	return text.length > STDERR_MAX_CHARS
+		? text.slice(0, STDERR_MAX_CHARS)
 		: text;
 }
 
