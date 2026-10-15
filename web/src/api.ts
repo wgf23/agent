@@ -7,6 +7,9 @@ export interface ApiClient {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	): Promise<FileListResponse>;
+	// The same-origin URL that streams one workspace file, so a plain
+	// <a download> lets the browser download it itself.
+	fileDownloadUrl(path: string): string;
 }
 
 // A failed request that keeps its HTTP status, so a caller can weigh the
@@ -72,5 +75,12 @@ export function createApi(
 		return (await response.json()) as FileListResponse;
 	}
 
-	return { listFiles };
+	// The download URL is built as a literal string rather than through the
+	// fetch path: an <a download> navigates the browser itself, so only the
+	// percent-encoded path rides in the query.
+	function fileDownloadUrl(path: string): string {
+		return `/api/files/download?path=${encodeURIComponent(path)}`;
+	}
+
+	return { listFiles, fileDownloadUrl };
 }

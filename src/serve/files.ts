@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { FileEntry, FileListResponse } from "../../shared/protocol.js";
 import { loadGitignore } from "../util/gitignore.js";
@@ -9,6 +9,15 @@ export interface ListDirectoryOptions {
 	showHidden?: boolean;
 	showIgnored?: boolean;
 	limit?: number;
+}
+
+// How one path resolves inside the workspace: a download answers 404 for a
+// missing path and 400 for a directory, so the stat is classified rather than
+// re-derived by the route. `path` is the absolute, in-workspace target.
+export interface PathStat {
+	path: string;
+	kind: "missing" | "directory" | "file";
+	size: number;
 }
 
 // A read that found nothing to list: the path is missing or is not a directory.
@@ -81,6 +90,28 @@ export async function listDirectory(
 		ignored,
 		truncated,
 	};
+}
+
+// Stats one path inside the workspace and classifies it, so a download route
+// can answer 404 (missing) or 400 (directory) without re-implementing the
+// check. resolveInWorkspace bounds the path first, so an escape throws before
+// any read; a stat that finds nothing is a "missing" answer rather than an
+// error, and any other failure propagates so the route can answer 500.
+export async function statPath(
+	workspaceRoot: string,
+	relPath: string,
+): Promise<PathStat> {
+	const resolved = resolveInWorkspace(workspaceRoot, relPath);
+	try {
+		const info = await stat(resolved);
+		if (info.isDirectory()) {
+			return { path: resolved, kind: "directory", size: 0 };
+		}
+		return { path: resolved, kind: "file", size: info.size };
+	} catch (error) {
+		if (isMissing(error)) return { path: resolved, kind: "missing", size: 0 };
+		throw error;
+	}
 }
 
 function kindOf(dirent: Dirent) {

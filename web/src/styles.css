@@ -2277,6 +2277,25 @@ select.field-input option {
 	align-self: flex-start;
 }
 
+.file-download {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	border-radius: 4px;
+	color: var(--text-3);
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+.file-download:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 880px) {

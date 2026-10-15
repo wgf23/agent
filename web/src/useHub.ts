@@ -69,6 +69,9 @@ export interface Hub {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	) => Promise<FileListResponse>;
+	// The download URL for one file, so a plain <a download> in the panel
+	// streams it without going through fetch.
+	fileDownloadUrl: (path: string) => string;
 	// Resolves with the server's optional non-blocking warning so the dialog can
 	// surface it; throws the server's error message on failure.
 	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
@@ -181,6 +184,12 @@ export function useHub(): Hub {
 		[],
 	);
 
+	// Pure URL construction: no request, so a plain anchor can carry it.
+	const fileDownloadUrl = useCallback(
+		(path: string) => api.fileDownloadUrl(path),
+		[],
+	);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -252,5 +261,6 @@ export function useHub(): Hub {
 		closeSettings,
 		saveProvider,
 		listFiles,
+		fileDownloadUrl,
 	};
 }

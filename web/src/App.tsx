@@ -181,7 +181,11 @@ export default function App() {
 				)}
 			</div>
 
-			<FileTree listFiles={hub.listFiles} open={filesOpen} />
+			<FileTree
+				listFiles={hub.listFiles}
+				fileDownloadUrl={hub.fileDownloadUrl}
+				open={filesOpen}
+			/>
 
 			{approval !== null && (
 				<PermissionModal

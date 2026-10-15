@@ -8,6 +8,10 @@ import { buildServer } from "../../src/serve/server.js";
 
 let root: string;
 
+// Known bytes for the download case: including a NUL and 0xFF proves the body
+// is byte-for-byte, not a re-encoded string.
+const DATA_BYTES = [0, 1, 2, 255, 10];
+
 beforeEach(async () => {
 	root = await mkdtemp(path.join(tmpdir(), "files-http-"));
 	await mkdir(path.join(root, "src"));
@@ -101,6 +105,78 @@ describe("GET /api/files", () => {
 		expect(JSON.stringify(escapeBody)).not.toContain("passwd");
 
 		expect((await get("/api/files?path=nope")).status).toBe(404);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+});
+
+describe("GET /api/files/download", () => {
+	it("streams a file byte-for-byte with attachment headers", async () => {
+		// Seeded here, not in beforeEach, so the M1 listing fixture is untouched.
+		await writeFile(
+			path.join(root, "src", "data.bin"),
+			Buffer.from(DATA_BYTES),
+		);
+		const app = await buildServer(stubHub(root), undefined);
+		await app.listen({ port: 0, host: "127.0.0.1" });
+		const address = app.server.address();
+		const port =
+			typeof address === "object" && address !== null ? address.port : 0;
+		const get = (route: string) => fetch(`http://127.0.0.1:${port}${route}`);
+
+		const response = await get(
+			`/api/files/download?path=${encodeURIComponent("src/data.bin")}`,
+		);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toBe(
+			"application/octet-stream",
+		);
+		// The basename is what the browser saves, not the relative path.
+		expect(response.headers.get("content-disposition")).toBe(
+			'attachment; filename="data.bin"',
+		);
+		expect(response.headers.get("content-length")).toBe(
+			String(DATA_BYTES.length),
+		);
+		const body = Buffer.from(await response.arrayBuffer());
+		expect(body.length).toBe(DATA_BYTES.length);
+		expect(body.equals(Buffer.from(DATA_BYTES))).toBe(true);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+	});
+
+	it("answers 400 for an escape, 404 for a missing path, and 400 for a directory", async () => {
+		const app = await buildServer(stubHub(root), undefined);
+		await app.listen({ port: 0, host: "127.0.0.1" });
+		const address = app.server.address();
+		const port =
+			typeof address === "object" && address !== null ? address.port : 0;
+		const get = (route: string) => fetch(`http://127.0.0.1:${port}${route}`);
+
+		// An escape is a JSON refusal, never the out-of-workspace bytes.
+		const escaped = await get(
+			`/api/files/download?path=${encodeURIComponent("../secret")}`,
+		);
+		expect(escaped.status).toBe(400);
+		expect(escaped.headers.get("content-type")).toContain("application/json");
+		const escapeBody = (await escaped.json()) as { error?: unknown };
+		expect(typeof escapeBody.error).toBe("string");
+
+		const missing = await get(
+			`/api/files/download?path=${encodeURIComponent("nope.txt")}`,
+		);
+		expect(missing.status).toBe(404);
+		expect(typeof (await missing.json()).error).toBe("string");
+
+		const directory = await get(
+			`/api/files/download?path=${encodeURIComponent("src")}`,
+		);
+		expect(directory.status).toBe(400);
+		await expect(directory.json()).resolves.toEqual({
+			error: "directories cannot be downloaded",
+		});
 
 		app.server.closeAllConnections?.();
 		await app.close();

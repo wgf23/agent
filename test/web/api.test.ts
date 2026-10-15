@@ -45,6 +45,14 @@ const invocations: Array<{
 	},
 ];
 
+describe("fileDownloadUrl", () => {
+	it("percent-encodes the path so a plain link downloads the file", () => {
+		expect(createApi().fileDownloadUrl("docs/a b.txt")).toBe(
+			"/api/files/download?path=docs%2Fa%20b.txt",
+		);
+	});
+});
+
 describe("request construction", () => {
 	it("builds every path, method, and body literally", async () => {
 		for (const call of invocations) {

@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { FileEntry, FileListResponse } from "../protocol";
 import {
+	ArrowDownIcon,
 	ChevronRightIcon,
 	FileIcon,
 	FolderIcon,
@@ -15,6 +16,9 @@ interface Props {
 		path: string,
 		options?: { showHidden?: boolean; showIgnored?: boolean },
 	) => Promise<FileListResponse>;
+	// A same-origin download URL, so the row anchor lets the browser stream the
+	// file itself.
+	fileDownloadUrl: (path: string) => string;
 	// Wide screens show the panel inline; a sidebar button folds it away.
 	open: boolean;
 }
@@ -23,7 +27,7 @@ interface Props {
 // directory is fetched the first time it is expanded, then cached; the flags
 // re-read from scratch so every visible directory matches them, and 刷新 drops
 // the cache entirely.
-export default function FileTree({ listFiles, open }: Props) {
+export default function FileTree({ listFiles, fileDownloadUrl, open }: Props) {
 	const [cache, setCache] = useState<Record<string, FileListResponse>>({});
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [loading, setLoading] = useState<Set<string>>(new Set());
@@ -108,6 +112,17 @@ export default function FileTree({ listFiles, open }: Props) {
 					<span className="file-name" title={entryTitle(entry)}>
 						{entry.name}
 					</span>
+					{!isDir && (
+						<a
+							className="file-download"
+							href={fileDownloadUrl(entry.path)}
+							download={entry.name}
+							title={`下载 ${entry.name}`}
+							aria-label={`下载 ${entry.name}`}
+						>
+							<ArrowDownIcon size={13} />
+						</a>
+					)}
 				</div>
 				{isDir && isOpen && (
 					<ul className="file-tree-children">

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import fastifyStatic from "@fastify/static";
@@ -27,7 +27,12 @@ import { renderRoomOutcome } from "../rob/room-text.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
 import { PathEscapeError } from "../util/paths.js";
 import { CompositeHub } from "./composite.js";
-import { listDirectory, NotADirectoryError } from "./files.js";
+import {
+	listDirectory,
+	NotADirectoryError,
+	type PathStat,
+	statPath,
+} from "./files.js";
 import type { Hub, HubOptions } from "./hub.js";
 import { openBrowser } from "./open-browser.js";
 import {
@@ -298,6 +303,39 @@ export async function buildServer(
 			}
 			return reply.code(500).send({ error: errorText(error) });
 		}
+	});
+
+	// Streams one workspace file to the browser as a download. The path is
+	// resolved inside the active root, so an escape is a 400 and a missing path
+	// a 404; a directory is refused with a 400 rather than streamed. The body is
+	// a createReadStream, never a buffer, so a large file does not land in
+	// memory. Content-Disposition names the basename and the length comes from
+	// the stat, so the browser can show progress.
+	app.get("/api/files/download", async (request, reply) => {
+		const query = request.query as { path?: unknown };
+		const relPath = typeof query.path === "string" ? query.path : "";
+		let located: PathStat;
+		try {
+			located = await statPath(hub.hello().workspaceRoot, relPath);
+		} catch (error) {
+			if (error instanceof PathEscapeError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
+		}
+		if (located.kind === "missing") {
+			return reply.code(404).send({ error: `No such file: ${relPath}` });
+		}
+		if (located.kind === "directory") {
+			return reply
+				.code(400)
+				.send({ error: "directories cannot be downloaded" });
+		}
+		const filename = path.basename(located.path);
+		reply.header("Content-Type", "application/octet-stream");
+		reply.header("Content-Length", String(located.size));
+		reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+		return reply.send(createReadStream(located.path));
 	});
 
 	app.post("/api/sessions/new", async (request, reply) => {
