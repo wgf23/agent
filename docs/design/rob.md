@@ -15,6 +15,8 @@
 - R6.1：opencode 的 MCP shim（`teamMcpShim` 生成一个 stdio MCP 服务，`--mcp-config` 的等价物是 `OPENCODE_CONFIG_CONTENT` 里的 `mcp` 配置；opencode 对 MCP 调用发 `permission.asked`，bridge 放行后由 gateway 授权一次）。提交 `ea4b4b2`、`9a5f9b3`、`824503c`。真实 opencode 2.0.24 + DeepSeek 探针验证：opencode 调用 `myagent-team_send_message`，权限动作名正是 `myagent-team_<tool>`，gateway 收到并写入 DM 日志。
 - R7：claude CLI 后端（每回合一个 `claude -p --output-format stream-json --verbose` 进程；每 rob 一个 `CLAUDE_CONFIG_DIR`；首回合 `--session-id`、成功回合后 `--resume`；规则解析为 `allow` 的内建工具进 `--tools` 精确白名单和 `--allowedTools`，`ask`/`deny` 不进白名单；每回合写 MCP shim 与 `team-mcp.json` 并合并 `turn.bridge.childEnv()`，团队工具以 `mcp__myagent-team__<tool>` 进 `--allowedTools`；claude rob 走配置 provider 的 Anthropic 兼容端点：`childProviderEnv` 在子进程 env 里加 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`、`ANTHROPIC_SMALL_FAST_MODEL`，preset 没有该端点时不加）。实现见 `src/rob/claude-backend.ts`。提交 `f388b7d`（移植）、`a96c6b8`（bridge）、`108d91a`（配置接入 `CLAUDE_CLI_COMMAND`）、`4dbdfad`（测试）、`eb6d402`（精确工具面）、`7abe4d1`（preset 端点）、`370c8ee`（`childProviderEnv`）、`04266a4`（接入四个构造点）、`6a72e10`（测试）。
 
+- R8：群聊房间（`Room` 是共享记录的唯一写者，成员按配置顺序逐个发言，`room_reply` 工具经同一 bridge 服务，一轮无人发言即结束；TUI 把房间当作选择项，web 把房间当作会话 id；`rooms` 从 `my-agent.json` 读取）。实现见 `src/rob/room.ts`、`src/rob/room-text.ts`、`src/rob/team.ts`。设计取 architect 两个候选中的基座（房间拥有记录并做调度），并嫁接扁平 `Inbound`、`TeamPort` 不变、`PASS` 哨兵、按轮 `@name` 限定。
+
 codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi、opencode 和 claude；三者都已接入 team gateway。
 
 ### 与设计的偏差

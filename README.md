@@ -264,6 +264,29 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 
 A `pi`, `opencode`, or `claude` cli rob is a full team member: it can send private messages and start sub-agents. The two tools reach the team through a per-turn local socket the team opens, an extension for pi and a generated MCP server for opencode and claude. The rob's own authorizer and the shared approval queue still gate each call, so a `delegate` that resolves to `ask` prompts the same dialog. Set the rules in the rob's `permissions`.
 
+## Rooms
+
+A room is a named group chat over 2 to 6 of your robs. Define rooms next to your robs in `my-agent.json`:
+
+```jsonc
+{
+  "robs": [
+    { "name": "planner", "role": "split work into steps" },
+    { "name": "builder", "role": "write code" },
+    { "name": "reviewer", "role": "review diffs" }
+  ],
+  "rooms": [{ "name": "ship-it", "members": ["planner", "builder", "reviewer"] }]
+}
+```
+
+You take part in the room. One message from you starts up to three rounds, one member turn at a time in membership order. A member adds a line by calling `room_reply`, or passes by ending its turn without calling it. A round in which nobody speaks settles the run. The other ways a run ends are the round cap, the message cap of ten, a turn or run timeout, an interrupt, and a stop.
+
+Mention `@name` to scope the run to that member; with no mention, every member answers. A member reply is gated by that rob's `permissions`; `room_reply` is always allowed, like `send_message`.
+
+In the TUI, a room appears in the left list beside the robs. Select it and type. `/room <name> <member> <member>` creates or selects a room, and `/rooms` lists them. In the web UI, rooms sit in the sidebar beside the bots; create one there, open it, and its transcript survives a reload. The web room header has an interrupt button.
+
+A room's transcript lives in memory with the team, so it is gone when the process exits. A send while a run is in flight is refused, not queued.
+
 ## Known limits
 
 - `bash` is sandboxed on Linux when a backend is available (see Sandbox). Without bubblewrap or a Landlock-capable `python3`, and on macOS and Windows, it falls back to no sandbox and warns; that is why it asks first.
@@ -273,6 +296,7 @@ A `pi`, `opencode`, or `claude` cli rob is a full team member: it can send priva
 - A `pi`, `opencode`, or `claude` cli rob can use `send_message` and `delegate`. A bridged call returns to the team over a per-turn local socket, and the rob's authorizer and the shared approval queue still gate it. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook, its non-team tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask. The `claude` backend has no interactive approval bridge, so an `ask` tool stays out of the exposed built-ins instead of prompting.
 - Our permission rules map eight claude built-ins: `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`, `WebFetch`, and `WebSearch` (this branch has no `web_fetch` or `web_search` tool). A `claude` cli rob's exposed built-ins are exactly the mapped ones its rules resolve to `allow`, passed to `--tools`; Claude Code's other built-ins (`Task`, `Workflow`, `NotebookEdit`, its cron and scheduling tools, and the rest) are outside our rules and are never exposed.
 - CLI backends are `pi`, `opencode`, and `claude`. `codex` and `kimi` are not implemented.
+- Rooms keep one run at a time, so a send while a run is live is refused. A room transcript is in memory and is lost when the process exits. A member turn is a full rob turn, so a round can call tools and ask for approval, and a member that is busy with its own work makes its room round wait. A room the web or TUI creates at runtime is not written back to `my-agent.json` and is gone after a restart.
 
 ## Development
 
