@@ -1,6 +1,11 @@
 import type { ToolDefinition } from "../../providers/types.js";
 import { gatewayClientSource } from "./wire.js";
 
+/** The one name both bridged backends mount the shim under. It decides the
+ *  claude tool name `mcp__<server>__<tool>` and the opencode permission action
+ *  `${server}_<tool>`, so the two can never drift apart. */
+export const TEAM_MCP_SERVER = "myagent-team";
+
 /** The one pi extension source for a bridged turn. The gateway client half is
  *  inlined, so the child shares this process's wire format instead of a copy. */
 export function piBridgeExtension(spec: {

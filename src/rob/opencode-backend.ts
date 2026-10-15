@@ -18,7 +18,7 @@ import {
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
-import { teamMcpShim } from "./gateway/shims.js";
+import { TEAM_MCP_SERVER, teamMcpShim } from "./gateway/shims.js";
 import { renderTeamPreamble } from "./roster.js";
 import type { Inbound, RobName } from "./types.js";
 
@@ -33,9 +33,6 @@ const UI_OUTPUT_MAX_CHARS = 4000;
 
 const LISTEN_PATTERN = /server listening on (http:\/\/\S+)/;
 
-// The MCP server name is also the permission action prefix opencode derives
-// from it, so team calls arrive as "myagent-team_send_message" and friends.
-const TEAM_MCP_SERVER = "myagent-team";
 const TEAM_MCP_FILE = "team-mcp.mjs";
 
 // Our tool to the permission action opencode gates it by. write_file and
