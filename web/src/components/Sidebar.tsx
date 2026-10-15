@@ -6,7 +6,7 @@ import type {
 } from "../protocol";
 import type { ClientRoom, ConnectionStatus } from "../state";
 import { STATUS_LABEL } from "../status";
-import { GearIcon, PlusIcon } from "./icons";
+import { FolderIcon, GearIcon, PlusIcon } from "./icons";
 
 export type View = "chat" | "plaza";
 
@@ -30,6 +30,9 @@ interface Props {
 	onOpenSettings: () => void;
 	usage: UsageTotals;
 	connection: ConnectionStatus;
+	// The right-side file panel; the nav button folds it away.
+	filesOpen: boolean;
+	onToggleFiles: () => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -53,6 +56,8 @@ export default function Sidebar(props: Props) {
 		onOpenSettings,
 		usage,
 		connection,
+		filesOpen,
+		onToggleFiles,
 	} = props;
 
 	const showSessions = workspace !== null && selectedId === workspace.name;
@@ -105,6 +110,15 @@ export default function Sidebar(props: Props) {
 				>
 					Bot 广场
 					{robs.length > 0 && <span className="nav-count">{robs.length}</span>}
+				</button>
+				<button
+					type="button"
+					className={`nav-item ${filesOpen ? "active" : ""}`}
+					aria-pressed={filesOpen}
+					onClick={onToggleFiles}
+				>
+					<FolderIcon size={14} />
+					文件
 				</button>
 			</nav>
 

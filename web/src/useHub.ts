@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useReducer } from "react";
+import { createApi } from "./api";
 import type {
 	ApprovalChoice,
 	BotDraft,
+	FileListResponse,
 	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
@@ -9,6 +11,10 @@ import type {
 	SettingsResponse,
 } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
+
+// Built once; every file-panel request goes through the client so the request
+// construction stays testable outside React.
+const api = createApi();
 
 async function post(path: string, body: unknown): Promise<void> {
 	await postJson(path, body);
@@ -57,6 +63,12 @@ export interface Hub {
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
 	closeSettings: () => void;
+	// A read-only directory listing for the file panel. The panel owns the
+	// cache and the flags; this only forwards to the client.
+	listFiles: (
+		path: string,
+		options?: { showHidden?: boolean; showIgnored?: boolean },
+	) => Promise<FileListResponse>;
 	// Resolves with the server's optional non-blocking warning so the dialog can
 	// surface it; throws the server's error message on failure.
 	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
@@ -163,6 +175,12 @@ export function useHub(): Hub {
 		await postJson("/api/rooms/interrupt", { room });
 	}, []);
 
+	const listFiles = useCallback(
+		(path: string, options?: { showHidden?: boolean; showIgnored?: boolean }) =>
+			api.listFiles(path, options),
+		[],
+	);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -233,5 +251,6 @@ export function useHub(): Hub {
 		openSettings,
 		closeSettings,
 		saveProvider,
+		listFiles,
 	};
 }

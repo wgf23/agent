@@ -141,6 +141,28 @@ export interface DmInfo {
 	at: number;
 }
 
+// One entry in a directory listing. `path` is relative to the workspace root
+// in posix form; a directory reports size 0 and a symlink reports its own link
+// stats rather than its target's.
+export interface FileEntry {
+	name: string;
+	path: string;
+	kind: "file" | "dir" | "symlink";
+	size: number;
+	mtime: number;
+}
+
+// The whole answer to one directory read: the requested path (relative, posix;
+// "" is the root), the entries the flags keep, the ones a filter held back so
+// the UI can reveal them without a second request, and whether `limit` clipped
+// the visible list.
+export interface FileListResponse {
+	path: string;
+	entries: FileEntry[];
+	ignored: FileEntry[];
+	truncated: boolean;
+}
+
 // Room wire types mirror src/rob/room.ts: the server maps domain events at the
 // hub boundary, exactly as AgentEvent is mapped, and the client only renders.
 

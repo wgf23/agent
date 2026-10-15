@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import BotHeader from "./components/BotHeader";
 import BotPlaza from "./components/BotPlaza";
 import Composer from "./components/Composer";
+import FileTree from "./components/FileTree";
 import MessageList from "./components/MessageList";
 import NewBotDialog from "./components/NewBotDialog";
 import NewRoomDialog from "./components/NewRoomDialog";
@@ -22,6 +23,7 @@ export default function App() {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [roomDialogOpen, setRoomDialogOpen] = useState(false);
+	const [filesOpen, setFilesOpen] = useState(true);
 
 	const bots = state.bots;
 	const workspace = workspaceBot(bots);
@@ -86,6 +88,8 @@ export default function App() {
 				onOpenSettings={hub.openSettings}
 				usage={state.usage}
 				connection={state.connection}
+				filesOpen={filesOpen}
+				onToggleFiles={() => setFilesOpen((value) => !value)}
 			/>
 
 			<div className="main">
@@ -176,6 +180,8 @@ export default function App() {
 					</section>
 				)}
 			</div>
+
+			<FileTree listFiles={hub.listFiles} open={filesOpen} />
 
 			{approval !== null && (
 				<PermissionModal

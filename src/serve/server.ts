@@ -25,7 +25,9 @@ import { createAllowAll } from "../permissions/allow-all.js";
 import type { Provider } from "../providers/types.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
+import { PathEscapeError } from "../util/paths.js";
 import { CompositeHub } from "./composite.js";
+import { listDirectory, NotADirectoryError } from "./files.js";
 import type { Hub, HubOptions } from "./hub.js";
 import { openBrowser } from "./open-browser.js";
 import {
@@ -271,6 +273,33 @@ export async function buildServer(
 
 	app.get("/api/sessions", () => ({ sessions: hub.hello().sessions }));
 
+	// A read-only directory listing, bounded to the active workspace. The path
+	// is relative and posix; "" is the root. An escape is a 400, a missing or
+	// non-directory path is a 404, and any other failure is a 500.
+	app.get("/api/files", async (request, reply) => {
+		const query = request.query as {
+			path?: unknown;
+			showHidden?: unknown;
+			showIgnored?: unknown;
+		};
+		const relPath = typeof query.path === "string" ? query.path : "";
+		try {
+			const listing = await listDirectory(hub.hello().workspaceRoot, relPath, {
+				showHidden: isTruthyFlag(query.showHidden),
+				showIgnored: isTruthyFlag(query.showIgnored),
+			});
+			return reply.send(listing);
+		} catch (error) {
+			if (error instanceof PathEscapeError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			if (error instanceof NotADirectoryError) {
+				return reply.code(404).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
 	app.post("/api/sessions/new", async (request, reply) => {
 		const body = request.body as Partial<SessionNewBody> | undefined;
 		if (typeof body?.bot !== "string") {
@@ -443,6 +472,12 @@ export async function buildServer(
 	}
 
 	return app;
+}
+
+// The file-list flags are on only for the exact "1" or "true" spellings, so a
+// stray value keeps the safe default (hidden and ignored files stay hidden).
+function isTruthyFlag(value: unknown): boolean {
+	return value === "1" || value === "true";
 }
 
 function actualPort(app: FastifyInstance, fallback: number): number {
