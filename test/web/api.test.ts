@@ -141,6 +141,14 @@ describe("fileDownloadUrl", () => {
 	});
 });
 
+describe("fileArchiveUrl", () => {
+	it("percent-encodes the path so a plain link downloads the zip", () => {
+		expect(createApi().fileArchiveUrl("docs/my dir")).toBe(
+			"/api/files/archive?path=docs%2Fmy%20dir",
+		);
+	});
+});
+
 describe("upload", () => {
 	it("posts FormData with the path and reports progress", async () => {
 		const calls: XhrCall[] = [];

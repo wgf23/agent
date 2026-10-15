@@ -10,6 +10,9 @@ export interface ApiClient {
 	// The same-origin URL that streams one workspace file, so a plain
 	// <a download> lets the browser download it itself.
 	fileDownloadUrl(path: string): string;
+	// The same-origin URL that streams a whole workspace directory as a zip, so
+	// a directory row's 打包下载 anchor downloads the tree itself.
+	fileArchiveUrl(path: string): string;
 	// A read-only filesystem browse of directories, bounded by the server to
 	// the home directory and the active workspace root; an omitted path means
 	// home. A path outside every root rejects with the server's reason.
@@ -150,6 +153,12 @@ export function createApi(
 		return (await response.json()) as FsDirsResponse;
 	}
 
+	// The directory counterpart to fileDownloadUrl: the same literal-string
+	// construction, so the anchor carries the path unchanged.
+	function fileArchiveUrl(path: string): string {
+		return `/api/files/archive?path=${encodeURIComponent(path)}`;
+	}
+
 	// One file is posted per request so the caller sees that file's own upload
 	// progress. The body is multipart/form-data and the browser sets its own
 	// boundary. A non-2xx answer rejects with the server's reason; a 2xx
@@ -231,6 +240,7 @@ export function createApi(
 	return {
 		listFiles,
 		fileDownloadUrl,
+		fileArchiveUrl,
 		listDirs,
 		upload,
 		mkdir,

@@ -73,6 +73,9 @@ export interface Hub {
 	// The download URL for one file, so a plain <a download> in the panel
 	// streams it without going through fetch.
 	fileDownloadUrl: (path: string) => string;
+	// The zip URL for one directory, so a directory row's 打包下载 anchor
+	// downloads the tree itself.
+	fileArchiveUrl: (path: string) => string;
 	// A read-only filesystem browse of directories for the panel's root chip,
 	// bounded by the server to the home and the active workspace root.
 	listDirs: (path?: string) => Promise<FsDirsResponse>;
@@ -207,6 +210,11 @@ export function useHub(): Hub {
 		[],
 	);
 
+	const fileArchiveUrl = useCallback(
+		(path: string) => api.fileArchiveUrl(path),
+		[],
+	);
+
 	// Forwarded whole so the panel keeps the per-file progress callback and the
 	// overwrite retry; a refusal rejects with the server's message.
 	const upload = useCallback(
@@ -305,6 +313,7 @@ export function useHub(): Hub {
 		saveProvider,
 		listFiles,
 		fileDownloadUrl,
+		fileArchiveUrl,
 		listDirs,
 		upload,
 		mkdir,
