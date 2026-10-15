@@ -6,6 +6,7 @@ import {
 	createAuthorizer,
 } from "../../src/permissions/authorizer.js";
 import { Team, UnknownRobError } from "../../src/rob/team.js";
+import type { TurnHost } from "../../src/rob/types.js";
 import type { Tool } from "../../src/tools/types.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
@@ -261,6 +262,94 @@ describe("Team", () => {
 			content: "created",
 			isError: false,
 		});
+	});
+});
+
+describe("Team sessions", () => {
+	it("reports the live roster in configuration order", () => {
+		const team = makeTeam();
+
+		expect(team.roster()).toEqual([
+			{ name: "planner", role: "plan" },
+			{ name: "worker", role: "work" },
+		]);
+	});
+
+	it("refuses a DM to an unknown rob instead of dropping it", () => {
+		const team = makeTeam();
+
+		expect(team.postDm("planner", "ghost", "hi")).toEqual({
+			status: "rejected",
+			reason: "unknown_target",
+		});
+		expect(team.readDms()).toEqual([]);
+	});
+
+	it("refuses a DM to the sender", () => {
+		const team = makeTeam();
+
+		expect(team.postDm("planner", "planner", "hi")).toEqual({
+			status: "rejected",
+			reason: "self",
+		});
+		expect(team.readDms()).toEqual([]);
+	});
+
+	it("refuses a DM once the team is stopping", async () => {
+		const team = makeTeam();
+		await team.stop();
+
+		expect(team.postDm("planner", "worker", "late")).toEqual({
+			status: "rejected",
+			reason: "team_stopped",
+		});
+		expect(team.readDms()).toEqual([]);
+	});
+
+	it("opens one turn bridge per rob and rejects a second concurrent turn", async () => {
+		const team = makeTeam();
+		const host: TurnHost = {
+			signal: new AbortController().signal,
+			workspaceRoot: workspace,
+			authorize: async () => ({ allowed: true }),
+			runSubagent: async () => "answer",
+		};
+
+		await expect(team.beginTurn("ghost", host)).rejects.toThrow(
+			"Unknown rob: ghost",
+		);
+
+		const bridge = await team.beginTurn("planner", host);
+		expect(bridge.rob).toBe("planner");
+		expect(bridge.roster()).toEqual([{ name: "worker", role: "work" }]);
+		await expect(team.beginTurn("planner", host)).rejects.toThrow(
+			'Rob "planner" already has a turn in flight.',
+		);
+
+		bridge.close();
+		const next = await team.beginTurn("planner", host);
+		next.close();
+		await team.stop();
+	});
+
+	it("rejects one of two concurrent turns for the same rob", async () => {
+		const team = makeTeam();
+		const host: TurnHost = {
+			signal: new AbortController().signal,
+			workspaceRoot: workspace,
+			authorize: async () => ({ allowed: true }),
+			runSubagent: async () => "answer",
+		};
+
+		const [first, second] = await Promise.allSettled([
+			team.beginTurn("planner", host),
+			team.beginTurn("planner", host),
+		]);
+
+		expect(first.status).toBe("fulfilled");
+		expect(second.status).toBe("rejected");
+		if (first.status === "fulfilled") first.value.close();
+		await team.stop();
 	});
 });
 

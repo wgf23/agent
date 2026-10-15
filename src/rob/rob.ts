@@ -108,13 +108,11 @@ export class Rob {
 						})
 				: createNativeBackend({
 						name: options.name,
+						role: options.role,
 						provider: options.provider,
 						model: options.model,
 						authorize: this.authorize,
-						systemInstructions: this.systemInstructions(),
-						team: options.team,
 						drain: () => this.inbox.drain(),
-						runSubagent: (task, signal) => this.runSubagent(task, signal),
 						extraTools: options.extraTools,
 					});
 	}
@@ -195,18 +193,29 @@ export class Rob {
 	}
 
 	private async runOnce(batch: Inbound[], signal: AbortSignal): Promise<void> {
-		const result = await this.backend.run({
-			history: this.history,
-			inbound: batch,
-			workspaceRoot: this.workspaceRoot,
-			rules: this.rules,
+		const bridge = await this.team.beginTurn(this.name, {
 			signal,
-			onEvent: (event) => this.handleEvent(event),
+			workspaceRoot: this.workspaceRoot,
+			authorize: this.authorize,
+			runSubagent: (task, subSignal) => this.runSubagent(task, subSignal),
 		});
+		try {
+			const result = await this.backend.run({
+				history: this.history,
+				inbound: batch,
+				workspaceRoot: this.workspaceRoot,
+				rules: this.rules,
+				signal,
+				onEvent: (event) => this.handleEvent(event),
+				bridge,
+			});
 
-		this.history = result.messages.filter(
-			(message) => message.role !== "system",
-		);
+			this.history = result.messages.filter(
+				(message) => message.role !== "system",
+			);
+		} finally {
+			bridge.close();
+		}
 	}
 
 	private handleEvent(event: AgentEvent): void {
@@ -264,14 +273,6 @@ export class Rob {
 
 		if (parts.length > 0) return parts.join("");
 		return lastAssistantText(result.messages) ?? "";
-	}
-
-	private systemInstructions(): string {
-		return [
-			`You are rob "${this.name}", one member of a team of robs.`,
-			"Use send_message to talk to another rob, and delegate to hand one self-contained task to a sub-agent.",
-			this.role,
-		].join("\n");
 	}
 }
 

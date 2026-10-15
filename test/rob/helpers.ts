@@ -4,28 +4,71 @@ import type {
 	ApprovalRequest,
 } from "../../src/permissions/authorizer.js";
 import type { AuthorizerFactory } from "../../src/rob/rob.js";
+import { createTeamOperations, teamTools } from "../../src/rob/tools.js";
 import type {
+	BridgePort,
+	DeliveryOutcome,
 	DmEntry,
 	RobName,
 	RobStatus,
 	SubagentEntry,
+	Teammate,
 	TeamPort,
+	TurnHost,
 } from "../../src/rob/types.js";
 
 export function allowAllAuthorizerFactory(): AuthorizerFactory {
 	return () => async () => ({ allowed: true });
 }
 
+export function fakeBridge(overrides: Partial<BridgePort> = {}): BridgePort {
+	return {
+		rob: "reviewer",
+		tools: [],
+		roster: () => [],
+		childEnv: () => ({}),
+		close: () => undefined,
+		...overrides,
+	};
+}
+
 export class FakeTeam implements TeamPort {
 	readonly dms: DmEntry[] = [];
 	readonly subagents: SubagentEntry[] = [];
+	readonly teammates: readonly Teammate[];
+	stopped = false;
 
-	hasRob(): boolean {
-		return true;
+	constructor(teammates: readonly Teammate[] = []) {
+		this.teammates = [...teammates];
 	}
 
-	postDm(from: RobName, to: RobName, text: string): void {
+	roster(): readonly Teammate[] {
+		return this.teammates;
+	}
+
+	async beginTurn(rob: RobName, host: TurnHost): Promise<BridgePort> {
+		const operations = createTeamOperations({
+			team: this,
+			from: rob,
+			runSubagent: host.runSubagent,
+		});
+		return {
+			rob,
+			tools: teamTools(operations),
+			roster: () => this.teammates.filter((teammate) => teammate.name !== rob),
+			childEnv: () => ({}),
+			close: () => undefined,
+		};
+	}
+
+	postDm(from: RobName, to: RobName, text: string): DeliveryOutcome {
+		if (from === to) return { status: "rejected", reason: "self" };
+		if (!this.teammates.some((teammate) => teammate.name === to)) {
+			return { status: "rejected", reason: "unknown_target" };
+		}
+		if (this.stopped) return { status: "rejected", reason: "team_stopped" };
 		this.dms.push({ from, to, text, at: 0 });
+		return { status: "queued" };
 	}
 
 	recordSubagent(entry: SubagentEntry): void {

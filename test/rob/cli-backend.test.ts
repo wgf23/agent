@@ -13,6 +13,7 @@ import {
 } from "../../src/rob/cli-backend.js";
 import type { Inbound } from "../../src/rob/types.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+import { fakeBridge } from "./helpers.js";
 
 const FIXTURE = fileURLToPath(
 	new URL("../fixtures/fake-pi.mjs", import.meta.url),
@@ -50,6 +51,7 @@ describe("createCliBackend missing command", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: {},
 			signal: new AbortController().signal,
 			onEvent: (event) => events.push(event),
@@ -125,6 +127,7 @@ describe("cli backend", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: {},
 			signal: new AbortController().signal,
 			onEvent: () => {},
@@ -315,6 +318,7 @@ describe("cli backend", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "long task", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: {},
 			signal: new AbortController().signal,
 			onEvent: (event) => {
@@ -447,6 +451,7 @@ describe("cli backend", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "sleep", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: { read_file: "allow" },
 			signal: controller.signal,
 			onEvent: (event) => events.push(event),
@@ -497,6 +502,7 @@ async function runSteeredTurn(
 		history: [],
 		inbound: [{ kind: "user", from: "user", text: "long task", at: 0 }],
 		workspaceRoot: workspace,
+		bridge: fakeBridge(),
 		rules: {},
 		signal: new AbortController().signal,
 		onEvent: (event) => {
@@ -532,6 +538,7 @@ async function runTurn(options: {
 			{ kind: "user", from: "user", text: "hello", at: 0 },
 		],
 		workspaceRoot: workspace,
+		bridge: fakeBridge(),
 		rules: options.rules ?? {},
 		signal: new AbortController().signal,
 		onEvent: (event) => events.push(event),

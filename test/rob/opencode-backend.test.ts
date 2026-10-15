@@ -16,8 +16,9 @@ import {
 	type OpencodeStream,
 	opencodePermissions,
 } from "../../src/rob/opencode-backend.js";
-import type { Inbound } from "../../src/rob/types.js";
+import type { BridgePort, Inbound } from "../../src/rob/types.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+import { fakeBridge } from "./helpers.js";
 
 const SESSION = "ses_1";
 
@@ -374,6 +375,7 @@ interface TurnHarness {
 		rules: PermissionRules;
 		signal: AbortSignal;
 		onEvent: (event: AgentEvent) => void;
+		bridge: BridgePort;
 	};
 }
 
@@ -392,6 +394,7 @@ function turnOptions(
 			rules: overrides.rules ?? {},
 			signal: overrides.signal ?? new AbortController().signal,
 			onEvent: (event) => events.push(event),
+			bridge: overrides.bridge ?? fakeBridge(),
 		},
 	};
 }

@@ -14,7 +14,7 @@ import {
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
-import type { Inbound, RobName } from "./types.js";
+import type { BridgePort, Inbound, RobName } from "./types.js";
 
 const SUMMARY_MAX_CHARS = 200;
 const UI_OUTPUT_MAX_CHARS = 4000;
@@ -92,6 +92,8 @@ export interface CliBackendOptions {
 	provider: string;
 	model: string;
 	sessionDir?: string;
+	// The turn's bridge to the team; the pi host shim attaches the child to it.
+	bridge?: BridgePort;
 	// When set, the approval extension is loaded and "ask" tools are exposed.
 	authorize?: Authorize;
 	// Returns queued interjections to steer into a running turn.

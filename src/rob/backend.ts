@@ -4,8 +4,8 @@ import type { AgentEvent } from "../agent/events.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
-import { createDelegateTool, createSendMessageTool } from "./tools.js";
-import type { Inbound, RobName, TeamPort } from "./types.js";
+import { renderTeamPreamble } from "./roster.js";
+import type { BridgePort, Inbound, RobName } from "./types.js";
 
 export interface RobTurn {
 	history: readonly Message[];
@@ -14,6 +14,7 @@ export interface RobTurn {
 	rules: PermissionRules;
 	signal: AbortSignal;
 	onEvent: (event: AgentEvent) => void;
+	bridge: BridgePort;
 }
 
 export type TurnResult =
@@ -28,13 +29,11 @@ export interface RobBackend {
 
 export interface NativeBackendOptions {
 	name: RobName;
+	role: string;
 	provider: Provider;
 	model: string;
 	authorize: Authorize;
-	systemInstructions: string;
-	team: TeamPort;
 	drain: () => Inbound[];
-	runSubagent: (task: string, signal?: AbortSignal) => Promise<string>;
 	extraTools?: Tool[];
 }
 
@@ -68,17 +67,14 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				history: [...turn.history],
 				signal: turn.signal,
 				authorize: options.authorize,
-				extraInstructions: options.systemInstructions,
+				extraInstructions: renderTeamPreamble({
+					rob: options.name,
+					role: options.role,
+					roster: turn.bridge.roster(),
+					tools: turn.bridge.tools,
+				}),
 				drainInput,
-				extraTools: [
-					createSendMessageTool({ team: options.team, from: options.name }),
-					createDelegateTool({
-						from: options.name,
-						depth: 0,
-						run: options.runSubagent,
-					}),
-					...(options.extraTools ?? []),
-				],
+				extraTools: [...turn.bridge.tools, ...(options.extraTools ?? [])],
 				onEvent: turn.onEvent,
 			});
 

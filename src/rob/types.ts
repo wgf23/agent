@@ -195,8 +195,12 @@ export interface BridgePort {
 }
 
 export interface TeamPort {
-	hasRob(name: string): boolean;
-	postDm(from: RobName, to: RobName, text: string): void;
+	/** Opens the bridge for one turn of `rob`. Resolves once the gateway is
+	 *  listening, so a backend can safely spawn with childEnv(). */
+	beginTurn(rob: RobName, host: TurnHost): Promise<BridgePort>;
+	postDm(from: RobName, to: RobName, text: string): DeliveryOutcome;
+	/** The live roster, in configuration order. */
+	roster(): readonly Teammate[];
 	recordSubagent(entry: SubagentEntry): void;
 	requestApproval(
 		rob: RobName,

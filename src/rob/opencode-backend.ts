@@ -16,7 +16,7 @@ import {
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
-import type { Inbound, RobName } from "./types.js";
+import type { BridgePort, Inbound, RobName } from "./types.js";
 
 const OPENCODE_COMMAND = "opencode";
 const LISTEN_TIMEOUT_MS = 20000;
@@ -164,6 +164,9 @@ export interface OpencodeBackendOptions {
 	model?: string;
 	rules: PermissionRules;
 	drain: () => Inbound[];
+	// The turn's bridge to the team; the opencode host shim attaches the child
+	// to it in a later unit.
+	bridge?: BridgePort;
 	// Answers each opencode permission request through the rob's own authorizer,
 	// so an "ask" tool's dialog is the team's approval queue.
 	authorize?: Authorize;
