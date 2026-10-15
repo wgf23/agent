@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
 	parseRoomMentions,
 	ROOM_PASS_SENTINEL,
@@ -26,6 +27,14 @@ export const ROOM_MAX_UNSEEN_ENTRIES = 20;
 /** "user" and "system" are the transcript's own voices; refusing them as member
  *  names is what keeps an entry's speaker unambiguous. */
 export const RESERVED_ROOM_SPEAKERS = ["user", "system"] as const;
+
+/** One room as config states it. The file shape and the runtime shape are the
+ *  same, so Team.createRoom takes the validated value directly. Which members
+ *  exist, and how many, is not a schema fact: validateRoomMembers holds it. */
+export const roomConfigSchema = z
+	.object({ name: roomNameSchema, members: z.array(robNameSchema) })
+	.strict();
+export type RoomConfig = z.infer<typeof roomConfigSchema>;
 
 /** One shared, id-ordered transcript row. Ids are assigned by the room, monotonic,
  *  never reused; a surface that applies `entry` events cannot reorder a room. */
@@ -131,25 +140,27 @@ export type RoomSendOutcome =
 			readonly reason: "unknown_room" | "busy" | "stopped" | "empty";
 	  };
 
+/** The machine reasons a room reply can be refused; the gateway and the team
+ *  tool carry them verbatim so no surface re-words a rejection. */
+export type RoomReplyReason =
+	| "not_a_member"
+	| "not_your_turn"
+	| "message_cap"
+	| "stopped";
+
 /** A `PASS` line is a pass, not a transcript entry, so it has its own status
  *  rather than wearing a rejection. */
 export type RoomReplyOutcome =
 	| { readonly status: "posted"; readonly entry: RoomEntry }
 	| { readonly status: "passed" }
-	| {
-			readonly status: "rejected";
-			readonly reason:
-				| "not_a_member"
-				| "not_your_turn"
-				| "message_cap"
-				| "stopped";
-	  };
+	| { readonly status: "rejected"; readonly reason: RoomReplyReason };
 
 export type RoomMembershipReason =
 	| "member_count"
 	| "unknown_member"
 	| "duplicate_member"
 	| "reserved_member"
+	| "unknown_room"
 	| "busy";
 
 export type RoomMembershipOutcome =
@@ -159,6 +170,7 @@ export type RoomMembershipOutcome =
 export type RoomCreateReason =
 	| "duplicate"
 	| "invalid_name"
+	| "name_taken"
 	| RoomMembershipReason
 	| "team_stopped";
 
@@ -168,13 +180,16 @@ export type RoomCreateOutcome =
 
 /** The one membership rule, used by config load, Team.createRoom and
  *  Room.setMembers, so the three paths cannot drift. "busy" is a run-state fact
- *  and is never a validation result. */
+ *  and "unknown_room" a lookup fact; neither is a validation result. */
 export function validateRoomMembers(
 	members: readonly string[],
 	roster: readonly RobName[],
 ):
 	| { status: "ok"; members: readonly RobName[] }
-	| { status: "rejected"; reason: Exclude<RoomMembershipReason, "busy"> } {
+	| {
+			status: "rejected";
+			reason: Exclude<RoomMembershipReason, "busy" | "unknown_room">;
+	  } {
 	if (members.length < ROOM_MIN_MEMBERS || members.length > ROOM_MAX_MEMBERS) {
 		return { status: "rejected", reason: "member_count" };
 	}

@@ -120,6 +120,8 @@ export function renderRoomOutcome(
 			return '"user" and "system" cannot be room members.';
 		case "duplicate":
 			return `A room named "${room}" already exists.`;
+		case "name_taken":
+			return `A rob named "${room}" already exists; room and rob names must differ.`;
 		case "invalid_name":
 			return `Invalid room name "${room}".`;
 		case "team_stopped":

@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Tool, ToolContext, ToolResult } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
+import type { RoomName, RoomReplyOutcome, RoomReplyReason } from "./room.js";
+import { renderRoomOutcome } from "./room-text.js";
 import {
 	type DelegateOutcome,
 	type DelegateReason,
@@ -18,15 +20,17 @@ export const DELEGATE_OUTPUT_MAX_CHARS = 4000;
 export const MAX_DELEGATE_DEPTH = 1;
 
 // Rob tools carry no file subject, so the authorizer needs a default rule.
-// send_message is read-only and auto-allowed; delegate can write and asks.
+// send_message is read-only and auto-allowed; room_reply only writes the room
+// transcript; delegate can write and asks.
 export function robToolRules(): PermissionRules {
-	return { send_message: "allow", delegate: "ask" };
+	return { send_message: "allow", room_reply: "allow", delegate: "ask" };
 }
 
 const sendMessageSchema = z
 	.object({ to: robNameSchema, text: z.string() })
 	.strict();
 const delegateSchema = z.object({ task: z.string() }).strict();
+const roomReplySchema = z.object({ text: z.string().min(1) }).strict();
 
 export interface TeamOperations {
 	/** Counts against this turn's DM budget. Fire-and-forget. */
@@ -94,7 +98,7 @@ export type TeamCallOutcome =
 	| { readonly ok: true; readonly text: string }
 	| {
 			readonly ok: false;
-			readonly reason: DeliveryReason | DelegateReason;
+			readonly reason: DeliveryReason | DelegateReason | RoomReplyReason;
 			readonly text: string;
 	  };
 
@@ -162,6 +166,34 @@ export function teamTools(operations: TeamOperations): readonly TeamTool[] {
 				return outcome.status === "ok"
 					? { ok: true, text: renderOutcome(outcome) }
 					: { ok: false, reason: outcome.reason, text: renderOutcome(outcome) };
+			},
+		}),
+	];
+}
+
+/** What one room turn lets a rob do. Bound at bridge-build time to one room, so
+ *  the tool takes no room name and cannot address another room. */
+export interface RoomTurnOperations {
+	readonly room: RoomName;
+	reply(text: string): RoomReplyOutcome;
+}
+
+/** The room tool set for one turn. Present only in room turns, so its
+ *  appearance in the team preamble is itself the instruction to speak. */
+export function roomTools(operations: RoomTurnOperations): readonly TeamTool[] {
+	return [
+		buildTeamTool({
+			name: "room_reply",
+			description:
+				"Post one brief message to the room this turn belongs to. Call it at most once, or end the turn without calling it to pass.",
+			readOnly: true,
+			schema: roomReplySchema,
+			async serve(args) {
+				const outcome = operations.reply(args.text);
+				const text = renderRoomOutcome(outcome, operations.room);
+				return outcome.status === "rejected"
+					? { ok: false, reason: outcome.reason, text }
+					: { ok: true, text };
 			},
 		}),
 	];

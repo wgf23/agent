@@ -89,7 +89,7 @@ export const robConfigSchema = z
 	});
 export type RobConfig = z.infer<typeof robConfigSchema>;
 
-export type InboundKind = "user" | "dm" | "subagent_result";
+export type InboundKind = "user" | "dm" | "subagent_result" | "room";
 
 export interface Inbound {
 	kind: InboundKind;

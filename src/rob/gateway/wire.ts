@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RoomReplyReason } from "../room.js";
 import type { DelegateReason, DeliveryReason } from "../types.js";
 
 export const PROTOCOL_VERSION = 1;
@@ -18,6 +19,7 @@ export interface GatewayRequest {
 export type GatewayReason =
 	| DeliveryReason
 	| DelegateReason
+	| RoomReplyReason
 	| "invalid_args"
 	| "denied"
 	| "unknown_tool"

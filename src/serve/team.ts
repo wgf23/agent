@@ -206,6 +206,8 @@ export class TeamHub extends EventBus implements Hub {
 				return;
 			case "subagent":
 				return;
+			case "room":
+				return;
 		}
 	}
 

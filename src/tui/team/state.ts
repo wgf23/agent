@@ -259,6 +259,8 @@ function applyTeamEvent(state: TeamState, event: TeamEvent): TeamState {
 				...state,
 				approvals: state.approvals.filter((item) => item.id !== event.id),
 			};
+		case "room":
+			return state;
 	}
 }
 
