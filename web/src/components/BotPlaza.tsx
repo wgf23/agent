@@ -1,6 +1,7 @@
 import type { BotInfo, BotState, DmInfo } from "../protocol";
 import type { NoticeView } from "../state";
 import { STATUS_LABEL } from "../status";
+import { formatTime } from "../time";
 import { PlusIcon } from "./icons";
 
 interface Props {
@@ -120,11 +121,4 @@ export default function BotPlaza({
 			</div>
 		</main>
 	);
-}
-
-function formatTime(at: number): string {
-	return new Date(at).toLocaleTimeString("zh-CN", {
-		hour: "2-digit",
-		minute: "2-digit",
-	});
 }

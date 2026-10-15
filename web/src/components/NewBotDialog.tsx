@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from "react";
+import { NAME_RULE } from "../names";
 import type { BotBackendDraft, BotDraft } from "../protocol";
 
 interface Props {
@@ -8,8 +9,6 @@ interface Props {
 }
 
 type BackendChoice = "native" | "pi" | "opencode";
-
-const NAME_RULE = /^[a-z][a-z0-9-]{0,31}$/;
 
 export default function NewBotDialog({ model, onCreateBot, onClose }: Props) {
 	const [name, setName] = useState("");
