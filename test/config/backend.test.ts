@@ -53,7 +53,7 @@ describe("rob backend schema", () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it("rejects a cli rob that sets delegate in its permissions", () => {
+	it("accepts delegate in a cli rob's permissions", () => {
 		const result = parseRobs([
 			{
 				name: "reviewer",
@@ -63,12 +63,12 @@ describe("rob backend schema", () => {
 			},
 		]);
 
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('A "cli" backend cannot use delegate');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].permissions).toEqual({ delegate: "allow" });
 	});
 
-	it("rejects a cli rob that sets send_message in its permissions", () => {
+	it("accepts send_message in a cli rob's permissions", () => {
 		const result = parseRobs([
 			{
 				name: "reviewer",
@@ -78,9 +78,12 @@ describe("rob backend schema", () => {
 			},
 		]);
 
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('A "cli" backend cannot use send_message');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].permissions).toEqual({
+			send_message: "allow",
+			read_file: "allow",
+		});
 	});
 
 	it("rejects an unknown cli command with a friendly message", () => {
@@ -155,7 +158,7 @@ describe("rob backend schema", () => {
 		);
 	});
 
-	it("rejects send_message in an opencode cli rob's permissions", () => {
+	it("accepts send_message in an opencode cli rob's permissions", () => {
 		const result = parseRobs([
 			{
 				name: "reviewer",
@@ -165,9 +168,12 @@ describe("rob backend schema", () => {
 			},
 		]);
 
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('A "cli" backend cannot use send_message');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].permissions).toEqual({
+			send_message: "allow",
+			read_file: "allow",
+		});
 	});
 
 	it("rejects a global config that sets backend", async () => {

@@ -43,9 +43,6 @@ export const robBackendSchema = z.discriminatedUnion("kind", [
 ]);
 export type RobBackendConfig = z.infer<typeof robBackendSchema>;
 
-// send_message and delegate are native-only; external CLIs have no equivalent.
-const CLI_UNSUPPORTED_TOOLS = ["send_message", "delegate"] as const;
-
 export const robConfigSchema = z
 	.object({
 		name: robNameSchema,
@@ -82,16 +79,6 @@ export const robConfigSchema = z
 				code: "custom",
 				path: ["backend"],
 				message: `A "pi" cli backend requires "provider" and "model".`,
-			});
-		}
-		const unsupported = CLI_UNSUPPORTED_TOOLS.filter(
-			(tool) => rob.permissions?.[tool] !== undefined,
-		);
-		if (unsupported.length > 0) {
-			ctx.addIssue({
-				code: "custom",
-				path: ["permissions"],
-				message: `A "cli" backend cannot use ${unsupported.join(", ")}. Those tools are only available to the native backend.`,
 			});
 		}
 	});
