@@ -5,6 +5,9 @@ export const DEFAULT_PRESET: BuiltinPresetName = "deepseek";
 export interface Preset {
 	name: BuiltinPresetName | "custom";
 	baseURL: string;
+	// The provider's Anthropic-compatible endpoint, when it has one. A claude
+	// rob reaches the provider through it instead of a Claude login.
+	anthropicBaseURL?: string;
 	apiKeyEnv: string;
 	defaultModel: string;
 }
@@ -13,6 +16,7 @@ export const PRESETS: Record<BuiltinPresetName, Preset> = {
 	deepseek: {
 		name: "deepseek",
 		baseURL: "https://api.deepseek.com",
+		anthropicBaseURL: "https://api.deepseek.com/anthropic",
 		apiKeyEnv: "DEEPSEEK_API_KEY",
 		defaultModel: "deepseek-flash",
 	},
