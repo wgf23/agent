@@ -19,6 +19,17 @@ const FIXTURE = fileURLToPath(
 	new URL("../fixtures/fake-pi.mjs", import.meta.url),
 );
 
+// The preamble for the fixture's lone rob: no teammates and no bridged tools.
+const LONE_ROB_PREAMBLE = [
+	'You are rob "reviewer", one member of a team of robs.',
+	"Your role: review code",
+	"You are the only rob: there is no teammate to message.",
+	"",
+	"Team tools:",
+	"",
+	"send_message is fire-and-forget: the message is delivered when the teammate next runs, and their reply arrives later as a message from them.",
+].join("\n");
+
 let workspace: string;
 
 beforeEach(async () => {
@@ -209,7 +220,7 @@ describe("cli backend", () => {
 			"--model",
 			"deepseek-v4-flash",
 			"--append-system-prompt",
-			"review code",
+			LONE_ROB_PREAMBLE,
 			"--session-dir",
 			sessionDir,
 			"--continue",
