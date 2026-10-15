@@ -144,6 +144,23 @@ describe("rob backend schema", () => {
 		});
 	});
 
+	it("accepts a claude cli backend without a provider or model", () => {
+		const result = parseRobs([
+			{
+				name: "reviewer",
+				role: "review",
+				backend: { kind: "cli", command: "claude" },
+			},
+		]);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].backend).toEqual({
+			kind: "cli",
+			command: "claude",
+		});
+	});
+
 	it("rejects a pi cli backend that omits provider or model", () => {
 		const result = parseRobs([
 			{
