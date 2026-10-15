@@ -76,6 +76,7 @@ export class SoloHub extends EventBus implements Hub {
 				fallbackProviderView(this.options.settings),
 			bots: [this.botInfo()],
 			states: [this.state()],
+			rooms: [],
 			sessions: this.sessions,
 			activeSessionId: this.session.id,
 			transcript: toTranscript(this.session.messages),

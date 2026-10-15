@@ -141,6 +141,74 @@ export interface DmInfo {
 	at: number;
 }
 
+// Room wire types mirror src/rob/room.ts: the server maps domain events at the
+// hub boundary, exactly as AgentEvent is mapped, and the client only renders.
+
+export type RoomMessageView =
+	| { id: number; at: number; kind: "user"; text: string }
+	| { id: number; at: number; kind: "member"; from: string; text: string }
+	| { id: number; at: number; kind: "system"; text: string };
+
+export type RoomRunView =
+	| { phase: "idle" }
+	| {
+			phase: "running";
+			round: number;
+			rounds: number;
+			current: string | null;
+			posted: number;
+			remaining: number;
+			addressed: string[];
+	  };
+
+export interface RoomInfo {
+	name: string;
+	members: string[];
+	transcript: RoomMessageView[];
+	run: RoomRunView;
+	limits: {
+		minMembers: number;
+		maxMembers: number;
+		maxRounds: number;
+		maxMessagesPerRun: number;
+	};
+}
+
+export type RoomEventInfo =
+	| { kind: "entry"; room: string; entry: RoomMessageView }
+	| { kind: "run"; room: string; run: RoomRunView }
+	| {
+			kind: "run_ended";
+			room: string;
+			run: RoomRunView;
+			outcome:
+				| "settled"
+				| "max_rounds"
+				| "message_cap"
+				| "run_timeout"
+				| "interrupted"
+				| "stopped"
+				| "error";
+	  }
+	| {
+			kind: "turn";
+			room: string;
+			member: string;
+			round: number;
+			state: "replied" | "passed" | "timed_out" | "failed";
+	  }
+	| { kind: "members"; room: string; members: string[] };
+
+export interface CreateRoomBody {
+	name: string;
+	members: string[];
+}
+
+export interface RoomSendBody {
+	room: string;
+	text: string;
+}
+
 export type ToolStatus = "running" | "ok" | "error" | "blocked";
 
 export interface ToolCallView {
@@ -168,6 +236,7 @@ export type ServerEvent =
 			provider: ProviderView;
 			bots: BotInfo[];
 			states: BotState[];
+			rooms: RoomInfo[];
 			sessions: SessionSummaryInfo[];
 			activeSessionId: string | null;
 			transcript: TranscriptMessage[];
@@ -189,6 +258,7 @@ export type ServerEvent =
 	| { type: "approval_resolved"; id: string; decision: ApprovalChoice }
 	| { type: "notice"; bot: string; text: string }
 	| { type: "dm"; entry: DmInfo }
+	| { type: "room"; event: RoomEventInfo }
 	| { type: "allow_all"; on: boolean }
 	| { type: "error"; bot?: string; message: string };
 

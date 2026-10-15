@@ -277,6 +277,11 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 		case "dm":
 			return { ...state, dms: [...state.dms, event.entry].slice(-100) };
 
+		case "room":
+			// The web room UI lands in its own unit; the event is ignored until
+			// it has somewhere to render.
+			return state;
+
 		case "allow_all":
 			return { ...state, allowAll: event.on };
 

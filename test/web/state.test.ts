@@ -50,6 +50,7 @@ const hello: ServerEvent = {
 	activeSessionId: "ses_1",
 	transcript: [],
 	approvals: [],
+	rooms: [],
 	allowAll: false,
 };
 

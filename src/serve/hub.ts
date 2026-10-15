@@ -9,6 +9,11 @@ import type { ProviderSettings } from "../config/resolve.js";
 import type { AllowAll } from "../permissions/allow-all.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Provider } from "../providers/types.js";
+import type {
+	RoomConfig,
+	RoomCreateOutcome,
+	RoomSendOutcome,
+} from "../rob/room.js";
 import type { Tool } from "../tools/types.js";
 import type {
 	ApplyRuntimeResult,
@@ -47,6 +52,9 @@ export interface Hub {
 	openSession(bot: string, id: string): Promise<void>;
 	// Only a hub that manages a rob roster can create one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
+	// Only a hub with a rob roster manages rooms.
+	createRoom?(config: RoomConfig): RoomCreateOutcome;
+	sendToRoom?(room: string, text: string): RoomSendOutcome;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;
