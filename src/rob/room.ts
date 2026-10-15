@@ -4,8 +4,11 @@ import {
 	parseRoomMentions,
 	ROOM_PASS_SENTINEL,
 	renderAbsentMembers,
+	renderDeliverableFailure,
+	renderDeliverableNotice,
 	renderRestartNotice,
 	renderRoomTurn,
+	renderRoomWrapUp,
 	renderStorageFailure,
 } from "./room-text.js";
 import { type RobName, robNameSchema } from "./types.js";
@@ -24,6 +27,10 @@ export const ROOM_MAX_MESSAGES_PER_RUN = 10;
 export const ROOM_MAX_QUEUED_SENDS = 5;
 export const ROOM_TURN_TIMEOUT_MS = 120_000;
 export const ROOM_RUN_TIMEOUT_MS = 300_000;
+
+/** The coordinator gets one turn to write the deliverable after the room runs
+ *  out of conversation; the run deadline still caps it. */
+export const ROOM_WRAP_UP_TIMEOUT_MS = 180_000;
 
 /** How much of a member's unseen history one room turn carries. Older entries
  *  are dropped, not replayed, so a long room still hands over a bounded prompt. */
@@ -198,6 +205,18 @@ export type RunOutcome =
 	| "interrupted"
 	| "stopped"
 	| "error";
+
+/** The outcomes after which the coordinator is asked for a deliverable: the
+ *  room finished thinking (settled) or spent its own budget (max_rounds,
+ *  message_cap). Not interrupted/stopped/run_timeout/error: those are the
+ *  user's or the host's decision. */
+export function wantsDeliverable(outcome: RunOutcome): boolean {
+	return (
+		outcome === "settled" ||
+		outcome === "max_rounds" ||
+		outcome === "message_cap"
+	);
+}
 
 export type TurnState = "replied" | "passed" | "timed_out" | "failed";
 
@@ -391,6 +410,8 @@ interface LiveRun {
 	round: number;
 	readonly rounds: number;
 	readonly addressed: readonly RobName[];
+	readonly task: string; // mention-stripped send body, for the deliverable
+	readonly taskEntryId: number; // the run's first transcript entry
 	current: RobName | null;
 	posted: number;
 	spokeThisRound: number;
@@ -401,6 +422,8 @@ interface LiveRun {
 	 *  stay unseen for members who were not shown them. */
 	through: number;
 	readonly deadline: number;
+	wrapUp: boolean;
+	reply: string | null; // the wrap-up turn's reply, if any
 }
 
 export class Room {
@@ -505,7 +528,7 @@ export class Room {
 		const idle = this.live === null;
 		const entry = this.append({ kind: "user", text });
 		if (idle) {
-			this.startRun(text);
+			this.startRun(text, entry.id);
 		} else {
 			this.queue.push({ entryId: entry.id, at: this.host.now() });
 		}
@@ -529,7 +552,7 @@ export class Room {
 		if (next === undefined) return;
 		const entry = this.transcript.find((row) => row.id === next.entryId);
 		if (entry?.kind !== "user") return; // ids only; a miss cannot happen
-		this.startRun(entry.text);
+		this.startRun(entry.text, entry.id);
 		this.persist();
 	}
 
@@ -544,12 +567,15 @@ export class Room {
 		if (run === null || run.current !== from) {
 			return { status: "rejected", reason: "not_your_turn" };
 		}
-		if (run.posted >= ROOM_MAX_MESSAGES_PER_RUN) {
+		// The wrap-up reply is the artifact, not another room message, so the
+		// conversation's message cap does not gate it.
+		if (run.posted >= ROOM_MAX_MESSAGES_PER_RUN && !run.wrapUp) {
 			return { status: "rejected", reason: "message_cap" };
 		}
 		if (text.trim() === ROOM_PASS_SENTINEL) return { status: "passed" };
 
 		const entry = this.append({ kind: "member", from, text });
+		if (run.wrapUp) run.reply = text;
 		run.posted += 1;
 		run.spokeThisRound += 1;
 		run.repliedThisTurn = true;
@@ -619,11 +645,14 @@ export class Room {
 	}
 
 	/** One path for a fresh send and a dequeued send, so they cannot diverge. */
-	private startRun(text: string): void {
+	private startRun(text: string, entryId: number): void {
+		const mentions = parseRoomMentions(text, this.memberNames());
 		const run: LiveRun = {
 			round: 1,
 			rounds: ROOM_MAX_ROUNDS,
-			addressed: parseRoomMentions(text, this.memberNames()).addressed,
+			addressed: mentions.addressed,
+			task: mentions.body,
+			taskEntryId: entryId,
 			current: null,
 			posted: 0,
 			spokeThisRound: 0,
@@ -631,6 +660,8 @@ export class Room {
 			turnController: null,
 			through: 0,
 			deadline: this.host.now() + ROOM_RUN_TIMEOUT_MS,
+			wrapUp: false,
+			reply: null,
 		};
 		// A member that left the team is not a participant; name any absentees
 		// once, so a round that nobody can answer has an explanation.
@@ -645,9 +676,10 @@ export class Room {
 		this.start(run);
 	}
 
-	/** The run's tail: finish it, then drain the queue. The tail is one of the
-	 *  two resume() callers, and resume() is a no-op while a run is live, so a
-	 *  send that arrived mid-run cannot be lost or overlapped. */
+	/** The run's tail: the coordinator's deliverable, then the finish, then the
+	 *  queue. The tail is one of the two resume() callers, and resume() is a
+	 *  no-op while a run is live, so a send that arrived mid-run cannot be lost
+	 *  or overlapped. */
 	private async runRounds(run: LiveRun): Promise<void> {
 		let outcome: RunOutcome = "error";
 		try {
@@ -655,7 +687,10 @@ export class Room {
 		} catch {
 			outcome = "error";
 		}
-		if (this.live === run) this.finish(run, outcome);
+		if (this.live === run) {
+			if (this.shouldWrapUp(run, outcome)) await this.wrapUp(run, outcome);
+			if (this.live === run) this.finish(run, outcome);
+		}
 		if (!this.stopped) this.resume();
 	}
 
@@ -669,7 +704,10 @@ export class Room {
 				if (this.host.now() >= run.deadline) return "run_timeout";
 				run.current = member.name;
 				this.emitRun(run);
-				const result = await this.takeTurn(run, member);
+				const result = await this.takeTurn(run, member, {
+					text: this.turnText(run, member),
+					timeoutMs: ROOM_TURN_TIMEOUT_MS,
+				});
 				if (this.live !== run) return "error";
 				run.current = null;
 				member.seen = this.seenThrough(member, run.through);
@@ -694,16 +732,19 @@ export class Room {
 		return members.filter((member) => addressed.has(member.name));
 	}
 
+	/** One turn, whoever asked for it: a round turn and the wrap-up share the
+	 *  controller, the deadline budget, the abort rule, and the reply binding. */
 	private async takeTurn(
 		run: LiveRun,
 		member: Member,
+		turn: { readonly text: string; readonly timeoutMs: number },
 	): Promise<RoomTurnResult> {
 		const controller = new AbortController();
 		run.turnController = controller;
 		run.repliedThisTurn = false;
 		let expired = false;
 		const budget = Math.min(
-			ROOM_TURN_TIMEOUT_MS,
+			turn.timeoutMs,
 			Math.max(0, run.deadline - this.host.now()),
 		);
 		const timer = setTimeout(() => {
@@ -715,7 +756,7 @@ export class Room {
 			const result = await this.host.runTurn(member.name, {
 				room: this.name,
 				round: run.round,
-				text: this.turnText(run, member),
+				text: turn.text,
 				signal: controller.signal,
 			});
 			return expired ? "timeout" : result;
@@ -745,18 +786,117 @@ export class Room {
 		return seen;
 	}
 
-	private turnText(run: LiveRun, member: Member): string {
+	/** The bounded window of entries this member has not been shown. Older
+	 *  entries are dropped, not replayed, so a long room still hands over a
+	 *  bounded prompt. */
+	private unseenWindow(member: Member): {
+		readonly unseen: readonly RoomEntry[];
+		readonly truncated: boolean;
+	} {
 		const unseen = this.transcript.filter((entry) => entry.id > member.seen);
 		const truncated = unseen.length > ROOM_MAX_UNSEEN_ENTRIES;
+		return {
+			unseen: truncated ? unseen.slice(-ROOM_MAX_UNSEEN_ENTRIES) : unseen,
+			truncated,
+		};
+	}
+
+	private turnText(run: LiveRun, member: Member): string {
+		const { unseen, truncated } = this.unseenWindow(member);
 		return renderRoomTurn({
 			room: this.name,
 			round: run.round,
 			rounds: run.rounds,
 			remaining: ROOM_MAX_MESSAGES_PER_RUN - run.posted,
 			addressed: run.addressed,
-			unseen: truncated ? unseen.slice(-ROOM_MAX_UNSEEN_ENTRIES) : unseen,
+			unseen,
 			truncated,
 		});
+	}
+
+	/** The wrap-up prompt, composed with the same bounded unseen window a round
+	 *  turn uses. */
+	private wrapUpText(
+		run: LiveRun,
+		member: Member,
+		outcome: RunOutcome,
+	): string {
+		const { unseen, truncated } = this.unseenWindow(member);
+		return renderRoomWrapUp({
+			room: this.name,
+			rounds: run.round,
+			outcome,
+			task: run.task,
+			unseen,
+			truncated,
+		});
+	}
+
+	/** The deliverable is for a finished conversation: the run must have ended
+	 *  quietly or on its own budget, nothing else may be queued, and the
+	 *  coordinator must still be reachable inside the run deadline. */
+	private shouldWrapUp(run: LiveRun, outcome: RunOutcome): boolean {
+		return (
+			this.coordinator !== null &&
+			wantsDeliverable(outcome) &&
+			this.queue.length === 0 &&
+			!this.stopped &&
+			this.host.members().includes(this.coordinator) &&
+			this.host.now() < run.deadline
+		);
+	}
+
+	/** One extra turn inside the same run: the coordinator posts, the room
+	 *  writes the file, and the transcript records where it landed. */
+	private async wrapUp(run: LiveRun, outcome: RunOutcome): Promise<void> {
+		const member = this.members.find(
+			(entry) => entry.name === this.coordinator,
+		);
+		if (member === undefined) return;
+		run.wrapUp = true;
+		run.current = member.name;
+		this.emitRun(run);
+		const result = await this.takeTurn(run, member, {
+			text: this.wrapUpText(run, member, outcome),
+			timeoutMs: ROOM_WRAP_UP_TIMEOUT_MS,
+		});
+		run.wrapUp = false;
+		// An interrupt or stop finishes the run while this turn is in flight;
+		// a conversation the user cut short gets no deliverable.
+		if (this.live !== run) return;
+		run.current = null;
+		this.emitTurn(run, member.name, turnState(result, run.repliedThisTurn));
+		const body = run.reply;
+		run.reply = null;
+		if (body === null) return; // passed or timed out: no deliverable, no file
+		const written = await this.host.writeDeliverable({
+			room: this.name,
+			coordinator: member.name,
+			task: run.task,
+			outcome,
+			participants: this.participants(run).map((entry) => entry.name),
+			transcript: this.transcript.filter(
+				(entry) => entry.id >= run.taskEntryId,
+			),
+			body,
+			at: this.host.now(),
+		});
+		this.append(
+			written.status === "written"
+				? { kind: "system", text: renderDeliverableNotice(written.path) }
+				: {
+						kind: "system",
+						text: renderDeliverableFailure(written.reason),
+					},
+		);
+		if (written.status === "written") {
+			this.deliverable = {
+				at: this.host.now(),
+				path: written.path,
+				coordinator: member.name,
+			};
+		}
+		this.persist();
 	}
 
 	private append(

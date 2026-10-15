@@ -5,6 +5,7 @@ import type {
 	RoomName,
 	RoomReplyOutcome,
 	RoomSendOutcome,
+	RunOutcome,
 } from "./room.js";
 import type { RobName } from "./types.js";
 
@@ -79,6 +80,43 @@ export function renderRoomTurn(input: {
 		"End your turn without calling room_reply to pass.",
 	);
 	return lines.join("\n");
+}
+
+/** The one composer of the wrap-up prompt. Its contract tells the coordinator
+ *  that the reply *is* the deliverable and that the room writes the file, so a
+ *  model never writes docs/deliverables/ itself. Pure. */
+export function renderRoomWrapUp(input: {
+	room: RoomName;
+	rounds: number; // the round the run ended in
+	outcome: RunOutcome;
+	task: string;
+	unseen: readonly RoomEntry[];
+	truncated: boolean;
+}): string {
+	const lines = [
+		`The run in room "${input.room}" ended after ${input.rounds} round${input.rounds === 1 ? "" : "s"}: ${input.outcome}.`,
+		"Compile the final deliverable now.",
+		"Reply with room_reply; your reply becomes the deliverable body, and the room writes the file.",
+		"",
+		`Task: ${input.task === "" ? "(unspecified)" : input.task}`,
+		"",
+		"Since your last turn:",
+	];
+	if (input.truncated) lines.push("  (earlier messages omitted)");
+	if (input.unseen.length === 0) lines.push("  (nothing new)");
+	for (const entry of input.unseen) {
+		lines.push(`  ${speakerOf(entry)}: ${entry.text}`);
+	}
+	return lines.join("\n");
+}
+
+/** Where the deliverable landed, as one system line. */
+export function renderDeliverableNotice(path: string): string {
+	return `The deliverable was written to ${path}.`;
+}
+
+export function renderDeliverableFailure(reason: string): string {
+	return `The deliverable was not written: ${reason}`;
 }
 
 /** Names a run the process was inside when the room was last saved. Load
