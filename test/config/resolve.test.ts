@@ -112,6 +112,7 @@ describe("resolveConfig precedence", () => {
 			thinking: "enabled",
 			reasoningEffort: "high",
 			baseURL: "https://api.deepseek.com",
+			anthropicBaseURL: "https://api.deepseek.com/anthropic",
 			apiKeyEnv: "DEEPSEEK_API_KEY",
 			maxSteps: 25,
 		});
@@ -149,6 +150,7 @@ describe("resolveConfig precedence", () => {
 			thinking: "disabled",
 			reasoningEffort: "low",
 			baseURL: "http://localhost:8080/v1",
+			anthropicBaseURL: "https://api.deepseek.com/anthropic",
 			apiKeyEnv: "DEEPSEEK_API_KEY",
 			maxSteps: 7,
 		});

@@ -120,6 +120,9 @@ export interface ProviderSettings {
 	thinking: ThinkingSetting;
 	reasoningEffort: ReasoningEffort;
 	baseURL: string;
+	// Derived from the preset, not a config key: only presets with an
+	// Anthropic-compatible endpoint set it.
+	anthropicBaseURL?: string;
 	apiKeyEnv: string;
 	maxSteps: number;
 }
@@ -166,6 +169,23 @@ export function globalConfigPath(homeDir: string): string {
 
 export function missingApiKeyMessage(apiKeyEnv: string): string {
 	return `Missing ${apiKeyEnv}. Run "my-agent setup" to store a key, or set the ${apiKeyEnv} environment variable.`;
+}
+
+// The env a cli rob's child process needs for the provider: the key under its
+// configured name, plus the Anthropic endpoint and model when the preset has
+// one, so a claude child never falls back to its own login.
+export function childProviderEnv(
+	settings: ProviderSettings,
+	apiKey: string | undefined,
+): Record<string, string> {
+	if (apiKey === undefined) return {};
+	const env: Record<string, string> = { [settings.apiKeyEnv]: apiKey };
+	if (settings.anthropicBaseURL === undefined) return env;
+	env.ANTHROPIC_BASE_URL = settings.anthropicBaseURL;
+	env.ANTHROPIC_AUTH_TOKEN = apiKey;
+	env.ANTHROPIC_MODEL = settings.model;
+	env.ANTHROPIC_SMALL_FAST_MODEL = settings.model;
+	return env;
 }
 
 export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
@@ -291,6 +311,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				thinking: thinking.value,
 				reasoningEffort: reasoningEffort.value,
 				baseURL: baseURL.value,
+				anthropicBaseURL: PRESETS[preset].anthropicBaseURL,
 				apiKeyEnv: apiKeyEnv.value,
 				maxSteps: maxSteps.value,
 			},
