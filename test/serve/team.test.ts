@@ -181,6 +181,7 @@ describe("TeamHub", () => {
 				members: ["alpha", "beta"],
 				transcript: [],
 				run: { phase: "idle" },
+				pending: 0,
 				limits: roomLimits,
 			},
 		]);
@@ -209,6 +210,7 @@ describe("TeamHub", () => {
 				members: ["alpha", "beta"],
 				transcript: [],
 				run: { phase: "idle" },
+				pending: 0,
 				limits: roomLimits,
 			},
 		});

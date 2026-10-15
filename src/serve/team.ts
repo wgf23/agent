@@ -287,6 +287,7 @@ export function toRoomInfo(view: RoomView): RoomInfo {
 		members: [...view.members],
 		transcript: view.transcript.slice(-ROOM_INFO_WINDOW).map(toRoomMessageView),
 		run: toRoomRunView(view.run),
+		pending: view.pending,
 		limits: { ...view.limits },
 	};
 }

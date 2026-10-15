@@ -232,11 +232,13 @@ const shipIt: RoomInfo = {
 		},
 	],
 	run: { phase: "idle" },
+	pending: 0,
 	limits: {
 		minMembers: 2,
 		maxMembers: 6,
 		maxRounds: 3,
 		maxMessagesPerRun: 10,
+		maxQueuedSends: 5,
 	},
 };
 

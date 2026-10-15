@@ -166,11 +166,13 @@ export interface RoomInfo {
 	members: string[];
 	transcript: RoomMessageView[];
 	run: RoomRunView;
+	pending: number;
 	limits: {
 		minMembers: number;
 		maxMembers: number;
 		maxRounds: number;
 		maxMessagesPerRun: number;
+		maxQueuedSends: number;
 	};
 }
 

@@ -45,7 +45,7 @@ export default function RoomView({
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const running = room.run.phase === "running";
-	const canSend = configured && !running && value.trim() !== "";
+	const canSend = configured && value.trim() !== "";
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: new entries must re-run the scroll
 	useLayoutEffect(() => {
@@ -113,7 +113,7 @@ export default function RoomView({
 	if (!configured) {
 		placeholder = "请先配置模型";
 	} else if (running) {
-		placeholder = "成员正在回复，可中断本次发送…";
+		placeholder = "成员正在回复，消息会排队…";
 	}
 
 	return (
@@ -222,7 +222,7 @@ export default function RoomView({
 				</div>
 				<p className="composer-hint">
 					{running
-						? "成员回复期间不能发送新消息；中断后可继续"
+						? "成员回复期间可继续发送，消息会排队等本次结束"
 						: "Enter 发送 · Shift+Enter 换行"}
 				</p>
 			</div>
