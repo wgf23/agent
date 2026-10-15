@@ -33,6 +33,119 @@ ${registrations}${hook}
 `;
 }
 
+/** The one opencode MCP server source for a bridged turn. The gateway client
+ *  half is inlined and nothing imports my-agent, so the child runs the file
+ *  under both `tsx` and a built `dist`. */
+export function teamMcpShim(spec: { defs: readonly ToolDefinition[] }): string {
+	const tools = JSON.stringify(
+		spec.defs.map((def) => ({
+			name: def.name,
+			description: def.description,
+			inputSchema: def.parameters,
+		})),
+	);
+	return `${gatewayClientSource()}
+const TOOLS = ${tools};
+
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+	buffer += chunk;
+	let newline = buffer.indexOf("\\n");
+	while (newline !== -1) {
+		const line = buffer.slice(0, newline);
+		buffer = buffer.slice(newline + 1);
+		void handle(line);
+		newline = buffer.indexOf("\\n");
+	}
+});
+
+function write(message) {
+	process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+async function handle(line) {
+	if (line.trim() === "") return;
+	let message;
+	try {
+		message = JSON.parse(line);
+	} catch {
+		return;
+	}
+	if (typeof message !== "object" || message === null) return;
+	// Only notifications carry no id, and only notifications/initialized is sent.
+	if (message.id === undefined || message.id === null) return;
+	switch (message.method) {
+		case "initialize": {
+			const params = message.params ?? {};
+			write({
+				jsonrpc: "2.0",
+				id: message.id,
+				result: {
+					protocolVersion:
+						typeof params.protocolVersion === "string"
+							? params.protocolVersion
+							: "2025-06-18",
+					capabilities: { tools: {} },
+					serverInfo: { name: "my-agent-team", version: "1.0.0" },
+				},
+			});
+			return;
+		}
+		case "ping":
+			write({ jsonrpc: "2.0", id: message.id, result: {} });
+			return;
+		case "tools/list":
+			write({ jsonrpc: "2.0", id: message.id, result: { tools: TOOLS } });
+			return;
+		case "tools/call": {
+			const params = message.params ?? {};
+			const name = typeof params.name === "string" ? params.name : "";
+			if (!TOOLS.some((tool) => tool.name === name)) {
+				write({
+					jsonrpc: "2.0",
+					id: message.id,
+					error: { code: -32602, message: "Unknown tool: " + name },
+				});
+				return;
+			}
+			try {
+				const outcome = await callTeamTool(name, params.arguments ?? {});
+				const result = { content: [{ type: "text", text: outcome.text }] };
+				// MCP reports a refused tool call as a successful result too.
+				if (!outcome.ok) result.isError = true;
+				write({ jsonrpc: "2.0", id: message.id, result });
+			} catch (error) {
+				write({
+					jsonrpc: "2.0",
+					id: message.id,
+					result: {
+						content: [
+							{
+								type: "text",
+								text: error instanceof Error ? error.message : String(error),
+							},
+						],
+						isError: true,
+					},
+				});
+			}
+			return;
+		}
+		default:
+			write({
+				jsonrpc: "2.0",
+				id: message.id,
+				error: {
+					code: -32601,
+					message: "Unsupported method: " + message.method,
+				},
+			});
+	}
+}
+`;
+}
+
 function registerToolSource(def: ToolDefinition): string {
 	const name = JSON.stringify(def.name);
 	return `	pi.registerTool({
