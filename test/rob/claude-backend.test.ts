@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../src/agent/events.js";
+import { childProviderEnv, resolveConfig } from "../../src/config/resolve.js";
 import type { PermissionRules } from "../../src/permissions/rules.js";
 import type { TurnResult } from "../../src/rob/backend.js";
 import {
@@ -401,6 +402,47 @@ describe("claude backend", () => {
 		});
 
 		expect(await readFile(envFile, "utf8")).toBe("forwarded-value");
+	});
+
+	it("passes the provider's anthropic env to the claude child", async () => {
+		const envFile = path.join(workspace, "env.txt");
+		process.env.FAKE_CLAUDE_ENV_FILE = envFile;
+		process.env.FAKE_CLAUDE_ENV_NAME =
+			"ANTHROPIC_BASE_URL,ANTHROPIC_AUTH_TOKEN,ANTHROPIC_MODEL,ANTHROPIC_SMALL_FAST_MODEL";
+
+		const resolved = resolveConfig({
+			workspaceRoot: workspace,
+			env: { DEEPSEEK_API_KEY: "sk-deepseek" },
+			homeDir: path.join(workspace, "home"),
+		});
+		if (!resolved.ok) throw new Error(resolved.error);
+
+		const backend = createClaudeBackend({
+			rob: "reviewer",
+			role: "review code",
+			command: FIXTURE,
+			configDir: path.join(workspace, "cfg"),
+			extraEnv: childProviderEnv(
+				resolved.config.provider,
+				resolved.config.apiKey,
+			),
+		});
+		await backend.run({
+			history: [],
+			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
+			workspaceRoot: workspace,
+			bridge: fakeBridge(),
+			rules: {},
+			signal: new AbortController().signal,
+			onEvent: () => {},
+		});
+
+		expect(JSON.parse(await readFile(envFile, "utf8"))).toEqual({
+			ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+			ANTHROPIC_AUTH_TOKEN: "sk-deepseek",
+			ANTHROPIC_MODEL: "deepseek-flash",
+			ANTHROPIC_SMALL_FAST_MODEL: "deepseek-flash",
+		});
 	});
 
 	it("kills the child on abort and ends the turn as aborted", async () => {

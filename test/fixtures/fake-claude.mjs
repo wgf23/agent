@@ -7,9 +7,18 @@ if (process.env.FAKE_CLAUDE_ARGV_FILE) {
 	writeFileSync(process.env.FAKE_CLAUDE_ARGV_FILE, JSON.stringify(args));
 }
 if (process.env.FAKE_CLAUDE_ENV_FILE) {
+	// One name writes the raw value; a comma-separated list writes a JSON
+	// object, so a test can observe several variables from one spawn.
+	const names = (process.env.FAKE_CLAUDE_ENV_NAME ?? "").split(",");
 	writeFileSync(
 		process.env.FAKE_CLAUDE_ENV_FILE,
-		process.env[process.env.FAKE_CLAUDE_ENV_NAME ?? ""] ?? "",
+		names.length === 1
+			? (process.env[names[0]] ?? "")
+			: JSON.stringify(
+					Object.fromEntries(
+						names.map((name) => [name, process.env[name] ?? ""]),
+					),
+				),
 	);
 }
 
