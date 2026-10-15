@@ -245,6 +245,25 @@ describe("TeamHub", () => {
 			error: "A room needs 2 to 6 members.",
 		});
 
+		const badInterrupt = await post("/api/rooms/interrupt", {});
+		expect(badInterrupt.status).toBe(400);
+		expect(await badInterrupt.json()).toEqual({ error: "expected {room}" });
+
+		const interrupted = await post("/api/rooms/interrupt", {
+			room: "standup",
+		});
+		expect(interrupted.status).toBe(200);
+		await waitFor(
+			() =>
+				events.some(
+					(event) =>
+						event.type === "room" &&
+						event.event.kind === "run_ended" &&
+						event.event.outcome === "interrupted",
+				),
+			"the interrupted run",
+		);
+
 		await app.close();
 		await hub.dispose();
 	});

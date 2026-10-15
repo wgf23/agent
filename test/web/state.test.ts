@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ServerEvent } from "../../shared/protocol";
+import type { RoomInfo, ServerEvent } from "../../shared/protocol";
 import {
 	applyAgentEvent,
 	clientReducer,
@@ -215,6 +215,150 @@ describe("clientReducer", () => {
 		expect(state.transcripts.assistant.at(-1)).toMatchObject({
 			role: "system",
 		});
+	});
+});
+
+const shipIt: RoomInfo = {
+	name: "ship-it",
+	members: ["alpha", "beta"],
+	transcript: [
+		{ id: 1, at: 1_700_000_000_000, kind: "user", text: "status?" },
+		{
+			id: 2,
+			at: 1_700_000_001_000,
+			kind: "member",
+			from: "alpha",
+			text: "on it",
+		},
+	],
+	run: { phase: "idle" },
+	limits: {
+		minMembers: 2,
+		maxMembers: 6,
+		maxRounds: 3,
+		maxMessagesPerRun: 10,
+	},
+};
+
+describe("rooms", () => {
+	it("seeds hello rooms and folds every room event into them", () => {
+		const running = {
+			phase: "running" as const,
+			round: 2,
+			rounds: 3,
+			current: "beta",
+			posted: 1,
+			remaining: 9,
+			addressed: ["alpha"],
+		};
+		const state = apply([
+			{ ...hello, rooms: [shipIt] },
+			{
+				type: "room",
+				event: {
+					kind: "entry",
+					room: "ship-it",
+					entry: { id: 3, at: 1_700_000_002_000, kind: "user", text: "again" },
+				},
+			},
+			{ type: "room", event: { kind: "run", room: "ship-it", run: running } },
+			{
+				type: "room",
+				event: {
+					kind: "turn",
+					room: "ship-it",
+					member: "alpha",
+					round: 1,
+					state: "replied",
+				},
+			},
+			{
+				type: "room",
+				event: {
+					kind: "members",
+					room: "ship-it",
+					members: ["alpha", "beta", "gamma"],
+				},
+			},
+			{
+				type: "room",
+				event: {
+					kind: "run_ended",
+					room: "ship-it",
+					run: running,
+					outcome: "settled",
+				},
+			},
+		]);
+		expect(state.rooms["ship-it"].members).toEqual(["alpha", "beta", "gamma"]);
+		expect(
+			state.rooms["ship-it"].transcript.map((entry) => entry.text),
+		).toEqual(["status?", "on it", "again"]);
+		expect(state.rooms["ship-it"].run).toEqual({ phase: "idle" });
+		expect(state.rooms["ship-it"].lastOutcome).toBe("settled");
+	});
+
+	it("keeps the last 100 entries of a room, like the DM feed", () => {
+		const entries: ServerEvent[] = Array.from({ length: 101 }, (_, index) => ({
+			type: "room",
+			event: {
+				kind: "entry",
+				room: "other-tab",
+				entry: {
+					id: index + 10,
+					at: index + 10,
+					kind: "user",
+					text: `line ${index + 1}`,
+				},
+			},
+		}));
+		const state = apply([hello, ...entries]);
+		const transcript = state.rooms["other-tab"].transcript;
+		expect(transcript).toHaveLength(100);
+		expect(transcript[0].text).toBe("line 2");
+		expect(transcript.at(-1)?.text).toBe("line 101");
+	});
+
+	it("creates a room named by an event hello never sent", () => {
+		const state = apply([
+			{ ...hello, rooms: [shipIt] },
+			{
+				type: "room",
+				event: {
+					kind: "members",
+					room: "side-room",
+					members: ["alpha", "beta"],
+				},
+			},
+		]);
+		expect(state.rooms["side-room"].members).toEqual(["alpha", "beta"]);
+		expect(state.rooms["side-room"].run).toEqual({ phase: "idle" });
+		expect(state.rooms["ship-it"].members).toEqual(["alpha", "beta"]);
+	});
+
+	it("seeds a created room from the create response without dropping live entries", () => {
+		const fresh: RoomInfo = { ...shipIt, transcript: [] };
+		const seeded = clientReducer(initialState(), {
+			type: "room_created",
+			room: fresh,
+		});
+		expect(seeded.rooms["ship-it"].members).toEqual(["alpha", "beta"]);
+
+		const live = clientReducer(seeded, {
+			type: "server",
+			event: {
+				type: "room",
+				event: {
+					kind: "entry",
+					room: "ship-it",
+					entry: { id: 1, at: 1, kind: "user", text: "first line" },
+				},
+			},
+		});
+		const late = clientReducer(live, { type: "room_created", room: fresh });
+		expect(late.rooms["ship-it"].transcript.map((entry) => entry.text)).toEqual(
+			["first line"],
+		);
 	});
 });
 
