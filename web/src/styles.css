@@ -2630,6 +2630,103 @@ button.browser-crumb:hover {
 	min-width: 0;
 }
 
+.file-more {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-3);
+	font-size: 14px;
+	line-height: 1;
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+.file-more:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+/* The per-row structure menu and the armed delete both sit under their row, so
+   the target they act on stays visible while the choice is made. */
+.file-menu {
+	display: flex;
+	flex-direction: column;
+	margin: 2px 0 4px 22px;
+	padding: 4px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	box-shadow: var(--shadow-md);
+}
+
+.file-menu button {
+	padding: 5px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text);
+	font-size: 12.5px;
+	text-align: left;
+}
+
+.file-menu button:hover {
+	background: var(--surface-hover);
+}
+
+.file-menu button.danger {
+	color: var(--red);
+}
+
+.file-confirm {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 2px 0 4px 22px;
+	padding: 6px 8px;
+	border: 1px solid var(--warn-border);
+	border-radius: var(--radius-sm);
+	background: var(--warn-soft);
+}
+
+.file-confirm-text {
+	flex: 1;
+	min-width: 0;
+	font-size: 11.5px;
+	color: var(--yellow);
+	overflow-wrap: anywhere;
+}
+
+/* The inline rename and new-folder inputs share the row's width. */
+.file-rename {
+	flex: 1;
+	min-width: 0;
+	padding: 2px 6px;
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	background: var(--surface);
+	color: var(--text);
+	font-size: 13px;
+}
+
+.file-row-error {
+	margin: 2px 0 4px 22px;
+	font-size: 11.5px;
+	color: var(--red);
+	overflow-wrap: anywhere;
+}
+
+.file-new-row {
+	padding: 2px 0;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 880px) {

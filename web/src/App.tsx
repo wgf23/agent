@@ -185,6 +185,10 @@ export default function App() {
 				listFiles={hub.listFiles}
 				fileDownloadUrl={hub.fileDownloadUrl}
 				upload={hub.upload}
+				mkdir={hub.mkdir}
+				renameEntry={hub.renameEntry}
+				moveEntry={hub.moveEntry}
+				deleteEntry={hub.deleteEntry}
 				listDirs={hub.listDirs}
 				workspaceRoot={state.workspaceRoot}
 				open={filesOpen}

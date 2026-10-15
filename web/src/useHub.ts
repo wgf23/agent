@@ -83,6 +83,12 @@ export interface Hub {
 		file: File,
 		options?: UploadOptions,
 	) => Promise<UploadResult>;
+	// Structure writes for the file panel; each rejects with the server's
+	// reason so the row can show it, and the panel owns the refresh.
+	mkdir: (path: string) => Promise<void>;
+	renameEntry: (from: string, to: string) => Promise<void>;
+	moveEntry: (from: string, to: string) => Promise<void>;
+	deleteEntry: (path: string, recursive?: boolean) => Promise<void>;
 	// Resolves with the server's optional non-blocking warning so the dialog can
 	// surface it; throws the server's error message on failure.
 	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
@@ -211,6 +217,22 @@ export function useHub(): Hub {
 
 	const listDirs = useCallback((path?: string) => api.listDirs(path), []);
 
+	// Forwarded whole too: the panel shows the server's reason on the row and
+	// re-reads the directories the entry left and landed in.
+	const mkdir = useCallback((path: string) => api.mkdir(path), []);
+	const renameEntry = useCallback(
+		(from: string, to: string) => api.renameEntry(from, to),
+		[],
+	);
+	const moveEntry = useCallback(
+		(from: string, to: string) => api.moveEntry(from, to),
+		[],
+	);
+	const deleteEntry = useCallback(
+		(path: string, recursive?: boolean) => api.deleteEntry(path, recursive),
+		[],
+	);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -285,5 +307,9 @@ export function useHub(): Hub {
 		fileDownloadUrl,
 		listDirs,
 		upload,
+		mkdir,
+		renameEntry,
+		moveEntry,
+		deleteEntry,
 	};
 }

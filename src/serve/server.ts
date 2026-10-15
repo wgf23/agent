@@ -7,7 +7,7 @@ import { type Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
-import { type FastifyInstance, fastify } from "fastify";
+import { type FastifyInstance, type FastifyReply, fastify } from "fastify";
 import type {
 	AllowAllBody,
 	ApprovalBody,
@@ -36,10 +36,15 @@ import {
 	assertBrowsePath,
 	BrowseError,
 	browseDirectories,
+	deleteEntry,
+	FileOpError,
 	isInsideBrowseRoots,
 	listDirectory,
+	mkdirInWorkspace,
+	moveEntry,
 	NotADirectoryError,
 	type PathStat,
+	renameEntry,
 	statPath,
 } from "./files.js";
 import type { Hub, HubOptions } from "./hub.js";
@@ -533,6 +538,69 @@ export async function buildServer(
 		},
 	);
 
+	// The four filesystem-style structure operations. Each resolves its target
+	// inside the active workspace first, so an escape is a 400 and a missing
+	// source a 404; a bad name, an existing destination, or a move into itself
+	// is a 400 carrying the reason the panel shows. Every refusal is the same
+	// { ok: false, error } shape so the client has one failure path.
+	app.post("/api/files/mkdir", async (request, reply) => {
+		const body = request.body as { path?: unknown } | undefined;
+		if (typeof body?.path !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {path}" });
+		}
+		try {
+			await mkdirInWorkspace(hub.hello().workspaceRoot, body.path);
+			return reply.send({ ok: true });
+		} catch (error) {
+			return sendFileOpError(reply, error);
+		}
+	});
+
+	app.post("/api/files/rename", async (request, reply) => {
+		const body = request.body as { from?: unknown; to?: unknown } | undefined;
+		if (typeof body?.from !== "string" || typeof body.to !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {from, to}" });
+		}
+		try {
+			await renameEntry(hub.hello().workspaceRoot, body.from, body.to);
+			return reply.send({ ok: true });
+		} catch (error) {
+			return sendFileOpError(reply, error);
+		}
+	});
+
+	app.post("/api/files/move", async (request, reply) => {
+		const body = request.body as { from?: unknown; to?: unknown } | undefined;
+		if (typeof body?.from !== "string" || typeof body.to !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {from, to}" });
+		}
+		try {
+			await moveEntry(hub.hello().workspaceRoot, body.from, body.to);
+			return reply.send({ ok: true });
+		} catch (error) {
+			return sendFileOpError(reply, error);
+		}
+	});
+
+	app.post("/api/files/delete", async (request, reply) => {
+		const body = request.body as
+			| { path?: unknown; recursive?: unknown }
+			| undefined;
+		if (typeof body?.path !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {path}" });
+		}
+		try {
+			await deleteEntry(
+				hub.hello().workspaceRoot,
+				body.path,
+				body.recursive === true,
+			);
+			return reply.send({ ok: true });
+		} catch (error) {
+			return sendFileOpError(reply, error);
+		}
+	});
+
 	app.post("/api/sessions/new", async (request, reply) => {
 		const body = request.body as Partial<SessionNewBody> | undefined;
 		if (typeof body?.bot !== "string") {
@@ -837,6 +905,19 @@ function httpStatus(error: unknown): number {
 		if (typeof status === "number") return status;
 	}
 	return 500;
+}
+
+// A structure-op refusal carries its own status: a boundary or validation
+// failure is a 400, a missing source a 404, and the PathEscapeError that
+// resolveInWorkspace raises is a 400 too. Anything else is an unexpected 500.
+function sendFileOpError(reply: FastifyReply, error: unknown): FastifyReply {
+	const status =
+		error instanceof PathEscapeError
+			? 400
+			: error instanceof FileOpError
+				? error.status
+				: 500;
+	return reply.code(status).send({ ok: false, error: errorText(error) });
 }
 
 function errorText(error: unknown): string {
