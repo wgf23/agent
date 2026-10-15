@@ -320,11 +320,18 @@ export async function buildServer(
 		if (
 			typeof body?.name !== "string" ||
 			!Array.isArray(body.members) ||
-			!body.members.every((member) => typeof member === "string")
+			!body.members.every((member) => typeof member === "string") ||
+			(body.coordinator !== undefined && typeof body.coordinator !== "string")
 		) {
-			return reply.code(400).send({ error: "expected {name, members}" });
+			return reply
+				.code(400)
+				.send({ error: "expected {name, members, coordinator?}" });
 		}
-		const outcome = createRoom({ name: body.name, members: body.members });
+		const outcome = createRoom({
+			name: body.name,
+			members: body.members,
+			coordinator: body.coordinator,
+		});
 		if (outcome.status === "rejected") {
 			return reply
 				.code(400)

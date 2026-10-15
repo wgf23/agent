@@ -221,6 +221,7 @@ describe("clientReducer", () => {
 const shipIt: RoomInfo = {
 	name: "ship-it",
 	members: ["alpha", "beta"],
+	coordinator: null,
 	transcript: [
 		{ id: 1, at: 1_700_000_000_000, kind: "user", text: "status?" },
 		{
@@ -233,6 +234,7 @@ const shipIt: RoomInfo = {
 	],
 	run: { phase: "idle" },
 	pending: 0,
+	deliverable: null,
 	limits: {
 		minMembers: 2,
 		maxMembers: 6,

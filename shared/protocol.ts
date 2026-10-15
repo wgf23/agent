@@ -161,12 +161,20 @@ export type RoomRunView =
 			addressed: string[];
 	  };
 
+export interface RoomDeliverableInfo {
+	at: number;
+	path: string;
+	coordinator: string;
+}
+
 export interface RoomInfo {
 	name: string;
 	members: string[];
+	coordinator: string | null;
 	transcript: RoomMessageView[];
 	run: RoomRunView;
 	pending: number;
+	deliverable: RoomDeliverableInfo | null;
 	limits: {
 		minMembers: number;
 		maxMembers: number;
@@ -204,6 +212,7 @@ export type RoomEventInfo =
 export interface CreateRoomBody {
 	name: string;
 	members: string[];
+	coordinator?: string;
 }
 
 export interface RoomSendBody {

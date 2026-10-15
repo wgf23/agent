@@ -285,9 +285,11 @@ export function toRoomInfo(view: RoomView): RoomInfo {
 	return {
 		name: view.name,
 		members: [...view.members],
+		coordinator: view.coordinator,
 		transcript: view.transcript.slice(-ROOM_INFO_WINDOW).map(toRoomMessageView),
 		run: toRoomRunView(view.run),
 		pending: view.pending,
+		deliverable: view.deliverable === null ? null : { ...view.deliverable },
 		limits: { ...view.limits },
 	};
 }

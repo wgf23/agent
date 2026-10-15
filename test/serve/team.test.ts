@@ -179,9 +179,11 @@ describe("TeamHub", () => {
 			{
 				name: "ship-it",
 				members: ["alpha", "beta"],
+				coordinator: null,
 				transcript: [],
 				run: { phase: "idle" },
 				pending: 0,
+				deliverable: null,
 				limits: roomLimits,
 			},
 		]);
@@ -208,9 +210,11 @@ describe("TeamHub", () => {
 			room: {
 				name: "standup",
 				members: ["alpha", "beta"],
+				coordinator: null,
 				transcript: [],
 				run: { phase: "idle" },
 				pending: 0,
+				deliverable: null,
 				limits: roomLimits,
 			},
 		});

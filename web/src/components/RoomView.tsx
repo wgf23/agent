@@ -138,6 +138,11 @@ export default function RoomView({
 						</span>
 					</div>
 					<div className="bot-header-role">{roomDetail(room)}</div>
+					{room.deliverable !== null && (
+						<div className="bot-header-role" title={room.deliverable.path}>
+							最近交付：{room.deliverable.path}
+						</div>
+					)}
 				</div>
 			</header>
 
@@ -261,13 +266,15 @@ function RoomEntryRow({ entry }: { entry: RoomMessageView }) {
 
 function roomDetail(room: ClientRoom): string {
 	const members = `成员：${room.members.join("、")}`;
+	const coordinator =
+		room.coordinator === null ? "" : ` · 协调者：${room.coordinator}`;
 	if (room.run.phase === "running") {
 		const speaker =
 			room.run.current === null ? "" : ` · ${room.run.current} 发言中`;
-		return `${members} · 第 ${room.run.round}/${room.run.rounds} 轮${speaker}`;
+		return `${members}${coordinator} · 第 ${room.run.round}/${room.run.rounds} 轮${speaker}`;
 	}
 	if (room.lastOutcome !== null) {
-		return `${members} · ${OUTCOME_LABEL[room.lastOutcome]}`;
+		return `${members}${coordinator} · ${OUTCOME_LABEL[room.lastOutcome]}`;
 	}
-	return members;
+	return `${members}${coordinator}`;
 }
