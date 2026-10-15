@@ -44,6 +44,23 @@ describe("readProjectConfig", () => {
 
 		expect(result.ok).toBe(false);
 	});
+
+	it("rejects a room whose member is not a rob in the same file", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			JSON.stringify({
+				robs: [{ name: "planner", role: "plan" }],
+				rooms: [{ name: "ship-it", members: ["planner", "ghost"] }],
+			}),
+			"utf8",
+		);
+
+		const result = await readProjectConfig(workspace);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Invalid rooms");
+	});
 });
 
 describe("addPermissionRule", () => {

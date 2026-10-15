@@ -369,6 +369,76 @@ describe("resolveConfig mcp", () => {
 	});
 });
 
+describe("resolveConfig rooms", () => {
+	it("defaults to no rooms", () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.rooms).toEqual([]);
+	});
+
+	it("reads rooms from the project file and validates them against its robs", async () => {
+		await writeProject({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "builder", role: "build" },
+			],
+			rooms: [{ name: "ship-it", members: ["planner", "builder"] }],
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.rooms).toEqual([
+			{ name: "ship-it", members: ["planner", "builder"] },
+		]);
+	});
+
+	it("rejects a room member that is not a rob in the same file", async () => {
+		await writeProject({
+			robs: [{ name: "planner", role: "plan" }],
+			rooms: [{ name: "ship-it", members: ["planner", "ghost"] }],
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe(
+			`Invalid rooms in ${path.join(workspaceRoot, "my-agent.json")}: A listed member is not on the team.`,
+		);
+	});
+
+	it("rejects a room named after a rob", async () => {
+		await writeProject({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "builder", role: "build" },
+			],
+			rooms: [{ name: "planner", members: ["planner", "builder"] }],
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain('Room "planner" cannot use a rob\'s name.');
+	});
+
+	it("rejects rooms in the global file", async () => {
+		await writeGlobal({ rooms: [] });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("cannot set rooms");
+		expect(result.error).toContain(globalConfigPath(homeDir));
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({
