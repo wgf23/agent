@@ -200,6 +200,39 @@ describe("claude backend", () => {
 		]);
 	});
 
+	it("keeps an ask or deny built-in out of --tools", async () => {
+		const argvFile = path.join(workspace, "argv.json");
+		process.env.FAKE_CLAUDE_ARGV_FILE = argvFile;
+
+		await runTurn({ rules: { write_file: "ask", edit_file: "deny" } });
+
+		const argv = JSON.parse(await readFile(argvFile, "utf8"));
+		const tools = argv[argv.indexOf("--tools") + 1];
+		expect(tools).toBe("Read,Glob,Grep");
+		expect(tools).not.toContain("Write");
+		expect(tools).not.toContain("Edit");
+		expect(argv).not.toContain("--disallowedTools");
+	});
+
+	it("passes an empty --tools when no built-in resolves to allow", async () => {
+		const argvFile = path.join(workspace, "argv.json");
+		process.env.FAKE_CLAUDE_ARGV_FILE = argvFile;
+
+		await runTurn({
+			rules: {
+				read_file: "deny",
+				glob: "deny",
+				grep: "deny",
+				write_file: "deny",
+				edit_file: "deny",
+				bash: "deny",
+			},
+		});
+
+		const argv = JSON.parse(await readFile(argvFile, "utf8"));
+		expect(argv[argv.indexOf("--tools") + 1]).toBe("");
+	});
+
 	it("resumes the same session with --resume on a later turn", async () => {
 		const argvFile = path.join(workspace, "argv.json");
 		process.env.FAKE_CLAUDE_ARGV_FILE = argvFile;
@@ -585,6 +618,7 @@ describe("claude team bridge", () => {
 		expect(argv[argv.indexOf("--allowedTools") + 1]).toBe(
 			"Read,Glob,Grep,mcp__myagent-team__send_message,mcp__myagent-team__delegate",
 		);
+		expect(argv[argv.indexOf("--tools") + 1]).toBe("Read,Glob,Grep");
 		expect(argv[argv.indexOf("--mcp-config") + 1]).toBe(mcpConfigFile);
 		expect(argv).toContain("--strict-mcp-config");
 		expect(await readFile(envFile, "utf8")).toBe(
