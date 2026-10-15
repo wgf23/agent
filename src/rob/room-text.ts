@@ -13,29 +13,37 @@ import type { RobName } from "./types.js";
 export const ROOM_PASS_SENTINEL = "PASS";
 
 /** Splits `@name` mentions out of a user line. Only exact member names count, so
- *  a typo stays in the text and never silently drops a member. `body` drops the
- *  known mentions and collapses the leftover whitespace; the transcript keeps
- *  the raw line. Pure. */
+ *  a typo stays in the text and never silently drops a member. The token `all`
+ *  addresses every member unless a member is named "all", in which case
+ *  exact-name matching wins as for any other token. Named mentions union with
+ *  `@all`, and the result keeps membership order. `body` drops the known
+ *  mentions and collapses the leftover whitespace; the transcript keeps the raw
+ *  line. Pure. */
 export function parseRoomMentions(
 	text: string,
 	members: readonly RobName[],
 ): { body: string; addressed: readonly RobName[] } {
 	const known = new Set(members);
 	const mentioned = new Set<RobName>();
+	let everyone = false;
 	let body = "";
 	let last = 0;
 	for (const match of text.matchAll(/@([a-z][a-z0-9-]*)/g)) {
 		if (match.index === undefined) continue;
 		const name = match[1];
-		if (!known.has(name)) continue;
+		const broadcast = name === "all" && !known.has(name);
+		if (!known.has(name) && !broadcast) continue;
 		body += text.slice(last, match.index);
 		last = match.index + match[0].length;
-		mentioned.add(name);
+		if (broadcast) everyone = true;
+		else mentioned.add(name);
 	}
 	body += text.slice(last);
 	return {
 		body: body.replace(/\s+/g, " ").trim(),
-		addressed: members.filter((member) => mentioned.has(member)),
+		addressed: everyone
+			? [...members]
+			: members.filter((member) => mentioned.has(member)),
 	};
 }
 
