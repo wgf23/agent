@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { UsageTotals } from "../agent/agent.js";
@@ -7,15 +8,18 @@ import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
 import type { Message } from "../providers/types.js";
-import { getTool } from "../tools/registry.js";
+import { getTool, toolDefinition } from "../tools/registry.js";
 import { errorMessage } from "../util/errors.js";
 import {
 	emptyUsage,
 	promptFor,
 	type RobBackend,
+	type RobTurn,
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
+import { teamMcpShim } from "./gateway/shims.js";
+import { renderTeamPreamble } from "./roster.js";
 import type { Inbound, RobName } from "./types.js";
 
 const OPENCODE_COMMAND = "opencode";
@@ -28,6 +32,11 @@ const SUMMARY_MAX_CHARS = 200;
 const UI_OUTPUT_MAX_CHARS = 4000;
 
 const LISTEN_PATTERN = /server listening on (http:\/\/\S+)/;
+
+// The MCP server name is also the permission action prefix opencode derives
+// from it, so team calls arrive as "myagent-team_send_message" and friends.
+const TEAM_MCP_SERVER = "myagent-team";
+const TEAM_MCP_FILE = "team-mcp.mjs";
 
 // Our tool to the permission action opencode gates it by. write_file and
 // edit_file share the "edit" action.
@@ -212,16 +221,6 @@ export function createOpencodeBackend(
 		options.provider !== undefined && options.model !== undefined
 			? { providerID: options.provider, id: options.model }
 			: undefined;
-	const configContent = JSON.stringify({
-		agents: {
-			[agentID]: {
-				description: `my-agent rob "${options.rob}"`,
-				mode: "primary",
-				system: options.role,
-				permissions: opencodePermissions(options.rules),
-			},
-		},
-	});
 
 	let child: OpencodeChild | null = null;
 	let baseUrl: string | null = null;
@@ -232,6 +231,9 @@ export function createOpencodeBackend(
 	let sseAbort: AbortController | null = null;
 	let active: TurnState | null = null;
 	let stderr = "";
+	// Built on the first turn, when the bridge's opaque env is in reach.
+	let configContent = "";
+	let teamActions: ReadonlySet<string> = new Set();
 	// opencode permission requests awaiting our answer, so an abort or dispose
 	// can reject them instead of leaving opencode blocked.
 	const pendingPermissions = new Map<string, { replied: boolean }>();
@@ -302,6 +304,12 @@ export function createOpencodeBackend(
 				return;
 			}
 			const action = stringField(data.action);
+			// The gateway is the single authorizer for a team call, so its own
+			// permission ask is answered once and the shim carries the call.
+			if (teamActions.has(action)) {
+				await replyPermission(requestID, "once");
+				return;
+			}
 			const resource = firstResource(data.resources);
 			const toolName = permissionToolFor(options.rules, action, resource);
 			const tool = toolName === null ? undefined : getTool(toolName);
@@ -347,9 +355,9 @@ export function createOpencodeBackend(
 		return detail === "" ? "" : `\n${capStderr(detail)}`;
 	};
 
-	const ensureStarted = (workspaceRoot: string): Promise<void> => {
+	const ensureStarted = (turn: RobTurn): Promise<void> => {
 		if (startPromise === null) {
-			startPromise = start(workspaceRoot).catch((error: unknown) => {
+			startPromise = start(turn).catch((error: unknown) => {
 				startPromise = null;
 				throw error;
 			});
@@ -357,15 +365,61 @@ export function createOpencodeBackend(
 		return startPromise;
 	};
 
-	const start = async (workspaceRoot: string): Promise<void> => {
+	const start = async (turn: RobTurn): Promise<void> => {
+		const childEnv = turn.bridge.childEnv();
+		const defs = turn.bridge.tools.map(toolDefinition);
+		const permissions = opencodePermissions(options.rules);
+		let mcp: Record<string, unknown> | undefined;
+		if (defs.length > 0) {
+			const shimFile = path.join(dataDir, TEAM_MCP_FILE);
+			await mkdir(dataDir, { recursive: true });
+			await writeFile(shimFile, teamMcpShim({ defs }), "utf8");
+			teamActions = new Set(
+				defs.map((def) => `${TEAM_MCP_SERVER}_${def.name}`),
+			);
+			// opencode asks before every MCP call, but the gateway already runs
+			// the rob's authorizer: the call only has to be let through here.
+			permissions.push({
+				action: `${TEAM_MCP_SERVER}_*`,
+				resource: "*",
+				effect: "ask",
+			});
+			mcp = {
+				servers: {
+					[TEAM_MCP_SERVER]: {
+						type: "local",
+						command: ["node", shimFile],
+						// The bridge env is opaque to this backend, so it travels
+						// whole rather than by key name.
+						environment: childEnv,
+						// 2.0.24 hides MCP tools behind Code Mode by default, which
+						// the total-deny base rule leaves unreachable; false keeps
+						// them direct, as the pi backend exposes them.
+						codemode: false,
+					},
+				},
+			};
+		}
+		configContent = JSON.stringify({
+			agents: {
+				[agentID]: {
+					description: `my-agent rob "${options.rob}"`,
+					mode: "primary",
+					system: options.role,
+					permissions,
+				},
+			},
+			...(mcp === undefined ? {} : { mcp }),
+		});
 		child = spawnFn(
 			OPENCODE_COMMAND,
 			["serve", "--port", "0", "--hostname", "127.0.0.1"],
 			{
-				cwd: workspaceRoot,
+				cwd: turn.workspaceRoot,
 				env: {
 					...process.env,
 					...options.extraEnv,
+					...childEnv,
 					XDG_DATA_HOME: dataDir,
 					XDG_STATE_HOME: path.join(dataDir, "state"),
 					OPENCODE_PASSWORD: password,
@@ -773,9 +827,14 @@ export function createOpencodeBackend(
 			active = state;
 
 			try {
-				await ensureStarted(turn.workspaceRoot);
+				await ensureStarted(turn);
 				await ensureSession();
-				const text = turn.inbound.map(promptFor).join("\n\n");
+				const text = `${renderTeamPreamble({
+					rob: options.rob,
+					role: options.role,
+					roster: turn.bridge.roster(),
+					tools: turn.bridge.tools,
+				})}\n\n${turn.inbound.map(promptFor).join("\n\n")}`;
 				let response = await request(
 					"POST",
 					`/api/session/${sessionID}/prompt`,

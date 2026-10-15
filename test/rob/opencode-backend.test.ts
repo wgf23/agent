@@ -22,6 +22,17 @@ import { fakeBridge } from "./helpers.js";
 
 const SESSION = "ses_1";
 
+// The preamble for the fixture's lone rob: no teammates and no bridged tools.
+const LONE_ROB_PREAMBLE = [
+	'You are rob "reviewer", one member of a team of robs.',
+	"Your role: review code",
+	"You are the only rob: there is no teammate to message.",
+	"",
+	"Team tools:",
+	"",
+	"send_message is fire-and-forget: the message is delivered when the teammate next runs, and their reply arrives later as a message from them.",
+].join("\n");
+
 let workspace: string;
 
 beforeEach(async () => {
@@ -504,8 +515,12 @@ describe("opencode backend", () => {
 		]);
 		expect(probes.sessions).toHaveLength(1);
 		expect(probes.prompts.map((p) => p.sessionID)).toEqual(["ses_1", "ses_1"]);
-		expect(probes.prompts[0].body).toEqual({ text: "[from user] hello" });
-		expect(probes.prompts[1].body).toEqual({ text: "[from user] again" });
+		expect(probes.prompts[0].body).toEqual({
+			text: `${LONE_ROB_PREAMBLE}\n\n[from user] hello`,
+		});
+		expect(probes.prompts[1].body).toEqual({
+			text: `${LONE_ROB_PREAMBLE}\n\n[from user] again`,
+		});
 		backend.dispose?.();
 	});
 
