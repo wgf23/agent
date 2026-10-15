@@ -1,5 +1,9 @@
 import os from "node:os";
-import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import {
+	childProviderEnv,
+	missingApiKeyMessage,
+	resolveConfig,
+} from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
@@ -106,7 +110,7 @@ export async function runTeamCommand(
 		providerFactory: options.providerFactory ?? (() => provider),
 		workspaceRoot,
 		permissions,
-		providerEnv: { [settings.apiKeyEnv]: apiKey },
+		providerEnv: childProviderEnv(settings, apiKey),
 		extraTools: mcp.tools,
 		authorizerFactory: (rob) =>
 			createAuthorizer({

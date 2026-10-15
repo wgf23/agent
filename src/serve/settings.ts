@@ -7,7 +7,11 @@ import type {
 import { type SetupVerify, verifyApiKey } from "../cli/setup.js";
 import { writeCredential } from "../config/credentials.js";
 import { writeGlobalProviderSettings } from "../config/global-file.js";
-import { resolveConfig, validateProviderSelection } from "../config/resolve.js";
+import {
+	childProviderEnv,
+	resolveConfig,
+	validateProviderSelection,
+} from "../config/resolve.js";
 import { PRESETS } from "../providers/presets.js";
 import {
 	type ApplyRuntimeResult,
@@ -167,7 +171,7 @@ export class SettingsService {
 			settings,
 			apiKey,
 			apiKeySource,
-			providerEnv: apiKey === null ? {} : { [settings.apiKeyEnv]: apiKey },
+			providerEnv: childProviderEnv(settings, apiKey ?? undefined),
 		};
 
 		const applied = await this.deps.applyRuntime(snapshot);

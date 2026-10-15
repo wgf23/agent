@@ -16,7 +16,7 @@ import type {
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import { verifyApiKey } from "../cli/setup.js";
-import { resolveConfig } from "../config/resolve.js";
+import { childProviderEnv, resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import type { Provider } from "../providers/types.js";
@@ -82,7 +82,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			settings,
 			apiKey: apiKey ?? null,
 			apiKeySource,
-			providerEnv: apiKey === undefined ? {} : { [settings.apiKeyEnv]: apiKey },
+			providerEnv: childProviderEnv(settings, apiKey),
 		},
 		options.provider,
 	);
