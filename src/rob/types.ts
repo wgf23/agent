@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { WORKSPACE_BOT } from "../../shared/protocol.js";
+import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import type {
 	ApprovalDecision,
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
 import { permissionRulesSchema } from "../permissions/rules.js";
+import type { Tool } from "../tools/types.js";
 
 const ROB_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
@@ -132,6 +134,64 @@ export interface RobStatusEntry {
 	pending: number;
 	lastMessage: string | null;
 	usage: RobUsage;
+}
+
+/** One teammate as the live roster presents it. Derived per call; never stored. */
+export interface Teammate {
+	readonly name: RobName;
+	readonly role: string;
+}
+
+/** Why an outbound DM was not queued. Machine-readable; the tool renders the
+ *  model-facing text from it in one place. */
+export type DeliveryReason =
+	| "unknown_target"
+	| "self"
+	| "turn_limit"
+	| "team_stopped";
+
+export type DeliveryOutcome =
+	| { readonly status: "queued" }
+	| { readonly status: "rejected"; readonly reason: DeliveryReason };
+
+export type DelegateReason = "denied" | "depth_exceeded" | "aborted" | "failed";
+
+export type DelegateOutcome =
+	| { readonly status: "ok"; readonly text: string }
+	| {
+			readonly status: "rejected";
+			readonly reason: DelegateReason;
+			readonly detail: string;
+	  };
+
+export type DelegateRunner = (
+	task: string,
+	signal?: AbortSignal,
+) => Promise<string>;
+
+/** What the rob lends the team for one turn: the team cannot authorize or run
+ *  a sub-agent without the rob's rules, provider and approval path. */
+export interface TurnHost {
+	readonly signal: AbortSignal;
+	readonly workspaceRoot: string;
+	readonly authorize: Authorize;
+	readonly runSubagent: DelegateRunner;
+}
+
+/** The only team surface a backend sees. It deliberately has no execute: a
+ *  transport reaches the host through the gateway socket, so no backend can
+ *  run a team tool without passing the authorization gate. */
+export interface BridgePort {
+	readonly rob: RobName;
+	/** The two Tool objects, bound to this turn. There is no second list. */
+	readonly tools: readonly Tool[];
+	/** Live roster, self excluded. Called at prompt-build time. */
+	roster(): readonly Teammate[];
+	/** Opaque env that attaches one of this rob's children to the gateway.
+	 *  Backends spread it into spawn env; they never read the values. */
+	childEnv(): Record<string, string>;
+	/** Idempotent; closes this turn's gateway link. Safe in a finally. */
+	close(): void;
 }
 
 export interface TeamPort {
