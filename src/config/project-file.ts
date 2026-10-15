@@ -9,8 +9,15 @@ import {
 	type RuleEntry,
 } from "../permissions/rules.js";
 import {
+	type RoomConfig,
+	roomConfigSchema,
+	validateRoomMembers,
+} from "../rob/room.js";
+import { renderRoomOutcome } from "../rob/room-text.js";
+import {
 	duplicateRobName,
 	type RobConfig,
+	type RobName,
 	robConfigSchema,
 } from "../rob/types.js";
 import { errorMessage } from "../util/errors.js";
@@ -18,11 +25,47 @@ import { errorMessage } from "../util/errors.js";
 export const PROJECT_FILE_NAME = "my-agent.json";
 
 export const robsSchema = z.array(robConfigSchema);
+export const roomsSchema = z.array(roomConfigSchema);
+
+/** The one room rule at the file boundary: shape from the schema, then the
+ *  shared membership rule against this file's robs, plus the two name
+ *  collisions the roster only knows at load time. */
+export function parseRooms(
+	value: unknown,
+	roster: readonly RobName[],
+): { ok: true; rooms: RoomConfig[] } | { ok: false; error: string } {
+	const parsed = roomsSchema.safeParse(value);
+	if (!parsed.success) {
+		return { ok: false, error: z.prettifyError(parsed.error) };
+	}
+	const seen = new Set<string>();
+	for (const room of parsed.data) {
+		if (seen.has(room.name)) {
+			return {
+				ok: false,
+				error: `Duplicate room name "${room.name}". Room names must be unique.`,
+			};
+		}
+		seen.add(room.name);
+		if (roster.includes(room.name)) {
+			return {
+				ok: false,
+				error: `Room "${room.name}" cannot use a rob's name.`,
+			};
+		}
+		const members = validateRoomMembers(room.members, roster);
+		if (members.status === "rejected") {
+			return { ok: false, error: renderRoomOutcome(members, room.name) };
+		}
+	}
+	return { ok: true, rooms: parsed.data };
+}
 
 export const projectFileSchema = z
 	.looseObject({
 		permissions: permissionRulesSchema.optional(),
 		robs: robsSchema.optional(),
+		rooms: roomsSchema.optional(),
 	})
 	.superRefine((config, ctx) => {
 		const duplicate = duplicateRobName(config.robs ?? []);
@@ -30,6 +73,17 @@ export const projectFileSchema = z
 			ctx.addIssue({
 				code: "custom",
 				message: `Duplicate rob name "${duplicate}". Rob names must be unique.`,
+			});
+		}
+		if (config.rooms === undefined) return;
+		const rooms = parseRooms(
+			config.rooms,
+			(config.robs ?? []).map((rob) => rob.name),
+		);
+		if (!rooms.ok) {
+			ctx.addIssue({
+				code: "custom",
+				message: `Invalid rooms: ${rooms.error}`,
 			});
 		}
 	});

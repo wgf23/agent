@@ -46,7 +46,13 @@ try {
 	if (!resolved.ok) {
 		failures.push(resolved.error);
 	} else {
-		const { provider: settings, apiKey, permissions, robs } = resolved.config;
+		const {
+			provider: settings,
+			apiKey,
+			permissions,
+			robs,
+			rooms,
+		} = resolved.config;
 		if (apiKey === undefined) {
 			failures.push(`missing ${settings.apiKeyEnv}`);
 		} else {
@@ -65,6 +71,7 @@ try {
 			});
 			const team = new Team({
 				robs,
+				rooms,
 				defaultModel: settings.model,
 				providerFactory: () => provider,
 				workspaceRoot: workspace,

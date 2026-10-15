@@ -98,7 +98,13 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		}
 	}
 
-	const { provider: settings, apiKey, permissions, robs } = resolved.config;
+	const {
+		provider: settings,
+		apiKey,
+		permissions,
+		robs,
+		rooms,
+	} = resolved.config;
 	if (apiKey === undefined) {
 		console.error(missingApiKeyMessage(settings.apiKeyEnv));
 		process.exitCode = 1;
@@ -126,6 +132,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		const ref: { team?: Team } = {};
 		const team = new Team({
 			robs,
+			rooms,
 			defaultModel: settings.model,
 			providerFactory: () => provider,
 			workspaceRoot: options.workspaceRoot,

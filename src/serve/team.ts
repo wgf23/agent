@@ -6,6 +6,7 @@ import type {
 } from "../../shared/protocol.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import type { TeamEvent } from "../rob/events.js";
+import type { RoomConfig } from "../rob/room.js";
 import { Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
@@ -18,6 +19,7 @@ import {
 
 export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
+	rooms?: readonly RoomConfig[];
 	providerEnv: Record<string, string>;
 }
 
@@ -41,6 +43,7 @@ export class TeamHub extends EventBus implements Hub {
 	private createTeam(): Team {
 		return new Team({
 			robs: this.roster,
+			rooms: this.options.rooms,
 			defaultModel: this.options.settings.model,
 			providerFactory: () => this.options.provider,
 			workspaceRoot: this.options.workspaceRoot,

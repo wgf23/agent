@@ -67,7 +67,13 @@ export async function runTeamCommand(
 		return 1;
 	}
 
-	const { provider: settings, apiKey, permissions, robs } = resolved.config;
+	const {
+		provider: settings,
+		apiKey,
+		permissions,
+		robs,
+		rooms,
+	} = resolved.config;
 	if (apiKey === undefined) {
 		console.error(missingApiKeyMessage(settings.apiKeyEnv));
 		return 1;
@@ -106,6 +112,7 @@ export async function runTeamCommand(
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 	const team = new Team({
 		robs,
+		rooms,
 		defaultModel: settings.model,
 		providerFactory: options.providerFactory ?? (() => provider),
 		workspaceRoot,

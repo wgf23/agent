@@ -16,11 +16,12 @@ import {
 	resolveModelSpec,
 } from "../providers/presets.js";
 import type { ReasoningEffort, ThinkingSetting } from "../providers/types.js";
+import type { RoomConfig } from "../rob/room.js";
 import type { RobConfig } from "../rob/types.js";
 import { DEFAULT_SANDBOX, type SandboxSettings } from "../sandbox/index.js";
 import { errorMessage } from "../util/errors.js";
 import { readCredentials } from "./credentials.js";
-import { parseRobs, projectFilePath } from "./project-file.js";
+import { parseRobs, parseRooms, projectFilePath } from "./project-file.js";
 
 export type ConfigSource =
 	| "cli"
@@ -144,6 +145,7 @@ export interface ResolvedConfig {
 	sources: ProviderSources;
 	permissions: PermissionRules;
 	robs: RobConfig[];
+	rooms: RoomConfig[];
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
 	mcpServers: McpServers;
@@ -331,6 +333,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				...rob,
 				model: rob.model ?? model,
 			})),
+			rooms: project.layer.rooms ?? [],
 			compaction,
 			sandbox,
 			mcpServers,
@@ -382,6 +385,7 @@ interface Layer {
 	provider: ProviderOptions;
 	permissions?: PermissionRules;
 	robs?: RobConfig[];
+	rooms?: RoomConfig[];
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
 	mcp?: McpServers;
@@ -424,6 +428,13 @@ function loadLayer(
 		};
 	}
 
+	if (role === "global" && "rooms" in raw) {
+		return {
+			ok: false,
+			error: `The global config ${filePath} cannot set rooms. Put the rooms array in ${projectPath} instead.`,
+		};
+	}
+
 	if (role === "global" && "backend" in raw) {
 		return {
 			ok: false,
@@ -463,6 +474,21 @@ function loadLayer(
 		robs = parsed.robs;
 	}
 
+	let rooms: RoomConfig[] | undefined;
+	if (role === "project" && raw.rooms !== undefined) {
+		const parsed = parseRooms(
+			raw.rooms,
+			(robs ?? []).map((rob) => rob.name),
+		);
+		if (!parsed.ok) {
+			return {
+				ok: false,
+				error: `Invalid rooms in ${filePath}: ${parsed.error}`,
+			};
+		}
+		rooms = parsed.rooms;
+	}
+
 	let compaction: CompactionOptions | undefined;
 	if (raw.compaction !== undefined) {
 		const parsed = compactionOptionsSchema.safeParse(raw.compaction);
@@ -500,6 +526,7 @@ function loadLayer(
 			provider: provider.data,
 			permissions,
 			robs,
+			rooms,
 			compaction,
 			sandbox,
 			mcp,
