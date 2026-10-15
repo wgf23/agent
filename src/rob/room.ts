@@ -10,6 +10,7 @@ import {
 	renderRoomTurn,
 	renderRoomWrapUp,
 	renderStorageFailure,
+	renderTranscriptSummary,
 } from "./room-text.js";
 import { type RobName, robNameSchema } from "./types.js";
 
@@ -35,6 +36,11 @@ export const ROOM_WRAP_UP_TIMEOUT_MS = 180_000;
 /** How much of a member's unseen history one room turn carries. Older entries
  *  are dropped, not replayed, so a long room still hands over a bounded prompt. */
 export const ROOM_MAX_UNSEEN_ENTRIES = 20;
+
+/** The transcript's durable ceiling and the recent window compaction keeps
+ *  whole. Above the ceiling, the oldest entries fold into one summary entry. */
+export const ROOM_MAX_STORED_ENTRIES = 200;
+export const ROOM_COMPACT_KEEP_ENTRIES = 100;
 
 /** "user" and "system" are the transcript's own voices; refusing them as member
  *  names is what keeps an entry's speaker unambiguous. */
@@ -438,6 +444,11 @@ export class Room {
 	private readonly queue: QueuedSend[];
 	private deliverable: RoomDeliverableRef | null;
 	private nextId: number;
+	/** The current compaction summary's id, or null when the transcript has
+	 *  never compacted in this process. It rides at the head with an id larger
+	 *  than every entry, so the walk helpers must not treat it as a row that
+	 *  arrived after the turn they are measuring. */
+	private summaryId: number | null = null;
 	private live: LiveRun | null = null;
 	private running: Promise<void> | null = null;
 	private stopped = false;
@@ -776,6 +787,7 @@ export class Room {
 	private seenThrough(member: Member, through: number): number {
 		let seen = Math.max(member.seen, through);
 		for (const entry of this.transcript) {
+			if (entry.id === this.summaryId) continue;
 			if (entry.id <= seen) continue;
 			if (entry.kind === "member" && entry.from === member.name) {
 				seen = entry.id;
@@ -788,16 +800,25 @@ export class Room {
 
 	/** The bounded window of entries this member has not been shown. Older
 	 *  entries are dropped, not replayed, so a long room still hands over a
-	 *  bounded prompt. */
+	 *  bounded prompt. The compaction summary rides first even when the window
+	 *  truncates, so folded history stays visible to a member that just came
+	 *  back. */
 	private unseenWindow(member: Member): {
 		readonly unseen: readonly RoomEntry[];
 		readonly truncated: boolean;
 	} {
 		const unseen = this.transcript.filter((entry) => entry.id > member.seen);
-		const truncated = unseen.length > ROOM_MAX_UNSEEN_ENTRIES;
+		if (unseen.length <= ROOM_MAX_UNSEEN_ENTRIES) {
+			return { unseen, truncated: false };
+		}
+		const head = unseen[0];
+		const summary = head.id === this.summaryId ? head : null;
+		const rest = unseen.slice(
+			-(ROOM_MAX_UNSEEN_ENTRIES - (summary === null ? 0 : 1)),
+		);
 		return {
-			unseen: truncated ? unseen.slice(-ROOM_MAX_UNSEEN_ENTRIES) : unseen,
-			truncated,
+			unseen: summary === null ? rest : [summary, ...rest],
+			truncated: true,
 		};
 	}
 
@@ -927,7 +948,36 @@ export class Room {
 		this.nextId += 1;
 		this.transcript.push(row);
 		this.emit({ kind: "entry", room: this.name, entry: { ...row } });
+		this.compact();
 		return row;
+	}
+
+	/** Folds the transcript back under its cap: one deterministic summary entry
+	 *  replaces the oldest entries and the recent window stays whole. Called
+	 *  from append, so every durable write already carries the folded shape. */
+	private compact(): void {
+		if (this.transcript.length <= ROOM_MAX_STORED_ENTRIES) return;
+		const keep = this.transcript.slice(-ROOM_COMPACT_KEEP_ENTRIES);
+		const removed = this.transcript.slice(
+			0,
+			this.transcript.length - keep.length,
+		);
+		const summary: RoomEntry = {
+			id: this.nextId,
+			at: this.host.now(),
+			kind: "system",
+			text: renderTranscriptSummary(removed),
+		};
+		this.nextId += 1;
+		this.summaryId = summary.id;
+		this.transcript.splice(0, removed.length, summary);
+		this.emit({ kind: "entry", room: this.name, entry: { ...summary } });
+		// A cursor that pointed into the folded range must now see the summary
+		// instead of a removed id; cursors inside the window keep their place.
+		const boundary = removed[removed.length - 1].id;
+		for (const member of this.members) {
+			if (member.seen < boundary) member.seen = boundary;
+		}
 	}
 
 	/** The one writer of a live run's end; safe to call while the scheduler is

@@ -82,6 +82,38 @@ export function renderRoomTurn(input: {
 	return lines.join("\n");
 }
 
+// Enough of the folded entries to jog a reader's memory without letting the
+// summary grow with the transcript.
+const SUMMARY_SAMPLE_ENTRIES = 3;
+const SUMMARY_LINE_MAX_CHARS = 60;
+
+/** One deterministic line for the entries compaction folded away: how many,
+ *  who spoke, and a bounded sample of truncated first lines. Pure. */
+export function renderTranscriptSummary(removed: readonly RoomEntry[]): string {
+	const counts = new Map<string, number>();
+	for (const entry of removed) {
+		const speaker = speakerOf(entry);
+		counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
+	}
+	const speakers = [...counts]
+		.map(([speaker, count]) => `${speaker} ${count}`)
+		.join(", ");
+	const sample = removed
+		.slice(0, SUMMARY_SAMPLE_ENTRIES)
+		.map((entry) => `${speakerOf(entry)}: "${firstLine(entry.text)}"`)
+		.join(" | ");
+	const tail = sample === "" ? "" : `; first lines: ${sample}`;
+	return `[${removed.length} earlier entries compacted: ${speakers}${tail}]`;
+}
+
+function firstLine(text: string): string {
+	const end = text.indexOf("\n");
+	const line = end === -1 ? text : text.slice(0, end);
+	return line.length > SUMMARY_LINE_MAX_CHARS
+		? `${line.slice(0, SUMMARY_LINE_MAX_CHARS)}...`
+		: line;
+}
+
 /** The one composer of the wrap-up prompt. Its contract tells the coordinator
  *  that the reply *is* the deliverable and that the room writes the file, so a
  *  model never writes docs/deliverables/ itself. Pure. */
