@@ -34,6 +34,7 @@ import {
 	type RoomTurnResult,
 	type RoomView,
 	roomConfigSchema,
+	validateRoomCoordinator,
 	validateRoomMembers,
 } from "./room.js";
 import {
@@ -266,7 +267,21 @@ export class Team implements TeamPort {
 				`Invalid room "${name}" in TeamOptions: ${validation.reason}.`,
 			);
 		}
-		return newRoomState(name, this.roomHost.now(), validation.members, null);
+		const coordinator = validateRoomCoordinator(
+			parsed.data.coordinator,
+			validation.members,
+		);
+		if (coordinator.status === "rejected") {
+			throw new Error(
+				`Invalid room "${name}" in TeamOptions: ${coordinator.reason}.`,
+			);
+		}
+		return newRoomState(
+			name,
+			this.roomHost.now(),
+			validation.members,
+			parsed.data.coordinator ?? null,
+		);
 	}
 
 	/** The first ledger write. A failure is left to the room's next save, which
@@ -331,15 +346,25 @@ export class Team implements TeamPort {
 		if (this.stopping) return { status: "rejected", reason: "team_stopped" };
 		const parsed = roomConfigSchema.safeParse(config);
 		if (!parsed.success) return { status: "rejected", reason: "invalid_name" };
-		const { name, members } = parsed.data;
+		const { name, members, coordinator } = parsed.data;
 		if (this.roomRegistry.has(name))
 			return { status: "rejected", reason: "duplicate" };
 		if (this.robs.has(name))
 			return { status: "rejected", reason: "name_taken" };
 		const validation = validateRoomMembers(members, [...this.robs.keys()]);
 		if (validation.status === "rejected") return validation;
+		const coordinatorCheck = validateRoomCoordinator(
+			coordinator,
+			validation.members,
+		);
+		if (coordinatorCheck.status === "rejected") return coordinatorCheck;
 		const room = new Room({
-			state: newRoomState(name, this.roomHost.now(), validation.members, null),
+			state: newRoomState(
+				name,
+				this.roomHost.now(),
+				validation.members,
+				coordinator ?? null,
+			),
 			host: this.roomHost,
 			ledger: this.roomLedger,
 		});
@@ -742,6 +767,12 @@ function configDrift(
 	if (!sameNames(config.members, record.members)) {
 		differences.push(
 			`members are now ${record.members.join(", ")}, not ${config.members.join(", ")}`,
+		);
+	}
+	const coordinator = config.coordinator ?? null;
+	if (coordinator !== record.coordinator) {
+		differences.push(
+			`coordinator is now ${record.coordinator ?? "none"}, not ${coordinator ?? "none"}`,
 		);
 	}
 	return differences.length === 0 ? undefined : renderConfigDrift(differences);

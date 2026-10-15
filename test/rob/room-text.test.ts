@@ -200,8 +200,16 @@ describe("renderRoomOutcome", () => {
 			],
 			[{ status: "passed" }, 'Passed in room "ship-it".'],
 			[
-				{ status: "ok", members: ["planner", "builder"] },
+				{ status: "ok", members: ["planner", "builder"], coordinator: null },
 				'Room "ship-it" now has members: planner, builder.',
+			],
+			[
+				{
+					status: "ok",
+					members: ["planner", "builder"],
+					coordinator: "planner",
+				},
+				'Room "ship-it" now has members: planner, builder. Coordinator: planner.',
 			],
 			[{ status: "created", room: view }, 'Created room "ship-it".'],
 			[
@@ -242,6 +250,10 @@ describe("renderRoomOutcome", () => {
 			[
 				{ status: "rejected", reason: "reserved_member" },
 				'"user" and "system" cannot be room members.',
+			],
+			[
+				{ status: "rejected", reason: "coordinator_not_member" },
+				"The coordinator must be a member of the room.",
 			],
 			[
 				{ status: "rejected", reason: "duplicate" },

@@ -1050,6 +1050,7 @@ describe("Room", () => {
 		expect(room.setMembers(["builder", "reviewer"])).toEqual({
 			status: "ok",
 			members: ["builder", "reviewer"],
+			coordinator: null,
 		});
 		expect(host.events.at(-1)).toEqual({
 			kind: "members",

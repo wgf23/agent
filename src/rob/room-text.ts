@@ -121,8 +121,12 @@ export function renderRoomOutcome(
 			return `Queued for room "${room}" (${outcome.waiting} waiting).`;
 		case "passed":
 			return `Passed in room "${room}".`;
-		case "ok":
-			return `Room "${room}" now has members: ${outcome.members.join(", ")}.`;
+		case "ok": {
+			const members = `Room "${room}" now has members: ${outcome.members.join(", ")}.`;
+			return outcome.coordinator === null
+				? members
+				: `${members} Coordinator: ${outcome.coordinator}.`;
+		}
 		case "created":
 			return `Created room "${room}".`;
 		case "rejected":
@@ -153,6 +157,8 @@ export function renderRoomOutcome(
 			return "A member was listed twice.";
 		case "reserved_member":
 			return '"user" and "system" cannot be room members.';
+		case "coordinator_not_member":
+			return "The coordinator must be a member of the room.";
 		case "duplicate":
 			return `A room named "${room}" already exists.`;
 		case "name_taken":

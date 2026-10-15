@@ -35,9 +35,14 @@ export const RESERVED_ROOM_SPEAKERS = ["user", "system"] as const;
 
 /** One room as config states it. The file shape and the runtime shape are the
  *  same, so Team.createRoom takes the validated value directly. Which members
- *  exist, and how many, is not a schema fact: validateRoomMembers holds it. */
+ *  exist, how many, and whether the coordinator is one of them is not a schema
+ *  fact: validateRoomMembers and validateRoomCoordinator hold those. */
 export const roomConfigSchema = z
-	.object({ name: roomNameSchema, members: z.array(robNameSchema) })
+	.object({
+		name: roomNameSchema,
+		members: z.array(robNameSchema),
+		coordinator: robNameSchema.optional(),
+	})
 	.strict();
 export type RoomConfig = z.infer<typeof roomConfigSchema>;
 
@@ -247,13 +252,20 @@ export type RoomMembershipReason =
 	| "busy";
 
 export type RoomMembershipOutcome =
-	| { readonly status: "ok"; readonly members: readonly RobName[] }
+	| {
+			readonly status: "ok";
+			readonly members: readonly RobName[];
+			/** The coordinator after the change; null when none, or when the
+			 *  new list dropped the previous one. */
+			readonly coordinator: RobName | null;
+	  }
 	| { readonly status: "rejected"; readonly reason: RoomMembershipReason };
 
 export type RoomCreateReason =
 	| "duplicate"
 	| "invalid_name"
 	| "name_taken"
+	| "coordinator_not_member"
 	| RoomMembershipReason
 	| "team_stopped";
 
@@ -290,6 +302,19 @@ export function validateRoomMembers(
 		seen.add(member);
 	}
 	return { status: "ok", members: [...members] };
+}
+
+/** The coordinator rule, checked where a coordinator is *stated* (config load,
+ *  createRoom). setMembers does not call it: there, dropping a member is a
+ *  stated intent, so the coordinator is cleared and reported instead. */
+export function validateRoomCoordinator(
+	coordinator: RobName | undefined,
+	members: readonly RobName[],
+): { status: "ok" } | { status: "rejected"; reason: "coordinator_not_member" } {
+	if (coordinator === undefined || members.includes(coordinator)) {
+		return { status: "ok" };
+	}
+	return { status: "rejected", reason: "coordinator_not_member" };
 }
 
 export interface RoomTurn {
@@ -524,13 +549,23 @@ export class Room {
 			name,
 			seen: cursors.get(name) ?? 0,
 		}));
+		if (
+			this.coordinator !== null &&
+			!validation.members.includes(this.coordinator)
+		) {
+			this.coordinator = null;
+		}
 		this.emit({
 			kind: "members",
 			room: this.name,
 			members: this.memberNames(),
 		});
 		this.persist();
-		return { status: "ok", members: this.memberNames() };
+		return {
+			status: "ok",
+			members: this.memberNames(),
+			coordinator: this.coordinator,
+		};
 	}
 
 	/** Ends the live run with `interrupted`; the room stays usable. */

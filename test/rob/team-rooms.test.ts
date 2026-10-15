@@ -315,6 +315,7 @@ describe("Team rooms", () => {
 		expect(team.setRoomMembers("ship-it", ["builder", "planner"])).toEqual({
 			status: "ok",
 			members: ["builder", "planner"],
+			coordinator: null,
 		});
 		expect(team.rooms()[0].members).toEqual(["builder", "planner"]);
 		expect(team.sendToRoom("ship-it", "   ")).toEqual({
