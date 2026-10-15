@@ -108,6 +108,42 @@ describe("SoloHub", () => {
 		).toBe(true);
 	});
 
+	it("announces the file a chat write wrote so the tree can refresh", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call-1",
+					name: "write_file",
+					args: { path: "notes/hello.txt", content: "hi" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const session = newSession(workspaceRoot, settings.model);
+		const hub = new SoloHub(
+			{ ...hubOptions(provider), allowAll: createAllowAll(true) },
+			{ session, sessions: [] },
+		);
+		const events = collect(hub);
+
+		hub.dispatch("assistant", "write a note");
+		await waitFor(
+			() => events.some((event) => event.type === "files_changed"),
+			"files_changed for the write",
+		);
+
+		expect(events).toContainEqual({
+			type: "files_changed",
+			paths: ["notes/hello.txt"],
+		});
+		await hub.dispose();
+	});
+
 	it("queues a message sent mid-turn and injects it next step", async () => {
 		const provider = createMockProvider([
 			[{ type: "text_delta", text: "first" }],

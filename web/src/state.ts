@@ -66,6 +66,10 @@ export interface ClientState {
 	lastError: string | null;
 	settingsOpen: boolean;
 	settingsError: string | null;
+	// Bumped by every agent write so the file tree refetches; filesChanged
+	// carries the paths named by the event, empty when the agent could not.
+	filesVersion: number;
+	filesChanged: string[];
 }
 
 export type ClientAction =
@@ -101,6 +105,8 @@ export function initialState(): ClientState {
 		lastError: null,
 		settingsOpen: false,
 		settingsError: null,
+		filesVersion: 0,
+		filesChanged: [],
 	};
 }
 
@@ -324,6 +330,16 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 
 		case "allow_all":
 			return { ...state, allowAll: event.on };
+
+		// An agent write advances the counter the tree watches and records what
+		// changed so the tree can pulse those rows. Its own fields, so a
+		// files_changed event never disturbs the transcript or the roster.
+		case "files_changed":
+			return {
+				...state,
+				filesVersion: state.filesVersion + 1,
+				filesChanged: event.paths,
+			};
 
 		case "error": {
 			let next = state;

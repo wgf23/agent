@@ -8,6 +8,7 @@ import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { buildServer } from "../../src/serve/server.js";
 import { TeamHub } from "../../src/serve/team.js";
+import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
 	preset: "deepseek",
@@ -43,7 +44,7 @@ function slowProvider(): Provider {
 	};
 }
 
-function createHub(provider: Provider): TeamHub {
+function createHub(provider: Provider, allowAll = createAllowAll()): TeamHub {
 	return new TeamHub({
 		workspaceRoot,
 		provider,
@@ -57,7 +58,7 @@ function createHub(provider: Provider): TeamHub {
 		},
 		robs: [{ name: "alpha", role: "a test rob" }],
 		providerEnv: {},
-		allowAll: createAllowAll(),
+		allowAll,
 	});
 }
 
@@ -140,6 +141,40 @@ describe("TeamHub", () => {
 			type: "error",
 			bot: "ghost",
 			message: "Unknown bot: ghost",
+		});
+		await hub.dispose();
+	});
+
+	it("announces the file a rob write wrote so the tree can refresh", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "write_file",
+					args: { path: "notes/rob.txt", content: "hi" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		// The write_file tool asks by default, so the run needs allow-all on to
+		// reach the write the tracker announces.
+		const hub = createHub(provider, createAllowAll(true));
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "write a note");
+		await waitFor(
+			() => events.some((event) => event.type === "files_changed"),
+			"files_changed for the rob write",
+		);
+
+		expect(events).toContainEqual({
+			type: "files_changed",
+			paths: ["notes/rob.txt"],
 		});
 		await hub.dispose();
 	});

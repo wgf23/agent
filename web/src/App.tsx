@@ -192,6 +192,9 @@ export default function App() {
 				deleteEntry={hub.deleteEntry}
 				listDirs={hub.listDirs}
 				workspaceRoot={state.workspaceRoot}
+				filesVersion={state.filesVersion}
+				filesChanged={state.filesChanged}
+				onReadFile={hub.readFile}
 				open={filesOpen}
 			/>
 

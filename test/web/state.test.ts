@@ -180,6 +180,34 @@ describe("clientReducer", () => {
 		expect(state.botStates.assistant.status).toBe("idle");
 	});
 
+	it("advances filesVersion on a files_changed event and nothing else", () => {
+		const before = apply([hello]);
+		expect(before.filesVersion).toBe(0);
+		expect(before.filesChanged).toEqual([]);
+
+		const written = apply([
+			hello,
+			{ type: "files_changed", paths: ["src/a.ts"] },
+		]);
+		expect(written.filesVersion).toBe(1);
+		expect(written.filesChanged).toEqual(["src/a.ts"]);
+
+		// An empty list still advances the counter: the tree refetches blindly.
+		const again = clientReducer(written, {
+			type: "server",
+			event: { type: "files_changed", paths: [] },
+		});
+		expect(again.filesVersion).toBe(2);
+		expect(again.filesChanged).toEqual([]);
+
+		// Any other event leaves the counter where it was.
+		const other = clientReducer(again, {
+			type: "server",
+			event: { type: "notice", bot: "assistant", text: "hi" },
+		});
+		expect(other.filesVersion).toBe(2);
+	});
+
 	it("queues and clears approvals", () => {
 		const request = {
 			id: "approval-0",
