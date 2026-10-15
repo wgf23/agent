@@ -11,8 +11,9 @@
 - R4.3：修复 pi CLI 后端的空闲 steer 丢失（`turnActive` 回合状态、`queue_update.steering` 补投递、`success:false` 重发、未投递计数失败）。提交信息为 `fix: pi steer delivery, no silent message loss`。
 - R5：opencode CLI 后端（`opencode serve` 私有常驻进程、每 rob 一个持久会话、回合中途 steer、`dispose` 关闭进程与 SSE、serve 模式权限强制）。实现见 `src/rob/opencode-backend.ts`。
 - R5.1：opencode rob 审批桥（`ask` 工具翻译成 opencode `ask` 规则并暴露；`permission.asked` 经该 rob 的 authorizer 和共享 FIFO 审批队列回答；规则翻译修正为「只有不可能解析成其他效果时才普通 allow」；abort/dispose 拒绝所有待决请求）。
+- R6：team gateway（`Team.beginTurn` 每回合在本地 Unix socket 上开一条带 secret 的通道；`tools.ts` 用同一组 `Tool` 对象实现 `send_message` 和 `delegate`；`roster.ts` 组装名册提示；pi 扩展注册这两个工具，调用经 socket 回到 gateway，由该 rob 的 authorizer 授权一次）。实现见 `src/rob/gateway/`。opencode 的 MCP shim 尚未接入。
 
-claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 opencode。
+claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 opencode；其中 pi 已接入 team gateway，opencode 待接入。
 
 ### 与设计的偏差
 
@@ -38,7 +39,7 @@ claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 openc
 - G3（已关闭）：`message_end` 的 `stopReason` 为 `"error"` 或 `"aborted"` 时返回错误结果并带上该消息的 `errorMessage`，不再退化成空回答。
 - G4（已关闭）：子 agent 的 `usage` 事件现在累加到发起 rob 的用量统计。
 - G5（已关闭）：cli rob 现在能在回合中途插话，且不在空闲 pi 上丢消息。cli 后端使用 `--mode rpc`，用 `turnActive` 跟踪回合：进行中才把收件箱的新消息作为 `steer` 发出，空闲时留给 rob 的下一轮。真实 pi 验证：工具执行期间发送 steer，回答变成 `STEERED`；`agent_end` 之后空闲时投递的消息由 rob 的下一轮回答。真实验证并修复了空闲 steer 的丢失：`agent_end` 后发送的 steer 返回 `success:true` 但只进 `queue_update.steering`、不会再开回合；后端现在把 `agent_end` 时仍在 steering 的消息（以及 `success:false` 的 steer）作为新 prompt 在同一进程补投递，未投递且未入队的消息让回合以 `ok:false` 结束并报出条数。
-- G6（已接受为限制，不实现）：cli rob 不能使用 `send_message` 和 `delegate`。配置校验会拒绝在 cli rob 上设置这两个工具。扩展工具可以通过 Unix socket 回调我们的进程（机制已用真实 pi 验证），但需要常驻监听通道和自定协议。决定：原生 rob 已完整支持私聊、子 agent 和审批，pi 的 rob 定位为独立执行任务的角色。只有在 pi 的 rob 确实需要互相协作时，才重新考虑这个桥接。
+- G6（pi 已关闭，opencode 待实现）：cli rob 现在可以通过每回合的 team gateway 使用 `send_message` 和 `delegate`。回合开始 `Team.beginTurn` 在 `mkdtemp` 目录（0700）里监听一个带 per-rob secret 的 Unix socket；pi 扩展注册这两个工具，调用经 socket 回到 my-agent，由该 rob 的 authorizer 与共享审批队列授权一次，`tool_call` 钩子对这两个名字直接放行。原生 rob 与 gateway 挂载同一组 `Tool` 对象。真实 pi 探针验证：pi 调用 `send_message` 后，目标 rob 的收件箱提示为 `[from rob:planner] probe ping`。opencode 的 MCP shim 尚未实现，机制（`OPENCODE_CONFIG_CONTENT` 的 `mcp` 配置、MCP 调用是否触发 `permission.asked`）待验证，回退方案是同协议的 opencode 插件。
 - 残留风险（未关闭）：G7 的审批扩展如果加载成功、但没有注册 `tool_call` 钩子，`ask` 工具会在没有审批的情况下执行。加载失败时 pi 会以退出码 1 结束，这种情况是安全的（已用真实 pi 验证）。目前没有握手机制确认钩子已注册。
 - 证据强度：G4 只用假 pi 和单元测试验证，没有用真实 pi 验证。空闲 steer 的重发路径只用假 pi 验证，因为真实时序难以稳定复现。
 - G7（已关闭）：cli rob 现在有审批通道。pi 扩展在 `tool_call` 钩子里发 `ctx.ui.confirm` 并阻塞，我们的进程用该 rob 的 authorizer 判断后回复；允许和拒绝两条路径都已用真实 pi 验证。因此 `ask` 工具可以进入白名单（仅在桥存在时）。
@@ -220,7 +221,7 @@ RobBackend
 1. 外部 CLI 的 rob 必须用 `--tools` 把工具集限制在该 rob 的权限范围内。例如只读 rob 只给 `read`。
 2. R4 第一版认为「需要审批的写入」在 pi 下无法逐次审批，只能是「允许」或「不给这个工具」。R4.2 推翻了这一点：pi 扩展的 `tool_call` 钩子可以发 `ctx.ui.confirm` 并阻塞，配合 `--mode rpc` 做到逐次审批。
 3. pi 的 `--mode rpc` 是 R4.2 的事件来源，`--mode json` 的事件形状相同但无法中途送命令。
-4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。R4.2 验证了扩展工具可以用 Unix socket 回调我们的进程，机制可行但未实现；见 `docs/design/pi-capabilities.md`。
+4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。R4.2 验证了扩展工具可以用 Unix socket 回调我们的进程，机制可行但当时未实现；R6 已实现，见 `src/rob/gateway/`。
 
 ### 已验证：opencode（2.0.24）
 
