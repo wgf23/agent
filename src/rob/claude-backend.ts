@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { UsageTotals } from "../agent/agent.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
 import type { Message } from "../providers/types.js";
+import { toolDefinition } from "../tools/registry.js";
 import { killProcessGroup } from "../util/process.js";
 import {
 	emptyUsage,
@@ -15,6 +16,8 @@ import {
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
+import { teamMcpShim } from "./gateway/shims.js";
+import { renderTeamPreamble } from "./roster.js";
 import type { Inbound, RobName } from "./types.js";
 
 const CLAUDE_COMMAND = "claude";
@@ -22,6 +25,12 @@ const DEFAULT_TURN_TIMEOUT_MS = 600_000;
 const SUMMARY_MAX_CHARS = 200;
 const UI_OUTPUT_MAX_CHARS = 4000;
 const MAX_STDERR_CHARS = 1000;
+
+// The MCP server name is also the prefix in every team tool's claude name,
+// "mcp__myagent-team__send_message" and friends.
+const TEAM_MCP_SERVER = "myagent-team";
+const TEAM_MCP_FILE = "team-mcp.mjs";
+const TEAM_MCP_CONFIG_FILE = "team-mcp.json";
 
 export const CLAUDE_CONFIG_DIR_ENV = "MY_AGENT_CLAUDE_CONFIG_DIR";
 
@@ -113,7 +122,34 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 			await mkdir(configDir, { recursive: true });
 
 			const { allowed, disallowed } = claudeToolAllowlist(turn.rules);
+			const defs = turn.bridge.tools.map(toolDefinition);
+			const teamTools = defs.map(
+				(def) => `mcp__${TEAM_MCP_SERVER}__${def.name}`,
+			);
+			// The bridge env is opaque to this backend, so it travels whole. The
+			// MCP config lives in a file so the per-turn secret stays out of argv.
+			const childEnv = turn.bridge.childEnv();
+			let mcpConfigFile: string | undefined;
+			if (defs.length > 0) {
+				const shimFile = path.join(configDir, TEAM_MCP_FILE);
+				mcpConfigFile = path.join(configDir, TEAM_MCP_CONFIG_FILE);
+				await writeFile(shimFile, teamMcpShim({ defs }), "utf8");
+				await writeFile(
+					mcpConfigFile,
+					JSON.stringify({
+						mcpServers: {
+							[TEAM_MCP_SERVER]: {
+								command: "node",
+								args: [shimFile],
+								env: childEnv,
+							},
+						},
+					}),
+					"utf8",
+				);
+			}
 			const prompt = turn.inbound.map(promptFor).join("\n\n");
+			const allowedTools = [...allowed, ...teamTools];
 
 			const args = [
 				"-p",
@@ -122,11 +158,23 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 				"stream-json",
 				"--verbose",
 				"--append-system-prompt",
-				options.role,
-				...(allowed.length > 0 ? ["--allowedTools", allowed.join(",")] : []),
+				renderTeamPreamble({
+					rob: options.rob,
+					role: options.role,
+					roster: turn.bridge.roster(),
+					tools: turn.bridge.tools,
+				}),
+				// A team call is let through here and authorized by the gateway,
+				// the same way the pi and opencode backends expose their tools.
+				...(allowedTools.length > 0
+					? ["--allowedTools", allowedTools.join(",")]
+					: []),
 				...(disallowed.length > 0
 					? ["--disallowedTools", disallowed.join(",")]
 					: []),
+				...(mcpConfigFile === undefined ? [] : ["--mcp-config", mcpConfigFile]),
+				// Only the MCP servers named above load; the user's own never do.
+				"--strict-mcp-config",
 				...(options.model !== undefined && options.model !== ""
 					? ["--model", options.model]
 					: []),
@@ -145,6 +193,7 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 				env: {
 					...process.env,
 					...options.extraEnv,
+					...childEnv,
 					CLAUDE_CONFIG_DIR: configDir,
 				},
 				signal: turn.signal,
