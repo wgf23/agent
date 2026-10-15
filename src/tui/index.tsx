@@ -7,7 +7,11 @@ import {
 	runSetupWizard,
 	verifyApiKey,
 } from "../cli/setup.js";
-import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import {
+	childProviderEnv,
+	missingApiKeyMessage,
+	resolveConfig,
+} from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
@@ -94,7 +98,13 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		}
 	}
 
-	const { provider: settings, apiKey, permissions, robs } = resolved.config;
+	const {
+		provider: settings,
+		apiKey,
+		permissions,
+		robs,
+		rooms,
+	} = resolved.config;
 	if (apiKey === undefined) {
 		console.error(missingApiKeyMessage(settings.apiKeyEnv));
 		process.exitCode = 1;
@@ -122,11 +132,12 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		const ref: { team?: Team } = {};
 		const team = new Team({
 			robs,
+			rooms,
 			defaultModel: settings.model,
 			providerFactory: () => provider,
 			workspaceRoot: options.workspaceRoot,
 			permissions,
-			providerEnv: { [settings.apiKeyEnv]: apiKey },
+			providerEnv: childProviderEnv(settings, apiKey),
 			extraTools: mcp.tools,
 			authorizerFactory: (rob) =>
 				createAuthorizer({
@@ -144,6 +155,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			<TeamApp
 				team={team}
 				robs={robs}
+				rooms={rooms}
 				model={settings.model}
 				allowAll={allowAll}
 			/>,

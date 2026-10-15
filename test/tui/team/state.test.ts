@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	initialTeamState,
+	selectedRob,
+	selectedRoom,
+	suggestionNames,
+	teamEntries,
 	teamReducer,
 	teamTokens,
 } from "../../../src/tui/team/state.js";
@@ -215,5 +219,144 @@ describe("teamReducer", () => {
 		expect(state.view).toBe("dms");
 		state = teamReducer(state, { type: "close_view" });
 		expect(state.view).toBe("transcript");
+	});
+});
+
+describe("teamReducer rooms", () => {
+	function withRoom() {
+		return initialTeamState({
+			robs: [{ name: "planner" }, { name: "worker" }],
+			rooms: [{ name: "ship-it", members: ["planner", "worker"] }],
+			model: "deepseek-flash",
+		});
+	}
+
+	it("applies room events into the room transcript and run state", () => {
+		let state = withRoom();
+		expect(state.rooms).toEqual([
+			{
+				name: "ship-it",
+				members: ["planner", "worker"],
+				transcript: [],
+				run: { phase: "idle" },
+				lastOutcome: null,
+				notes: [],
+				nextNoteId: 1,
+			},
+		]);
+
+		state = teamReducer(state, {
+			type: "team_event",
+			event: {
+				kind: "room",
+				event: {
+					kind: "entry",
+					room: "ship-it",
+					entry: { id: 1, at: 5, kind: "user", text: "who takes it?" },
+				},
+			},
+		});
+		state = teamReducer(state, {
+			type: "team_event",
+			event: {
+				kind: "room",
+				event: {
+					kind: "run",
+					room: "ship-it",
+					run: {
+						phase: "running",
+						round: 1,
+						rounds: 3,
+						current: "planner",
+						posted: 0,
+						remaining: 10,
+						addressed: [],
+					},
+				},
+			},
+		});
+		state = teamReducer(state, {
+			type: "team_event",
+			event: {
+				kind: "room",
+				event: {
+					kind: "run_ended",
+					room: "ship-it",
+					run: {
+						phase: "running",
+						round: 1,
+						rounds: 3,
+						current: null,
+						posted: 0,
+						remaining: 10,
+						addressed: [],
+					},
+					outcome: "settled",
+				},
+			},
+		});
+
+		expect(state.rooms[0].transcript).toEqual([
+			{ id: 1, at: 5, kind: "user", text: "who takes it?" },
+		]);
+		expect(state.rooms[0].run).toEqual({ phase: "idle" });
+		expect(state.rooms[0].lastOutcome).toBe("settled");
+	});
+
+	it("creates a room from a members event and keeps notes out of the transcript", () => {
+		let state = teamReducer(base(), {
+			type: "team_event",
+			event: {
+				kind: "room",
+				event: {
+					kind: "members",
+					room: "ship-it",
+					members: ["planner", "worker"],
+				},
+			},
+		});
+		expect(state.rooms).toEqual([
+			{
+				name: "ship-it",
+				members: ["planner", "worker"],
+				transcript: [],
+				run: { phase: "idle" },
+				lastOutcome: null,
+				notes: [],
+				nextNoteId: 1,
+			},
+		]);
+
+		state = teamReducer(state, {
+			type: "room_system",
+			room: "ship-it",
+			text: 'Room "ship-it" is busy.',
+		});
+		expect(state.rooms[0].notes).toEqual([
+			{ id: 1, role: "system", text: 'Room "ship-it" is busy.' },
+		]);
+		expect(state.rooms[0].transcript).toEqual([]);
+	});
+
+	it("selects rooms in the combined entry list", () => {
+		let state = withRoom();
+		expect(teamEntries(state)).toEqual([
+			{ kind: "rob", name: "planner" },
+			{ kind: "rob", name: "worker" },
+			{ kind: "room", name: "ship-it" },
+		]);
+		expect(selectedRoom(state)).toBeUndefined();
+		expect(suggestionNames(state)).toEqual(["planner", "worker"]);
+
+		state = teamReducer(state, { type: "select_name", name: "ship-it" });
+		expect(state.selected).toBe(2);
+		expect(selectedRoom(state)?.name).toBe("ship-it");
+		expect(selectedRob(state)).toBeUndefined();
+		expect(suggestionNames(state)).toEqual(["planner", "worker"]);
+
+		state = teamReducer(state, { type: "cycle", direction: 1 });
+		expect(state.selected).toBe(0);
+		state = teamReducer(state, { type: "select", index: 3 });
+		expect(state.selected).toBe(0);
 	});
 });

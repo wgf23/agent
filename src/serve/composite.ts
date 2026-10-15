@@ -6,6 +6,11 @@ import {
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
 import { addRob } from "../config/project-file.js";
+import type {
+	RoomConfig,
+	RoomCreateOutcome,
+	RoomSendOutcome,
+} from "../rob/room.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
@@ -59,6 +64,7 @@ export class CompositeHub extends EventBus implements Hub {
 			provider: workspace.provider,
 			bots: [...workspace.bots, ...this.robs.bots()],
 			states: [...workspace.states, ...this.robs.states()],
+			rooms: this.robs.rooms(),
 			sessions: workspace.sessions,
 			activeSessionId: workspace.activeSessionId,
 			transcript: workspace.transcript,
@@ -108,6 +114,18 @@ export class CompositeHub extends EventBus implements Hub {
 
 	openSession(bot: string, id: string): Promise<void> {
 		return this.workspace.openSession(bot, id);
+	}
+
+	createRoom(config: RoomConfig): RoomCreateOutcome {
+		return this.robs.createRoom(config);
+	}
+
+	sendToRoom(room: string, text: string): RoomSendOutcome {
+		return this.robs.sendToRoom(room, text);
+	}
+
+	interruptRoom(room: string): void {
+		this.robs.interruptRoom(room);
 	}
 
 	async createBot(draft: BotDraft): Promise<BotInfo> {

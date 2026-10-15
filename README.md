@@ -260,8 +260,32 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 
 - `command: "pi"` runs pi; `provider` and `model` are required. It keeps one pi session per rob under `.my-agent/pi-sessions/<name>` and bridges approvals through a pi extension.
 - `command: "opencode"` runs a private, long-lived `opencode serve` process with one persistent session per rob, on its own random local port and password. Its data and state live under `~/.config/my-agent/opencode/<name>/` (via `XDG_DATA_HOME` and `XDG_STATE_HOME`), so rob sessions never appear in your own opencode session list and never contend with your own server for the SQLite database. `provider` and `model` are optional; set both to pin an opencode model that exists in your own opencode setup. The configured provider key (the `apiKeyEnv` value) is forwarded to the child as its environment variable, so a key stored with `my-agent setup` works without exporting anything. Every turn reuses the same session, so the rob remembers earlier messages. Messages that arrive while a turn is running are delivered as `steer` prompts, so an interjection redirects the running turn instead of waiting for the next one. A tool that resolves to `ask` is exposed as an opencode `ask` rule, and every opencode permission request is answered through the rob's own authorizer and the shared approval queue, so you approve it in the same dialog as the rest of the team.
+- `command: "claude"` runs Claude Code, one `claude -p` process per turn. The first turn passes a fresh `--session-id` and later turns `--resume` it, so the rob remembers earlier messages. When the configured preset has an Anthropic-compatible endpoint, the rob runs on the configured provider and needs no Claude login: the child gets `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_SMALL_FAST_MODEL` from the resolved settings. The `deepseek` preset serves that endpoint; `openai` does not, so a claude rob there still uses its own login. `model` is optional; on a preset with an endpoint, leave it unset or set a name the endpoint serves, because a pinned alias changes the model Claude Code reports without changing the endpoint. Its config lives under `~/.config/my-agent/claude/<name>/` (via `CLAUDE_CONFIG_DIR`, overridable with `MY_AGENT_CLAUDE_CONFIG_DIR`), so rob sessions stay out of your own `~/.claude`. Tools that resolve to `allow` are exposed with `--tools` (an exact built-in allowlist) and `--allowedTools`; `ask` and `deny` tools are not exposed at all. Interactive approval is not bridged, so an `ask` tool is treated as denied instead of surfaced in the approval dialog.
 
-`send_message` and `delegate` are native-only. Listing either in a `cli` rob's `permissions` is a config error.
+A `pi`, `opencode`, or `claude` cli rob is a full team member: it can send private messages and start sub-agents. The two tools reach the team through a per-turn local socket the team opens, an extension for pi and a generated MCP server for opencode and claude. The rob's own authorizer and the shared approval queue still gate each call, so a `delegate` that resolves to `ask` prompts the same dialog. Set the rules in the rob's `permissions`.
+
+## Rooms
+
+A room is a named group chat over 2 to 6 of your robs. Define rooms next to your robs in `my-agent.json`:
+
+```jsonc
+{
+  "robs": [
+    { "name": "planner", "role": "split work into steps" },
+    { "name": "builder", "role": "write code" },
+    { "name": "reviewer", "role": "review diffs" }
+  ],
+  "rooms": [{ "name": "ship-it", "members": ["planner", "builder", "reviewer"] }]
+}
+```
+
+You take part in the room. One message from you starts up to three rounds, one member turn at a time in membership order. A member adds a line by calling `room_reply`, or passes by ending its turn without calling it. A round in which nobody speaks settles the run. The other ways a run ends are the round cap, the message cap of ten, a turn or run timeout, an interrupt, and a stop.
+
+Mention `@name` to scope the run to that member; with no mention, every member answers. A member reply is gated by that rob's `permissions`; `room_reply` is always allowed, like `send_message`.
+
+In the TUI, a room appears in the left list beside the robs. Select it and type. `/room <name> <member> <member>` creates or selects a room, and `/rooms` lists them. In the web UI, rooms sit in the sidebar beside the bots; create one there, open it, and its transcript survives a reload. The web room header has an interrupt button.
+
+A room's transcript lives in memory with the team, so it is gone when the process exits. A send while a run is in flight is refused, not queued.
 
 ## Known limits
 
@@ -269,8 +293,10 @@ A rob is `native` by default. A `cli` rob hands each turn to an external agent p
 - `bash` runs through the system shell. On Windows that is `cmd.exe`, so POSIX commands (`ls`, `grep`, `printf`, and similar) will not work there.
 - Context compaction summarizes the older messages with one extra model call when the estimate exceeds the threshold. Reasoning blocks are not part of the estimate because the provider drops them from outbound requests.
 - Sessions are saved so `--continue` resumes them. The compaction summary is a `user` message tagged `[compacted summary]`; it persists, but the model must keep the facts it needs in that summary.
-- Robs that use a `cli` backend (`pi` or `opencode`) cannot send private messages (`send_message`) or start sub-agents (`delegate`). Listing either tool in their `permissions` is a config error. Both `cli` backends route `ask`-level tools through the rob's authorizer and the shared approval queue. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook those tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask.
-- CLI backends are `pi` and `opencode`. `claude`, `codex`, and `kimi` are not implemented.
+- A `pi`, `opencode`, or `claude` cli rob can use `send_message` and `delegate`. A bridged call returns to the team over a per-turn local socket, and the rob's authorizer and the shared approval queue still gate it. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook, its non-team tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask. The `claude` backend has no interactive approval bridge, so an `ask` tool stays out of the exposed built-ins instead of prompting.
+- Our permission rules map eight claude built-ins: `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`, `WebFetch`, and `WebSearch` (this branch has no `web_fetch` or `web_search` tool). A `claude` cli rob's exposed built-ins are exactly the mapped ones its rules resolve to `allow`, passed to `--tools`; Claude Code's other built-ins (`Task`, `Workflow`, `NotebookEdit`, its cron and scheduling tools, and the rest) are outside our rules and are never exposed.
+- CLI backends are `pi`, `opencode`, and `claude`. `codex` and `kimi` are not implemented.
+- Rooms keep one run at a time, so a send while a run is live is refused. A room transcript is in memory and is lost when the process exits. A member turn is a full rob turn, so a round can call tools and ask for approval, and a member that is busy with its own work makes its room round wait. A room the web or TUI creates at runtime is not written back to `my-agent.json` and is gone after a restart.
 
 ## Development
 

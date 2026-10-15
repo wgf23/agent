@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthorizeResult } from "../../src/agent/authorize.js";
 import type { AgentEvent } from "../../src/agent/events.js";
@@ -16,10 +18,23 @@ import {
 	type OpencodeStream,
 	opencodePermissions,
 } from "../../src/rob/opencode-backend.js";
-import type { Inbound } from "../../src/rob/types.js";
+import type { BridgePort, Inbound } from "../../src/rob/types.js";
+import type { Tool } from "../../src/tools/types.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+import { fakeBridge } from "./helpers.js";
 
 const SESSION = "ses_1";
+
+// The preamble for the fixture's lone rob: no teammates and no bridged tools.
+const LONE_ROB_PREAMBLE = [
+	'You are rob "reviewer", one member of a team of robs.',
+	"Your role: review code",
+	"You are the only rob: there is no teammate to message.",
+	"",
+	"Team tools:",
+	"",
+	"send_message is fire-and-forget: the message is delivered when the teammate next runs, and their reply arrives later as a message from them.",
+].join("\n");
 
 let workspace: string;
 
@@ -374,6 +389,7 @@ interface TurnHarness {
 		rules: PermissionRules;
 		signal: AbortSignal;
 		onEvent: (event: AgentEvent) => void;
+		bridge: BridgePort;
 	};
 }
 
@@ -392,6 +408,7 @@ function turnOptions(
 			rules: overrides.rules ?? {},
 			signal: overrides.signal ?? new AbortController().signal,
 			onEvent: (event) => events.push(event),
+			bridge: overrides.bridge ?? fakeBridge(),
 		},
 	};
 }
@@ -501,8 +518,12 @@ describe("opencode backend", () => {
 		]);
 		expect(probes.sessions).toHaveLength(1);
 		expect(probes.prompts.map((p) => p.sessionID)).toEqual(["ses_1", "ses_1"]);
-		expect(probes.prompts[0].body).toEqual({ text: "[from user] hello" });
-		expect(probes.prompts[1].body).toEqual({ text: "[from user] again" });
+		expect(probes.prompts[0].body).toEqual({
+			text: `${LONE_ROB_PREAMBLE}\n\n[from user] hello`,
+		});
+		expect(probes.prompts[1].body).toEqual({
+			text: `${LONE_ROB_PREAMBLE}\n\n[from user] again`,
+		});
 		backend.dispose?.();
 	});
 
@@ -856,6 +877,210 @@ describe("opencode backend", () => {
 			{ type: "done", reason: "aborted", steps: 0 },
 		]);
 		expect(probes.killed).toEqual(["SIGTERM"]);
+	});
+});
+
+const SEND_MESSAGE_PARAMETERS = {
+	type: "object",
+	properties: { to: { type: "string" }, text: { type: "string" } },
+	required: ["to", "text"],
+};
+
+const DELEGATE_PARAMETERS = {
+	type: "object",
+	properties: { task: { type: "string" } },
+	required: ["task"],
+};
+
+const TEAM_TOOLS: Tool[] = [
+	{
+		name: "send_message",
+		description: "Send a private message.",
+		readOnly: true,
+		parameters: SEND_MESSAGE_PARAMETERS,
+		execute: async () => ({ ok: true, output: "" }),
+	},
+	{
+		name: "delegate",
+		description: "Delegate a task.",
+		readOnly: false,
+		parameters: DELEGATE_PARAMETERS,
+		execute: async () => ({ ok: true, output: "" }),
+	},
+];
+
+const TEAM_CHILD_ENV = {
+	MYAGENT_TEAM_SOCKET: "/tmp/myagent-team/gateway.sock",
+	MYAGENT_TEAM_SECRET: "team-secret",
+};
+
+// The preamble renderTeamPreamble builds for the opencode rob's live roster.
+const TEAM_PREAMBLE = [
+	'You are rob "reviewer", one member of a team of robs.',
+	"Your role: review code",
+	"",
+	"Your teammates:",
+	'- "worker": work',
+	"",
+	"Team tools:",
+	"- send_message: Send a private message.",
+	"- delegate: Delegate a task.",
+	"",
+	"send_message is fire-and-forget: the message is delivered when the teammate next runs, and their reply arrives later as a message from them.",
+].join("\n");
+
+function teamBridge(): BridgePort {
+	return fakeBridge({
+		tools: TEAM_TOOLS,
+		roster: () => [{ name: "worker", role: "work" }],
+		childEnv: () => TEAM_CHILD_ENV,
+	});
+}
+
+describe("opencode team bridge", () => {
+	it("writes the MCP shim and starts opencode with it on the team socket", async () => {
+		const dataDir = path.join(workspace, "opencode-data");
+		const { backend, probes } = createHarness({
+			dataDir,
+			rules: {
+				read_file: "allow",
+				glob: "deny",
+				grep: "deny",
+				write_file: "deny",
+				edit_file: "deny",
+				bash: "deny",
+			},
+		});
+		const running = backend.run(turnOptions({ bridge: teamBridge() }).options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		const env = probes.spawned[0].env;
+		expect(env.MYAGENT_TEAM_SOCKET).toBe(TEAM_CHILD_ENV.MYAGENT_TEAM_SOCKET);
+		expect(env.MYAGENT_TEAM_SECRET).toBe(TEAM_CHILD_ENV.MYAGENT_TEAM_SECRET);
+
+		const shimFile = path.join(dataDir, "team-mcp.mjs");
+		const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}");
+		expect(config).toEqual({
+			agents: {
+				"myagent-reviewer": {
+					description: 'my-agent rob "reviewer"',
+					mode: "primary",
+					system: "review code",
+					permissions: [
+						{ action: "*", resource: "*", effect: "deny" },
+						{ action: "read", resource: "*", effect: "allow" },
+						{ action: "myagent-team_*", resource: "*", effect: "ask" },
+					],
+				},
+			},
+			mcp: {
+				servers: {
+					"myagent-team": {
+						type: "local",
+						command: ["node", shimFile],
+						environment: TEAM_CHILD_ENV,
+						codemode: false,
+					},
+				},
+			},
+		});
+
+		const shim = await readFile(shimFile, "utf8");
+		expect(shim).toContain(
+			JSON.stringify([
+				{
+					name: "send_message",
+					description: "Send a private message.",
+					inputSchema: SEND_MESSAGE_PARAMETERS,
+				},
+				{
+					name: "delegate",
+					description: "Delegate a task.",
+					inputSchema: DELEGATE_PARAMETERS,
+				},
+			]),
+		);
+		expect(shim).toContain("process.env.MYAGENT_TEAM_SOCKET");
+		expect(shim).toContain("process.env.MYAGENT_TEAM_SECRET");
+
+		expect(probes.prompts[0].body).toEqual({
+			text: `${TEAM_PREAMBLE}\n\n[from user] hello`,
+		});
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("answers this rob's team tool permission once without the authorizer", async () => {
+		const { backend, probes } = createHarness({
+			dataDir: path.join(workspace, "opencode-data"),
+			authorize: async () => ({ allowed: true }),
+		});
+		const running = backend.run(turnOptions({ bridge: teamBridge() }).options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_team",
+				action: "myagent-team_delegate",
+				resources: ["*"],
+				save: ["*"],
+				source: { type: "tool", messageID: "msg_1", id: "call_1" },
+			}),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.replies).toEqual([
+			{
+				sessionID: SESSION,
+				requestID: "per_team",
+				body: { decision: "once" },
+			},
+		]);
+		expect(probes.permissionCalls).toEqual([]);
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
+	});
+
+	it("rejects a team-prefixed action that is not one of this rob's tools", async () => {
+		const { backend, probes } = createHarness({
+			dataDir: path.join(workspace, "opencode-data"),
+			authorize: async () => ({ allowed: true }),
+		});
+		const running = backend.run(turnOptions({ bridge: teamBridge() }).options);
+		await probes.eventsReady;
+		await waitFor(() => probes.prompts.length === 1, "prompt");
+
+		probes.sendEvent(
+			permissionEvent({
+				id: "per_other",
+				action: "myagent-team_explode",
+				resources: ["*"],
+			}),
+		);
+		await waitFor(() => probes.replies.length === 1, "reply");
+
+		expect(probes.replies).toEqual([
+			{
+				sessionID: SESSION,
+				requestID: "per_other",
+				body: {
+					decision: "reject",
+					message:
+						'my-agent cannot map the opencode "myagent-team_explode" permission to a tool.',
+				},
+			},
+		]);
+		expect(probes.permissionCalls).toEqual([]);
+
+		probes.sendEvent(sessionEvent("session.execution.succeeded"));
+		await running;
+		backend.dispose?.();
 	});
 });
 

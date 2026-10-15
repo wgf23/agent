@@ -53,7 +53,7 @@ describe("rob backend schema", () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it("rejects a cli rob that sets delegate in its permissions", () => {
+	it("accepts delegate in a cli rob's permissions", () => {
 		const result = parseRobs([
 			{
 				name: "reviewer",
@@ -63,12 +63,12 @@ describe("rob backend schema", () => {
 			},
 		]);
 
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('A "cli" backend cannot use delegate');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].permissions).toEqual({ delegate: "allow" });
 	});
 
-	it("rejects a cli rob that sets send_message in its permissions", () => {
+	it("accepts send_message in a cli rob's permissions", () => {
 		const result = parseRobs([
 			{
 				name: "reviewer",
@@ -78,9 +78,12 @@ describe("rob backend schema", () => {
 			},
 		]);
 
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('A "cli" backend cannot use send_message');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].permissions).toEqual({
+			send_message: "allow",
+			read_file: "allow",
+		});
 	});
 
 	it("rejects an unknown cli command with a friendly message", () => {
@@ -95,7 +98,9 @@ describe("rob backend schema", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.error).toContain('Unsupported CLI command "codex"');
-		expect(result.error).toContain('Only "pi" and "opencode" are supported');
+		expect(result.error).toContain(
+			'Only "pi", "opencode", and "claude" are supported',
+		);
 	});
 
 	it("accepts an opencode cli backend with a provider and model", () => {
@@ -139,6 +144,23 @@ describe("rob backend schema", () => {
 		});
 	});
 
+	it("accepts a claude cli backend without a provider or model", () => {
+		const result = parseRobs([
+			{
+				name: "reviewer",
+				role: "review",
+				backend: { kind: "cli", command: "claude" },
+			},
+		]);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].backend).toEqual({
+			kind: "cli",
+			command: "claude",
+		});
+	});
+
 	it("rejects a pi cli backend that omits provider or model", () => {
 		const result = parseRobs([
 			{
@@ -155,7 +177,7 @@ describe("rob backend schema", () => {
 		);
 	});
 
-	it("rejects send_message in an opencode cli rob's permissions", () => {
+	it("accepts send_message in an opencode cli rob's permissions", () => {
 		const result = parseRobs([
 			{
 				name: "reviewer",
@@ -165,9 +187,12 @@ describe("rob backend schema", () => {
 			},
 		]);
 
-		expect(result.ok).toBe(false);
-		if (result.ok) return;
-		expect(result.error).toContain('A "cli" backend cannot use send_message');
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.robs[0].permissions).toEqual({
+			send_message: "allow",
+			read_file: "allow",
+		});
 	});
 
 	it("rejects a global config that sets backend", async () => {

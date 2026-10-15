@@ -11,8 +11,13 @@
 - R4.3：修复 pi CLI 后端的空闲 steer 丢失（`turnActive` 回合状态、`queue_update.steering` 补投递、`success:false` 重发、未投递计数失败）。提交信息为 `fix: pi steer delivery, no silent message loss`。
 - R5：opencode CLI 后端（`opencode serve` 私有常驻进程、每 rob 一个持久会话、回合中途 steer、`dispose` 关闭进程与 SSE、serve 模式权限强制）。实现见 `src/rob/opencode-backend.ts`。
 - R5.1：opencode rob 审批桥（`ask` 工具翻译成 opencode `ask` 规则并暴露；`permission.asked` 经该 rob 的 authorizer 和共享 FIFO 审批队列回答；规则翻译修正为「只有不可能解析成其他效果时才普通 allow」；abort/dispose 拒绝所有待决请求）。
+- R6：team gateway（`Team.beginTurn` 每回合在本地 Unix socket 上开一条带 secret 的通道；`tools.ts` 用同一组 `Tool` 对象实现 `send_message` 和 `delegate`；`roster.ts` 组装名册提示；pi 扩展注册这两个工具，调用经 socket 回到 gateway，由该 rob 的 authorizer 授权一次）。实现见 `src/rob/gateway/`。
+- R6.1：opencode 的 MCP shim（`teamMcpShim` 生成一个 stdio MCP 服务，`--mcp-config` 的等价物是 `OPENCODE_CONFIG_CONTENT` 里的 `mcp` 配置；opencode 对 MCP 调用发 `permission.asked`，bridge 放行后由 gateway 授权一次）。提交 `ea4b4b2`、`9a5f9b3`、`824503c`。真实 opencode 2.0.24 + DeepSeek 探针验证：opencode 调用 `myagent-team_send_message`，权限动作名正是 `myagent-team_<tool>`，gateway 收到并写入 DM 日志。
+- R7：claude CLI 后端（每回合一个 `claude -p --output-format stream-json --verbose` 进程；每 rob 一个 `CLAUDE_CONFIG_DIR`；首回合 `--session-id`、成功回合后 `--resume`；规则解析为 `allow` 的内建工具进 `--tools` 精确白名单和 `--allowedTools`，`ask`/`deny` 不进白名单；每回合写 MCP shim 与 `team-mcp.json` 并合并 `turn.bridge.childEnv()`，团队工具以 `mcp__myagent-team__<tool>` 进 `--allowedTools`；claude rob 走配置 provider 的 Anthropic 兼容端点：`childProviderEnv` 在子进程 env 里加 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`、`ANTHROPIC_SMALL_FAST_MODEL`，preset 没有该端点时不加）。实现见 `src/rob/claude-backend.ts`。提交 `f388b7d`（移植）、`a96c6b8`（bridge）、`108d91a`（配置接入 `CLAUDE_CLI_COMMAND`）、`4dbdfad`（测试）、`eb6d402`（精确工具面）、`7abe4d1`（preset 端点）、`370c8ee`（`childProviderEnv`）、`04266a4`（接入四个构造点）、`6a72e10`（测试）。
 
-claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 opencode。
+- R8：群聊房间（`Room` 是共享记录的唯一写者，成员按配置顺序逐个发言，`room_reply` 工具经同一 bridge 服务，一轮无人发言即结束；TUI 把房间当作选择项，web 把房间当作会话 id；`rooms` 从 `my-agent.json` 读取）。实现见 `src/rob/room.ts`、`src/rob/room-text.ts`、`src/rob/team.ts`。设计取 architect 两个候选中的基座（房间拥有记录并做调度），并嫁接扁平 `Inbound`、`TeamPort` 不变、`PASS` 哨兵、按轮 `@name` 限定。
+
+codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi、opencode 和 claude；三者都已接入 team gateway。
 
 ### 与设计的偏差
 
@@ -38,7 +43,7 @@ claude、codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi 和 openc
 - G3（已关闭）：`message_end` 的 `stopReason` 为 `"error"` 或 `"aborted"` 时返回错误结果并带上该消息的 `errorMessage`，不再退化成空回答。
 - G4（已关闭）：子 agent 的 `usage` 事件现在累加到发起 rob 的用量统计。
 - G5（已关闭）：cli rob 现在能在回合中途插话，且不在空闲 pi 上丢消息。cli 后端使用 `--mode rpc`，用 `turnActive` 跟踪回合：进行中才把收件箱的新消息作为 `steer` 发出，空闲时留给 rob 的下一轮。真实 pi 验证：工具执行期间发送 steer，回答变成 `STEERED`；`agent_end` 之后空闲时投递的消息由 rob 的下一轮回答。真实验证并修复了空闲 steer 的丢失：`agent_end` 后发送的 steer 返回 `success:true` 但只进 `queue_update.steering`、不会再开回合；后端现在把 `agent_end` 时仍在 steering 的消息（以及 `success:false` 的 steer）作为新 prompt 在同一进程补投递，未投递且未入队的消息让回合以 `ok:false` 结束并报出条数。
-- G6（已接受为限制，不实现）：cli rob 不能使用 `send_message` 和 `delegate`。配置校验会拒绝在 cli rob 上设置这两个工具。扩展工具可以通过 Unix socket 回调我们的进程（机制已用真实 pi 验证），但需要常驻监听通道和自定协议。决定：原生 rob 已完整支持私聊、子 agent 和审批，pi 的 rob 定位为独立执行任务的角色。只有在 pi 的 rob 确实需要互相协作时，才重新考虑这个桥接。
+- G6（pi 已关闭，opencode 与 claude 已实现）：cli rob 现在可以通过每回合的 team gateway 使用 `send_message` 和 `delegate`。回合开始 `Team.beginTurn` 在 `mkdtemp` 目录（0700）里监听一个带 per-rob secret 的 Unix socket；pi 扩展注册这两个工具，调用经 socket 回到 my-agent，由该 rob 的 authorizer 与共享审批队列授权一次，`tool_call` 钩子对这两个名字直接放行。原生 rob 与 gateway 挂载同一组 `Tool` 对象。真实 pi 探针验证：pi 调用 `send_message` 后，目标 rob 的收件箱提示为 `[from rob:planner] probe ping`。opencode 见 R6.1，claude 见 R7。
 - 残留风险（未关闭）：G7 的审批扩展如果加载成功、但没有注册 `tool_call` 钩子，`ask` 工具会在没有审批的情况下执行。加载失败时 pi 会以退出码 1 结束，这种情况是安全的（已用真实 pi 验证）。目前没有握手机制确认钩子已注册。
 - 证据强度：G4 只用假 pi 和单元测试验证，没有用真实 pi 验证。空闲 steer 的重发路径只用假 pi 验证，因为真实时序难以稳定复现。
 - G7（已关闭）：cli rob 现在有审批通道。pi 扩展在 `tool_call` 钩子里发 `ctx.ui.confirm` 并阻塞，我们的进程用该 rob 的 authorizer 判断后回复；允许和拒绝两条路径都已用真实 pi 验证。因此 `ask` 工具可以进入白名单（仅在桥存在时）。
@@ -220,7 +225,7 @@ RobBackend
 1. 外部 CLI 的 rob 必须用 `--tools` 把工具集限制在该 rob 的权限范围内。例如只读 rob 只给 `read`。
 2. R4 第一版认为「需要审批的写入」在 pi 下无法逐次审批，只能是「允许」或「不给这个工具」。R4.2 推翻了这一点：pi 扩展的 `tool_call` 钩子可以发 `ctx.ui.confirm` 并阻塞，配合 `--mode rpc` 做到逐次审批。
 3. pi 的 `--mode rpc` 是 R4.2 的事件来源，`--mode json` 的事件形状相同但无法中途送命令。
-4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。R4.2 验证了扩展工具可以用 Unix socket 回调我们的进程，机制可行但未实现；见 `docs/design/pi-capabilities.md`。
+4. 私聊 `send_message` 和 `delegate` 在 pi 里没有对应物。R4.2 验证了扩展工具可以用 Unix socket 回调我们的进程，机制可行但当时未实现；R6 已实现，见 `src/rob/gateway/`。
 
 ### 已验证：opencode（2.0.24）
 
@@ -253,6 +258,14 @@ serve 模式权限强制（本轮补验，关闭唯一未验证的安全声明�
 请求与应答。回合中 opencode 发 `permission.asked` SSE，`data` 字段为 `{id, sessionID, action, resources:[...], save:[...], source:{type:"tool", messageID, id}}`；实测 `action` 取值 `shell`（`resources` 为命令字符串）、`read`（路径）、`glob`/`grep`（pattern）、`edit`（路径）。后端把 `action` 映射回本侧工具（`read→read_file`、`glob`、`grep`、`shell→bash`；`edit` 取规则在 `resources[0]` 上解析为 `ask` 的那个，优先 `write_file`），用 `resources[0]` 构造合成调用（bash 用 `{command}`，read/write/edit 用 `{path}`，glob/grep 用 `{pattern}`），调用该 rob 的 authorizer。authorizer 走共享 FIFO 队列，用户看到带 rob 名字的对话框，`waiting_approval` 状态由既有路径设置。答复用 `POST /api/session/{sessionID}/permission/{requestID}/reply`，body `{decision:"once"|"always"|"reject", message?}`：允许一次回 `once`；authorizer 落了持久规则（`AuthorizeResult.remember === true`）回 `always`；拒绝回 `reject`，`message` 为 authorizer 的理由。危险命令 authorizer 不落规则，因此永远回 `once`。`action` 无法映射回任何工具时回 `reject` 并附清晰理由，绝不静默放行。
 
 生命周期。待决请求记录在 `pendingPermissions`。回合中途 abort 会先对所有待决请求回 `reject`（理由 "Turn aborted before the approval was answered."）再 `interrupt`；`dispose` 同样回 `reject`（理由 "my-agent stopped before the approval was answered."）并结束回合，避免 `Team.stop` 卡住、opencode 阻塞在已停的 server 上。真实验证：TUI 里对 `bash echo APPROVED_ONE` 按 `y` 后工具执行并出现 `APPROVED_ONE` 的 `✓` 卡片与输出；对 `bash echo DENIED_TWO` 按 `n` 后出现红色 `✗` 卡片和理由 "The user denied bash echo DENIED_TWO."；`/quit` 退出码 0，且没有本轮的 `opencode serve` 残留（对照：直接 SIGKILL 父进程会留下孤儿子进程）。离线测试用注入的假 fetch/spawn 和假 authorizer 覆盖上述每条分支。
+
+### 已验证：claude（Claude Code 2.1.296）
+
+后端的 argv 形状：`claude -p <prompt> --output-format stream-json --verbose --append-system-prompt <名册提示> [--allowedTools ...] --tools <精确白名单> [--mcp-config <team-mcp.json> --strict-mcp-config] [--model <alias>] --session-id|--resume <uuid>`。每 rob 一个 `CLAUDE_CONFIG_DIR`（`~/.config/my-agent/claude/<name>`，用 `MY_AGENT_CLAUDE_CONFIG_DIR` 改前缀）。实测：claude 在该目录里创建 `.claude.json`、`projects/`、`sessions/`，rob 的会话不进用户的 `~/.claude`；把 `CLAUDE_CONFIG_DIR` 指向隔离目录后，用户级 `~/.claude.json` 里的 MCP 服务不加载（不设置时会以 `source: "user"` 加载），所以 `--strict-mcp-config` 是双保险。回合进程用 `detached` 起在独立进程组里（`src/util/process.ts` 的 `killProcessGroup`），abort 和 10 分钟超时都杀掉 claude 及其子进程。会话只在回合 `ok` 后记住 `--session-id` 的 uuid，失败的回合不会让下一回合 `--resume` 一个 claude 没保存过的会话。接入 provider env 后实测 `--model`：不带 `--model` 时事件里的模型是 `deepseek-flash`；带 `--model sonnet` 时 claude 把别名解析为 `claude-sonnet-5-5` 并写进事件，请求仍发往配置的端点且回合成功，所以 `[--model <alias>]` 保留。
+
+工具与桥。规则解析为 `allow` 的内建工具进 `--tools` 精确白名单和 `--allowedTools`；`ask` 和 `deny` 不进白名单（没有交互审批桥，`ask` 等价于拒绝）。桥接的团队工具每回合写成 `team-mcp.json`（`mcpServers["myagent-team"]` 是 `node <shim>`，env 是 `turn.bridge.childEnv()` 原样）并以 `mcp__myagent-team__send_message`、`mcp__myagent-team__delegate` 进 `--allowedTools`，claude 只负责放行，授权仍由 gateway 做。真实 claude 探针：用后端写出的 shim 与配置跑 `claude -p`，`system/init` 事件报告 `mcp_servers: [{name: "myagent-team", status: "connected", source: "dynamic"}]`，工具表里出现上述两个 MCP 名字，与 `--allowedTools` 的拼写一致。接入 provider env 前，本机 claude 在隔离的 `CLAUDE_CONFIG_DIR` 里没有凭据，任何回合都在 `result` 事件返回 `is_error: true`、`result: "Not logged in · Please run /login"`（进程退出码 1，`apiKeySource: "none"`），所以「claude 真正调用 `send_message` 并留下私聊记录」当时没有真实验证，只有假 claude 的离线测试。现在 `childProviderEnv` 把 DeepSeek 的 Anthropic 兼容端点写进子进程 env，真实 Team 探针（1 个 claude rob + 1 个 worker，`providerEnv = childProviderEnv(settings, apiKey)`）通过：子进程 env 的键为 `DEEPSEEK_API_KEY, ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, ANTHROPIC_SMALL_FAST_MODEL`，`ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`，两个模型变量都是 `deepseek-flash`，`ANTHROPIC_AUTH_TOKEN` 等于解析出的 key；claude 的 `send_message` 返回 `Message queued for "worker".`，DM 日志出现 `planner -> worker: "probe ping from claude"`，worker 回复 `worker -> planner: "pong — worker rob alive..."`；`delegate` 的 `tool_finished` 为 `ok=true output="delegate-ok"`，子 agent `planner-sub-0` 的文本是 `"delegate-ok"`；两次运行都通过，约 6 秒。对照探针把 providerEnv 还原成旧的仅 `DEEPSEEK_API_KEY` 映射：1.6 秒内 `planner errors: ["Not logged in · Please run /login"]`、`done: error`、0 条 DM。preset 没有 Anthropic 兼容端点时（`openai`）`childProviderEnv` 不加 `ANTHROPIC_*`，claude 仍靠自己的登录。
+
+工具面收紧（`eb6d402`）。`--tools` 是 claude 内建工具的精确白名单，后端把按 `allow` 选出的名字原样传入；`--disallowedTools` 不再传。实测（真实 2.1.296，后端写出的 `--mcp-config` 与 `--strict-mcp-config`）：只读规则下 init 工具表恰为 `["Glob","Grep","Read","mcp__myagent-team__delegate","mcp__myagent-team__send_message"]`；read 和 write 都 allow、edit deny 时为 `["Glob","Grep","Read","Write","mcp__myagent-team__delegate","mcp__myagent-team__send_message"]`；全部拒绝时为 `["mcp__myagent-team__delegate","mcp__myagent-team__send_message"]`（`--tools ""`）。同一组参数加上旧的 `--disallowedTools` 前后 init 列表逐项相同，所以它已冗余。`CLAUDE_TOOLS` 仍只覆盖 8 个内建工具（其中 `WebFetch`、`WebSearch` 在本分支没有对应的 my-agent 工具），其余内建工具（`Task`、`Workflow`、`NotebookEdit`、`CronCreate` 等）现在不进白名单，rob 无法使用。
 
 ### 建议
 

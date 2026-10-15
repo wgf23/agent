@@ -1,6 +1,7 @@
 import type { AgentEvent } from "../agent/events.js";
 import type { ApprovalChoice } from "../permissions/authorizer.js";
 import type { ApprovalRequest } from "./approvals.js";
+import type { RoomEvent } from "./room.js";
 import type { DmEntry, RobStatus, SubagentEntry } from "./types.js";
 
 export type TeamEvent =
@@ -10,6 +11,7 @@ export type TeamEvent =
 	| { kind: "dm"; entry: DmEntry }
 	| { kind: "subagent"; entry: SubagentEntry }
 	| { kind: "approval_requested"; request: ApprovalRequest }
-	| { kind: "approval_resolved"; id: string; decision: ApprovalChoice };
+	| { kind: "approval_resolved"; id: string; decision: ApprovalChoice }
+	| { kind: "room"; event: RoomEvent };
 
 export type TeamListener = (event: TeamEvent) => void;

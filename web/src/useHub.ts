@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer } from "react";
 import type {
 	ApprovalChoice,
 	BotDraft,
+	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
 	ServerEvent,
@@ -10,14 +11,31 @@ import type {
 import { type ClientState, clientReducer, initialState } from "./state";
 
 async function post(path: string, body: unknown): Promise<void> {
+	await postJson(path, body);
+}
+
+// POST a JSON body and return the parsed response. A rejection throws the
+// server's human-readable error text so a dialog or composer can show it;
+// the fallback only fires when the body is not JSON.
+async function postJson(path: string, body: unknown): Promise<unknown> {
 	const response = await fetch(path, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
 	});
 	if (!response.ok) {
-		throw new Error(`POST ${path} failed: ${response.status}`);
+		let message = `POST ${path} failed: ${response.status}`;
+		try {
+			const payload = (await response.json()) as { error?: string };
+			if (typeof payload.error === "string" && payload.error !== "") {
+				message = payload.error;
+			}
+		} catch {
+			// keep the fallback message
+		}
+		throw new Error(message);
 	}
+	return response.json().catch(() => null);
 }
 
 export interface Hub {
@@ -29,6 +47,9 @@ export interface Hub {
 	newSession: (bot: string) => void;
 	openSession: (bot: string, id: string) => void;
 	createBot: (draft: BotDraft) => Promise<void>;
+	createRoom: (name: string, members: string[]) => Promise<void>;
+	sendToRoom: (room: string, text: string) => Promise<void>;
+	interruptRoom: (room: string) => Promise<void>;
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
 	closeSettings: () => void;
@@ -114,6 +135,25 @@ export function useHub(): Hub {
 		}
 	}, []);
 
+	const createRoom = useCallback(async (name: string, members: string[]) => {
+		const body = (await postJson("/api/rooms", { name, members })) as {
+			room?: RoomInfo;
+		} | null;
+		// Seed the room from the server's snapshot so it can be opened before
+		// its members event arrives; nothing is appended to the transcript.
+		if (body?.room !== undefined) {
+			dispatch({ type: "room_created", room: body.room });
+		}
+	}, []);
+
+	const sendToRoom = useCallback(async (room: string, text: string) => {
+		await postJson("/api/rooms/send", { room, text });
+	}, []);
+
+	const interruptRoom = useCallback(async (room: string) => {
+		await postJson("/api/rooms/interrupt", { room });
+	}, []);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -177,6 +217,9 @@ export function useHub(): Hub {
 		newSession,
 		openSession,
 		createBot,
+		createRoom,
+		sendToRoom,
+		interruptRoom,
 		loadSettings,
 		openSettings,
 		closeSettings,

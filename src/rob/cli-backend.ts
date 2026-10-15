@@ -6,7 +6,7 @@ import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
 import { type PermissionRules, resolveAction } from "../permissions/rules.js";
 import type { Message } from "../providers/types.js";
-import { getTool } from "../tools/registry.js";
+import { getTool, toolDefinition } from "../tools/registry.js";
 import {
 	emptyUsage,
 	promptFor,
@@ -14,6 +14,8 @@ import {
 	type TurnResult,
 	toUserMessage,
 } from "./backend.js";
+import { piBridgeExtension } from "./gateway/shims.js";
+import { renderTeamPreamble } from "./roster.js";
 import type { Inbound, RobName } from "./types.js";
 
 const SUMMARY_MAX_CHARS = 200;
@@ -24,22 +26,7 @@ const EXIT_GRACE_MS = 1000;
 
 const PI_SESSIONS_DIR = ".my-agent";
 const PI_SESSIONS_SUBDIR = "pi-sessions";
-const APPROVAL_EXTENSION_FILE = "approval-extension.mjs";
-
-// The approval bridge lives inside pi: on every tool call it asks our process
-// over pi's RPC extension-UI channel and blocks until the answer arrives.
-const APPROVAL_EXTENSION = `export default function (pi) {
-	pi.on("tool_call", async (event, ctx) => {
-		const allowed = await ctx.ui.confirm(
-			"my-agent approval",
-			JSON.stringify({ toolName: event.toolName, input: event.input }),
-		);
-		if (!allowed) {
-			return { block: true, reason: "Denied by the my-agent approval bridge." };
-		}
-	});
-}
-`;
+const PI_EXTENSION_FILE = "pi-extension.mjs";
 
 // Our tool name to pi's. Only these four have a pi counterpart.
 const PI_TOOLS: ReadonlyArray<readonly [string, string]> = [
@@ -92,7 +79,7 @@ export interface CliBackendOptions {
 	provider: string;
 	model: string;
 	sessionDir?: string;
-	// When set, the approval extension is loaded and "ask" tools are exposed.
+	// When set, the approval hook is loaded and "ask" tools are exposed.
 	authorize?: Authorize;
 	// Returns queued interjections to steer into a running turn.
 	drain?: () => Inbound[];
@@ -109,13 +96,21 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 			await mkdir(sessionDir, { recursive: true });
 
 			const bridged = options.authorize !== undefined;
-			const allowed = piToolAllowlist(turn.rules, bridged);
+			const defs = turn.bridge.tools.map(toolDefinition);
 			let extensionFile: string | undefined;
-			if (bridged) {
-				extensionFile = path.join(sessionDir, APPROVAL_EXTENSION_FILE);
-				await writeFile(extensionFile, APPROVAL_EXTENSION, "utf8");
+			if (bridged || defs.length > 0) {
+				extensionFile = path.join(sessionDir, PI_EXTENSION_FILE);
+				await writeFile(
+					extensionFile,
+					piBridgeExtension({ defs, approval: bridged }),
+					"utf8",
+				);
 			}
 
+			const allowlist = [
+				...piToolAllowlist(turn.rules, bridged),
+				...defs.map((def) => def.name),
+			];
 			const args = [
 				"--mode",
 				"rpc",
@@ -124,14 +119,19 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				"--model",
 				options.model,
 				"--append-system-prompt",
-				options.role,
+				renderTeamPreamble({
+					rob: options.rob,
+					role: options.role,
+					roster: turn.bridge.roster(),
+					tools: turn.bridge.tools,
+				}),
 				"--session-dir",
 				sessionDir,
 				// --continue reuses the rob's most recent session in its own
 				// directory; without it pi starts a fresh one every turn.
 				"--continue",
-				...(allowed.length > 0
-					? ["--tools", allowed.join(",")]
+				...(allowlist.length > 0
+					? ["--tools", allowlist.join(",")]
 					: ["--no-tools"]),
 				...(extensionFile !== undefined ? ["--extension", extensionFile] : []),
 			];
@@ -146,7 +146,7 @@ export function createCliBackend(options: CliBackendOptions): RobBackend {
 				inbound: turn.inbound,
 				authorize: options.authorize,
 				drain: options.drain,
-				extraEnv: options.extraEnv,
+				extraEnv: { ...turn.bridge.childEnv(), ...options.extraEnv },
 			});
 		},
 	};

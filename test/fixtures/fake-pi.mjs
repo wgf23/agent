@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const args = process.argv.slice(2);
 if (process.env.FAKE_PI_ARGV_FILE) {
@@ -67,6 +68,13 @@ function handleLine(line) {
 		}
 		if (scenario === "approval") {
 			emitApprovalStart();
+			return;
+		}
+		if (scenario === "team") {
+			emitTeamScript().catch((error) => {
+				process.stderr.write(`fake pi team scenario failed: ${error.stack}\n`);
+				process.exit(4);
+			});
 			return;
 		}
 		if (STEER_SCENARIOS.includes(scenario)) {
@@ -415,6 +423,132 @@ function emitApprovalEnd(allowed) {
 	});
 	emit({ type: "turn_end" });
 	emit({ type: "agent_end" });
+}
+
+// Loads the turn's generated extension the way pi does and drives its
+// registered tools with the calls named in FAKE_PI_TEAM_CALLS, recording the
+// text each one returned in FAKE_PI_TEAM_RESULTS.
+async function emitTeamScript() {
+	const extensionPath = argValue("--extension");
+	const { default: extension } = await import(
+		pathToFileURL(extensionPath).href
+	);
+	const tools = new Map();
+	const hooks = [];
+	extension({
+		registerTool(definition) {
+			tools.set(definition.name, definition);
+		},
+		on(event, handler) {
+			if (event === "tool_call") hooks.push(handler);
+		},
+	});
+
+	emit({ type: "agent_start" });
+	emit({ type: "turn_start" });
+
+	const calls = JSON.parse(
+		readFileSync(process.env.FAKE_PI_TEAM_CALLS, "utf8"),
+	);
+	const observed = [];
+	for (const [index, call] of calls.entries()) {
+		const toolCallId = `call_${index + 1}`;
+		emit({
+			type: "tool_execution_start",
+			toolCallId,
+			toolName: call.name,
+			args: call.args,
+		});
+		// pi runs tool_call before executing; a refused confirm is what
+		// non-interactive mode does, so a hook that gated a team tool would
+		// block the call here.
+		const blocked = await firstBlock(hooks, {
+			toolCallId,
+			toolName: call.name,
+			input: call.args,
+		});
+		if (blocked !== undefined) {
+			observed.push(blocked.reason);
+			emitTeamToolEnd(toolCallId, call.name, blocked.reason, true);
+			continue;
+		}
+		const definition = tools.get(call.name);
+		try {
+			const result = await definition.execute(toolCallId, call.args);
+			observed.push(result.content.map((block) => block.text).join(""));
+			emit({
+				type: "tool_execution_end",
+				toolCallId,
+				toolName: call.name,
+				result,
+				isError: false,
+			});
+		} catch (error) {
+			observed.push(error.message);
+			emitTeamToolEnd(toolCallId, call.name, error.message, true);
+		}
+	}
+
+	// A built-in call still goes through the hook; a denied confirm blocks it.
+	const builtinCallId = "call_builtin";
+	emit({
+		type: "tool_execution_start",
+		toolCallId: builtinCallId,
+		toolName: "read",
+		args: { path: "a.txt" },
+	});
+	const builtin = await firstBlock(hooks, {
+		toolCallId: builtinCallId,
+		toolName: "read",
+		input: { path: "a.txt" },
+	});
+	const builtinText = builtin?.reason ?? "not blocked";
+	observed.push(builtinText);
+	emitTeamToolEnd(builtinCallId, "read", builtinText, builtin !== undefined);
+
+	if (process.env.FAKE_PI_TEAM_RESULTS) {
+		writeFileSync(process.env.FAKE_PI_TEAM_RESULTS, JSON.stringify(observed));
+	}
+
+	emit({
+		type: "message_start",
+		message: { role: "assistant", content: [], usage: emptyUsage() },
+	});
+	emit({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "team done" }],
+			usage: usage(1, 1, 0),
+			stopReason: "stop",
+		},
+	});
+	emit({ type: "turn_end" });
+	emit({ type: "agent_end" });
+}
+
+function emitTeamToolEnd(toolCallId, toolName, text, isError) {
+	emit({
+		type: "tool_execution_end",
+		toolCallId,
+		toolName,
+		result: { content: [{ type: "text", text }], details: {} },
+		isError,
+	});
+}
+
+async function firstBlock(hooks, event) {
+	const ctx = { hasUI: false, ui: { confirm: async () => false } };
+	for (const hook of hooks) {
+		const decision = await hook(event, ctx);
+		if (decision?.block) return decision;
+	}
+	return undefined;
+}
+
+function argValue(flag) {
+	const index = args.indexOf(flag);
+	return index === -1 ? undefined : args[index + 1];
 }
 
 function usage(input, output, cacheRead) {

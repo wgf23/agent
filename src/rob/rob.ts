@@ -11,6 +11,7 @@ import {
 	lastAssistantText,
 	type RobBackend,
 } from "./backend.js";
+import { createClaudeBackend } from "./claude-backend.js";
 import { createCliBackend } from "./cli-backend.js";
 import { AsyncQueue } from "./inbox.js";
 import { createOpencodeBackend } from "./opencode-backend.js";
@@ -23,7 +24,7 @@ import type {
 	RobUsage,
 	TeamPort,
 } from "./types.js";
-import { OPENCODE_CLI_COMMAND } from "./types.js";
+import { CLAUDE_CLI_COMMAND, OPENCODE_CLI_COMMAND } from "./types.js";
 
 export interface AuthorizerInput {
 	name: RobName;
@@ -95,26 +96,31 @@ export class Rob {
 							drain: () => this.inbox.drain(),
 							extraEnv: options.providerEnv,
 						})
-					: createCliBackend({
-							rob: options.name,
-							role: options.role,
-							command: options.backend.command,
-							provider: options.backend.provider ?? "",
-							model: options.backend.model ?? "",
-							sessionDir: options.backend.sessionDir,
-							authorize: this.authorize,
-							drain: () => this.inbox.drain(),
-							extraEnv: options.providerEnv,
-						})
+					: options.backend.command === CLAUDE_CLI_COMMAND
+						? createClaudeBackend({
+								rob: options.name,
+								role: options.role,
+								model: options.backend.model,
+								extraEnv: options.providerEnv,
+							})
+						: createCliBackend({
+								rob: options.name,
+								role: options.role,
+								command: options.backend.command,
+								provider: options.backend.provider ?? "",
+								model: options.backend.model ?? "",
+								sessionDir: options.backend.sessionDir,
+								authorize: this.authorize,
+								drain: () => this.inbox.drain(),
+								extraEnv: options.providerEnv,
+							})
 				: createNativeBackend({
 						name: options.name,
+						role: options.role,
 						provider: options.provider,
 						model: options.model,
 						authorize: this.authorize,
-						systemInstructions: this.systemInstructions(),
-						team: options.team,
 						drain: () => this.inbox.drain(),
-						runSubagent: (task, signal) => this.runSubagent(task, signal),
 						extraTools: options.extraTools,
 					});
 	}
@@ -195,18 +201,29 @@ export class Rob {
 	}
 
 	private async runOnce(batch: Inbound[], signal: AbortSignal): Promise<void> {
-		const result = await this.backend.run({
-			history: this.history,
-			inbound: batch,
-			workspaceRoot: this.workspaceRoot,
-			rules: this.rules,
+		const bridge = await this.team.beginTurn(this.name, {
 			signal,
-			onEvent: (event) => this.handleEvent(event),
+			workspaceRoot: this.workspaceRoot,
+			authorize: this.authorize,
+			runSubagent: (task, subSignal) => this.runSubagent(task, subSignal),
 		});
+		try {
+			const result = await this.backend.run({
+				history: this.history,
+				inbound: batch,
+				workspaceRoot: this.workspaceRoot,
+				rules: this.rules,
+				signal,
+				onEvent: (event) => this.handleEvent(event),
+				bridge,
+			});
 
-		this.history = result.messages.filter(
-			(message) => message.role !== "system",
-		);
+			this.history = result.messages.filter(
+				(message) => message.role !== "system",
+			);
+		} finally {
+			bridge.close();
+		}
 	}
 
 	private handleEvent(event: AgentEvent): void {
@@ -264,14 +281,6 @@ export class Rob {
 
 		if (parts.length > 0) return parts.join("");
 		return lastAssistantText(result.messages) ?? "";
-	}
-
-	private systemInstructions(): string {
-		return [
-			`You are rob "${this.name}", one member of a team of robs.`,
-			"Use send_message to talk to another rob, and delegate to hand one self-contained task to a sub-agent.",
-			this.role,
-		].join("\n");
 	}
 }
 

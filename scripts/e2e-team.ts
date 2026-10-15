@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveConfig } from "../src/config/resolve.js";
+import { childProviderEnv, resolveConfig } from "../src/config/resolve.js";
 import {
 	createAuthorizer,
 	headlessApproval,
@@ -46,7 +46,13 @@ try {
 	if (!resolved.ok) {
 		failures.push(resolved.error);
 	} else {
-		const { provider: settings, apiKey, permissions, robs } = resolved.config;
+		const {
+			provider: settings,
+			apiKey,
+			permissions,
+			robs,
+			rooms,
+		} = resolved.config;
 		if (apiKey === undefined) {
 			failures.push(`missing ${settings.apiKeyEnv}`);
 		} else {
@@ -65,11 +71,12 @@ try {
 			});
 			const team = new Team({
 				robs,
+				rooms,
 				defaultModel: settings.model,
 				providerFactory: () => provider,
 				workspaceRoot: workspace,
 				permissions,
-				providerEnv: { [settings.apiKeyEnv]: apiKey },
+				providerEnv: childProviderEnv(settings, apiKey),
 				authorizerFactory: (rob) =>
 					createAuthorizer({
 						workspaceRoot: workspace,

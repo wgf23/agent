@@ -7,6 +7,7 @@ import {
 	writeCredential,
 } from "../../src/config/credentials.js";
 import {
+	childProviderEnv,
 	globalConfigPath,
 	missingApiKeyMessage,
 	resolveConfig,
@@ -112,6 +113,7 @@ describe("resolveConfig precedence", () => {
 			thinking: "enabled",
 			reasoningEffort: "high",
 			baseURL: "https://api.deepseek.com",
+			anthropicBaseURL: "https://api.deepseek.com/anthropic",
 			apiKeyEnv: "DEEPSEEK_API_KEY",
 			maxSteps: 25,
 		});
@@ -149,6 +151,7 @@ describe("resolveConfig precedence", () => {
 			thinking: "disabled",
 			reasoningEffort: "low",
 			baseURL: "http://localhost:8080/v1",
+			anthropicBaseURL: "https://api.deepseek.com/anthropic",
 			apiKeyEnv: "DEEPSEEK_API_KEY",
 			maxSteps: 7,
 		});
@@ -366,6 +369,76 @@ describe("resolveConfig mcp", () => {
 	});
 });
 
+describe("resolveConfig rooms", () => {
+	it("defaults to no rooms", () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.rooms).toEqual([]);
+	});
+
+	it("reads rooms from the project file and validates them against its robs", async () => {
+		await writeProject({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "builder", role: "build" },
+			],
+			rooms: [{ name: "ship-it", members: ["planner", "builder"] }],
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.rooms).toEqual([
+			{ name: "ship-it", members: ["planner", "builder"] },
+		]);
+	});
+
+	it("rejects a room member that is not a rob in the same file", async () => {
+		await writeProject({
+			robs: [{ name: "planner", role: "plan" }],
+			rooms: [{ name: "ship-it", members: ["planner", "ghost"] }],
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toBe(
+			`Invalid rooms in ${path.join(workspaceRoot, "my-agent.json")}: A listed member is not on the team.`,
+		);
+	});
+
+	it("rejects a room named after a rob", async () => {
+		await writeProject({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "builder", role: "build" },
+			],
+			rooms: [{ name: "planner", members: ["planner", "builder"] }],
+		});
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain('Room "planner" cannot use a rob\'s name.');
+	});
+
+	it("rejects rooms in the global file", async () => {
+		await writeGlobal({ rooms: [] });
+
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("cannot set rooms");
+		expect(result.error).toContain(globalConfigPath(homeDir));
+	});
+});
+
 describe("resolveConfig errors", () => {
 	it("rejects a global file that tries to set permissions", async () => {
 		await writeGlobal({
@@ -484,5 +557,41 @@ describe("missingApiKeyMessage", () => {
 		expect(missingApiKeyMessage("DEEPSEEK_API_KEY")).toBe(
 			'Missing DEEPSEEK_API_KEY. Run "my-agent setup" to store a key, or set the DEEPSEEK_API_KEY environment variable.',
 		);
+	});
+});
+
+describe("childProviderEnv", () => {
+	it("names the key after apiKeyEnv and adds the anthropic env for the deepseek preset", () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+		if (!result.ok) throw new Error(result.error);
+
+		expect(childProviderEnv(result.config.provider, "sk-deepseek")).toEqual({
+			DEEPSEEK_API_KEY: "sk-deepseek",
+			ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+			ANTHROPIC_AUTH_TOKEN: "sk-deepseek",
+			ANTHROPIC_MODEL: "deepseek-flash",
+			ANTHROPIC_SMALL_FAST_MODEL: "deepseek-flash",
+		});
+	});
+
+	it("keeps only the named key variable when the preset has no anthropic endpoint", () => {
+		const result = resolveConfig({
+			cliModel: "openai/gpt-4o",
+			workspaceRoot,
+			env: {},
+			homeDir,
+		});
+		if (!result.ok) throw new Error(result.error);
+
+		expect(childProviderEnv(result.config.provider, "sk-openai")).toEqual({
+			OPENAI_API_KEY: "sk-openai",
+		});
+	});
+
+	it("returns an empty map without a key", () => {
+		const result = resolveConfig({ workspaceRoot, env: {}, homeDir });
+		if (!result.ok) throw new Error(result.error);
+
+		expect(childProviderEnv(result.config.provider, undefined)).toEqual({});
 	});
 });

@@ -7,6 +7,10 @@ import type {
 	DmInfo,
 	PresetInfo,
 	ProviderView,
+	RoomEventInfo,
+	RoomInfo,
+	RoomMessageView,
+	RoomRunView,
 	ServerEvent,
 	SessionSummaryInfo,
 	ToolCallView,
@@ -15,6 +19,23 @@ import type {
 } from "./protocol";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
+
+/** Why a run stopped; mirrors the run_ended arm of the wire event. */
+export type RoomOutcome = Extract<
+	RoomEventInfo,
+	{ kind: "run_ended" }
+>["outcome"];
+
+/** One room as the client holds it: the hello summary plus the events applied
+ *  since. The transcript comes only from the server; the client never writes
+ *  a row. */
+export interface ClientRoom {
+	name: string;
+	members: string[];
+	transcript: RoomMessageView[];
+	run: RoomRunView;
+	lastOutcome: RoomOutcome | null;
+}
 
 export interface NoticeView {
 	bot: string;
@@ -35,6 +56,7 @@ export interface ClientState {
 	approvals: ApprovalRequestInfo[];
 	allowAll: boolean;
 	dms: DmInfo[];
+	rooms: Record<string, ClientRoom>;
 	notices: NoticeView[];
 	connection: ConnectionStatus;
 	usage: UsageTotals;
@@ -45,6 +67,7 @@ export interface ClientState {
 
 export type ClientAction =
 	| { type: "server"; event: ServerEvent }
+	| { type: "room_created"; room: RoomInfo }
 	| { type: "connection"; status: ConnectionStatus }
 	| { type: "submit"; bot: string; text: string }
 	| { type: "approval_removed"; id: string }
@@ -68,6 +91,7 @@ export function initialState(): ClientState {
 		approvals: [],
 		allowAll: false,
 		dms: [],
+		rooms: {},
 		notices: [],
 		connection: "connecting",
 		usage: { input: 0, output: 0 },
@@ -92,6 +116,20 @@ export function clientReducer(
 	switch (action.type) {
 		case "connection":
 			return { ...state, connection: action.status };
+
+		case "room_created": {
+			// The create response is the server's own snapshot. Seed it so the
+			// dialog can open the room right away; a `members` event may have
+			// already created it, and that live copy wins.
+			if (state.rooms[action.room.name] !== undefined) return state;
+			return {
+				...state,
+				rooms: {
+					...state.rooms,
+					[action.room.name]: toClientRoom(action.room),
+				},
+			};
+		}
 
 		case "submit": {
 			const transcript = transcriptOf(state, action.bot);
@@ -170,6 +208,7 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 				sessions: event.sessions,
 				activeSessionId: event.activeSessionId,
 				transcripts,
+				rooms: roomMap(event.rooms),
 				approvals: event.approvals,
 				allowAll: event.allowAll,
 				usage: { input: 0, output: 0 },
@@ -277,6 +316,9 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 		case "dm":
 			return { ...state, dms: [...state.dms, event.entry].slice(-100) };
 
+		case "room":
+			return applyRoomEvent(state, event.event);
+
 		case "allow_all":
 			return { ...state, allowAll: event.on };
 
@@ -296,6 +338,45 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			}
 			return { ...next, lastError: event.message };
 		}
+	}
+}
+
+export function applyRoomEvent(
+	state: ClientState,
+	event: RoomEventInfo,
+): ClientState {
+	switch (event.kind) {
+		case "members":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				members: event.members,
+			}));
+
+		case "entry":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				transcript: [...room.transcript, event.entry].slice(
+					-ROOM_TRANSCRIPT_CAP,
+				),
+			}));
+
+		case "run":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				run: event.run,
+			}));
+
+		case "run_ended":
+			return updateRoom(state, event.room, (room) => ({
+				...room,
+				run: { phase: "idle" },
+				lastOutcome: event.outcome,
+			}));
+
+		case "turn":
+			// Like the TUI: the run snapshot already names the current speaker,
+			// so a single member's turn outcome adds no state.
+			return state;
 	}
 }
 
@@ -402,6 +483,45 @@ function setTranscript(
 	messages: TranscriptMessage[],
 ): ClientState {
 	return { ...state, transcripts: { ...state.transcripts, [bot]: messages } };
+}
+
+// The same cap the DM feed uses; the server windows hello.rooms this way too.
+const ROOM_TRANSCRIPT_CAP = 100;
+
+function toClientRoom(room: RoomInfo): ClientRoom {
+	return {
+		name: room.name,
+		members: room.members,
+		transcript: room.transcript.slice(-ROOM_TRANSCRIPT_CAP),
+		run: room.run,
+		lastOutcome: null,
+	};
+}
+
+function roomMap(rooms: RoomInfo[]): Record<string, ClientRoom> {
+	const map: Record<string, ClientRoom> = {};
+	for (const room of rooms) map[room.name] = toClientRoom(room);
+	return map;
+}
+
+/** An event can name a room hello never sent, one created in another tab, so
+ *  create it on the spot instead of dropping its entries. */
+function updateRoom(
+	state: ClientState,
+	name: string,
+	update: (room: ClientRoom) => ClientRoom,
+): ClientState {
+	const existing = state.rooms[name] ?? {
+		name,
+		members: [],
+		transcript: [],
+		run: { phase: "idle" as const },
+		lastOutcome: null,
+	};
+	return {
+		...state,
+		rooms: { ...state.rooms, [name]: update(existing) },
+	};
 }
 
 function mergeBotStates(

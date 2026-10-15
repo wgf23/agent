@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Team } from "../../src/rob/team.js";
-import { createDelegateTool, MAX_DELEGATE_DEPTH } from "../../src/rob/tools.js";
+import {
+	createTeamOperations,
+	DELEGATE_OUTPUT_MAX_CHARS,
+	MAX_DELEGATE_DEPTH,
+} from "../../src/rob/tools.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 import { allowAllAuthorizerFactory, waitFor } from "./helpers.js";
@@ -14,6 +18,19 @@ beforeEach(async () => {
 afterEach(async () => {
 	await removeWorkspace(workspace);
 });
+
+function makeTeam(): Team {
+	return new Team({
+		robs: [
+			{ name: "planner", role: "plan" },
+			{ name: "worker", role: "work" },
+		],
+		defaultModel: "deepseek-flash",
+		providerFactory: () => createMockProvider([]),
+		workspaceRoot: workspace,
+		authorizerFactory: allowAllAuthorizerFactory(),
+	});
+}
 
 describe("send_message", () => {
 	it("delivers a DM to the target rob and records it in the DM log", async () => {
@@ -66,6 +83,15 @@ describe("send_message", () => {
 		expect(team.readDms()).toEqual([
 			{ from: "planner", to: "worker", text: "ping", at: expect.any(Number) },
 		]);
+		const plannerTool = plannerProvider.requests[1].messages.find(
+			(message) => message.role === "tool",
+		);
+		expect(plannerTool).toEqual({
+			role: "tool",
+			toolCallId: "call_1",
+			content: 'Message queued for "worker".',
+			isError: false,
+		});
 
 		const workerUser = workerProvider.requests[0].messages.find(
 			(message) => message.role === "user",
@@ -119,10 +145,149 @@ describe("send_message", () => {
 		expect(toolMessages[20]).toEqual({
 			role: "tool",
 			toolCallId: "call_20",
-			content: "DM limit reached: a rob may send at most 20 messages per run.",
+			content: "DM limit reached for this turn.",
 			isError: true,
 		});
 		expect(team.readDms()).toHaveLength(20);
+	});
+});
+
+describe("createTeamOperations", () => {
+	const runSubagent = async (): Promise<string> => "unused";
+
+	it("queues up to the turn limit and rejects the message past it", () => {
+		const team = makeTeam();
+		const operations = createTeamOperations({
+			team,
+			from: "planner",
+			limit: 2,
+			runSubagent,
+		});
+
+		expect(operations.sendMessage("worker", "one")).toEqual({
+			status: "queued",
+		});
+		expect(operations.sendMessage("worker", "two")).toEqual({
+			status: "queued",
+		});
+		expect(operations.sendMessage("worker", "three")).toEqual({
+			status: "rejected",
+			reason: "turn_limit",
+		});
+		expect(team.readDms().map((dm) => dm.text)).toEqual(["one", "two"]);
+	});
+
+	it("rejects a message addressed to the sender", () => {
+		const operations = createTeamOperations({
+			team: makeTeam(),
+			from: "planner",
+			runSubagent,
+		});
+
+		expect(operations.sendMessage("planner", "hi")).toEqual({
+			status: "rejected",
+			reason: "self",
+		});
+	});
+
+	it("rejects a target that is not on the roster", () => {
+		const team = makeTeam();
+		const operations = createTeamOperations({
+			team,
+			from: "planner",
+			runSubagent,
+		});
+
+		expect(operations.sendMessage("ghost", "hi")).toEqual({
+			status: "rejected",
+			reason: "unknown_target",
+		});
+		expect(team.readDms()).toEqual([]);
+	});
+
+	it("rejects a message once the team is stopping", async () => {
+		const team = makeTeam();
+		const operations = createTeamOperations({
+			team,
+			from: "planner",
+			runSubagent,
+		});
+		await team.stop();
+
+		expect(operations.sendMessage("worker", "late")).toEqual({
+			status: "rejected",
+			reason: "team_stopped",
+		});
+	});
+
+	it("returns a sub-agent's answer capped at the output limit", async () => {
+		const operations = createTeamOperations({
+			team: makeTeam(),
+			from: "planner",
+			runSubagent: async () => "x".repeat(DELEGATE_OUTPUT_MAX_CHARS + 10),
+		});
+
+		const outcome = await operations.delegate("summarize");
+		expect(outcome).toEqual({
+			status: "ok",
+			text: "x".repeat(DELEGATE_OUTPUT_MAX_CHARS),
+		});
+	});
+
+	it("rejects a sub-agent that tries to delegate further", async () => {
+		let ran = false;
+		const operations = createTeamOperations({
+			team: makeTeam(),
+			from: "planner",
+			depth: MAX_DELEGATE_DEPTH,
+			runSubagent: async () => {
+				ran = true;
+				return "should not run";
+			},
+		});
+
+		expect(await operations.delegate("depth two")).toEqual({
+			status: "rejected",
+			reason: "depth_exceeded",
+			detail: "Sub-agents cannot delegate further.",
+		});
+		expect(ran).toBe(false);
+	});
+
+	it("reports a sub-agent failure with its error message", async () => {
+		const operations = createTeamOperations({
+			team: makeTeam(),
+			from: "planner",
+			runSubagent: async () => {
+				throw new Error("model exploded");
+			},
+		});
+
+		expect(await operations.delegate("count the files")).toEqual({
+			status: "rejected",
+			reason: "failed",
+			detail: "model exploded",
+		});
+	});
+
+	it("reports an interruption of the turn as aborted", async () => {
+		const controller = new AbortController();
+		const operations = createTeamOperations({
+			team: makeTeam(),
+			from: "planner",
+			runSubagent: async () => {
+				controller.abort();
+				throw new Error("aborted");
+			},
+		});
+
+		expect(
+			await operations.delegate("count the files", controller.signal),
+		).toEqual({
+			status: "rejected",
+			reason: "aborted",
+			detail: "The turn was interrupted before the sub-agent finished.",
+		});
 	});
 });
 
@@ -202,28 +367,5 @@ describe("delegate", () => {
 			}),
 		);
 		expect(subagents.every((entry) => entry.parent === "planner")).toBe(true);
-	});
-
-	it("rejects a sub-agent that tries to delegate again", async () => {
-		let ran = false;
-		const tool = createDelegateTool({
-			from: "planner",
-			depth: MAX_DELEGATE_DEPTH,
-			run: async () => {
-				ran = true;
-				return "should not run";
-			},
-		});
-
-		const result = await tool.execute(
-			{ task: "depth two" },
-			{ workspaceRoot: workspace },
-		);
-
-		expect(result).toEqual({
-			ok: false,
-			error: "Sub-agents cannot delegate further.",
-		});
-		expect(ran).toBe(false);
 	});
 });

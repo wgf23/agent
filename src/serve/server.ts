@@ -7,7 +7,10 @@ import type {
 	AllowAllBody,
 	ApprovalBody,
 	BotDraft,
+	CreateRoomBody,
 	InterruptBody,
+	RoomInterruptBody,
+	RoomSendBody,
 	SaveProviderBody,
 	SendBody,
 	ServerEvent,
@@ -16,10 +19,11 @@ import type {
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import { verifyApiKey } from "../cli/setup.js";
-import { resolveConfig } from "../config/resolve.js";
+import { childProviderEnv, resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import type { Provider } from "../providers/types.js";
+import { renderRoomOutcome } from "../rob/room-text.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
 import { CompositeHub } from "./composite.js";
 import type { Hub, HubOptions } from "./hub.js";
@@ -31,7 +35,7 @@ import {
 } from "./runtime.js";
 import { SettingsService } from "./settings.js";
 import { SoloHub } from "./solo.js";
-import { TeamHub } from "./team.js";
+import { TeamHub, toRoomInfo } from "./team.js";
 
 export interface RunServeOptions {
 	workspaceRoot: string;
@@ -82,7 +86,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			settings,
 			apiKey: apiKey ?? null,
 			apiKeySource,
-			providerEnv: apiKey === undefined ? {} : { [settings.apiKeyEnv]: apiKey },
+			providerEnv: childProviderEnv(settings, apiKey),
 		},
 		options.provider,
 	);
@@ -126,6 +130,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const robHub = new TeamHub({
 		...hubOptions,
 		robs,
+		rooms: resolved.config.rooms,
 		providerEnv: runtime.current().providerEnv,
 	});
 	const hub: Hub = new CompositeHub(workspace, robHub, workspaceRoot, runtime);
@@ -304,6 +309,65 @@ export async function buildServer(
 		} catch (error) {
 			return reply.code(400).send({ ok: false, error: errorText(error) });
 		}
+	});
+
+	app.post("/api/rooms", (request, reply) => {
+		const createRoom = hub.createRoom?.bind(hub);
+		if (createRoom === undefined) {
+			return reply.code(501).send({ error: "this server cannot create rooms" });
+		}
+		const body = request.body as Partial<CreateRoomBody> | undefined;
+		if (
+			typeof body?.name !== "string" ||
+			!Array.isArray(body.members) ||
+			!body.members.every((member) => typeof member === "string")
+		) {
+			return reply.code(400).send({ error: "expected {name, members}" });
+		}
+		const outcome = createRoom({ name: body.name, members: body.members });
+		if (outcome.status === "rejected") {
+			return reply
+				.code(400)
+				.send({ error: renderRoomOutcome(outcome, body.name) });
+		}
+		return reply.send({ ok: true, room: toRoomInfo(outcome.room) });
+	});
+
+	app.post("/api/rooms/send", (request, reply) => {
+		const sendToRoom = hub.sendToRoom?.bind(hub);
+		if (sendToRoom === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot send to rooms" });
+		}
+		const body = request.body as Partial<RoomSendBody> | undefined;
+		if (typeof body?.room !== "string" || typeof body.text !== "string") {
+			return reply.code(400).send({ error: "expected {room, text}" });
+		}
+		const outcome = sendToRoom(body.room, body.text);
+		if (outcome.status === "rejected") {
+			return reply
+				.code(400)
+				.send({ error: renderRoomOutcome(outcome, body.room) });
+		}
+		return reply.send({ ok: true });
+	});
+
+	app.post("/api/rooms/interrupt", (request, reply) => {
+		const interruptRoom = hub.interruptRoom?.bind(hub);
+		if (interruptRoom === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot interrupt rooms" });
+		}
+		const body = request.body as Partial<RoomInterruptBody> | undefined;
+		if (typeof body?.room !== "string") {
+			return reply.code(400).send({ error: "expected {room}" });
+		}
+		// An unknown room is a no-op, like Team.interruptRoom; the room may
+		// have finished between the click and this request.
+		interruptRoom(body.room);
+		return reply.send({ ok: true });
 	});
 
 	app.get("/api/settings", (_request, reply) => {

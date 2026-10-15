@@ -410,6 +410,9 @@ describe("TeamApp allow-all", () => {
 				}
 				resolved.push(id);
 			},
+			createRoom: () => ({ status: "rejected", reason: "invalid_name" }),
+			sendToRoom: () => ({ status: "rejected", reason: "unknown_room" }),
+			setRoomMembers: () => ({ status: "rejected", reason: "unknown_room" }),
 		};
 		const { stdin, lastFrame } = render(
 			<TeamApp

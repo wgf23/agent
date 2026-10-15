@@ -16,11 +16,12 @@ import {
 	resolveModelSpec,
 } from "../providers/presets.js";
 import type { ReasoningEffort, ThinkingSetting } from "../providers/types.js";
+import type { RoomConfig } from "../rob/room.js";
 import type { RobConfig } from "../rob/types.js";
 import { DEFAULT_SANDBOX, type SandboxSettings } from "../sandbox/index.js";
 import { errorMessage } from "../util/errors.js";
 import { readCredentials } from "./credentials.js";
-import { parseRobs, projectFilePath } from "./project-file.js";
+import { parseRobs, parseRooms, projectFilePath } from "./project-file.js";
 
 export type ConfigSource =
 	| "cli"
@@ -120,6 +121,9 @@ export interface ProviderSettings {
 	thinking: ThinkingSetting;
 	reasoningEffort: ReasoningEffort;
 	baseURL: string;
+	// Derived from the preset, not a config key: only presets with an
+	// Anthropic-compatible endpoint set it.
+	anthropicBaseURL?: string;
 	apiKeyEnv: string;
 	maxSteps: number;
 }
@@ -141,6 +145,7 @@ export interface ResolvedConfig {
 	sources: ProviderSources;
 	permissions: PermissionRules;
 	robs: RobConfig[];
+	rooms: RoomConfig[];
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
 	mcpServers: McpServers;
@@ -166,6 +171,23 @@ export function globalConfigPath(homeDir: string): string {
 
 export function missingApiKeyMessage(apiKeyEnv: string): string {
 	return `Missing ${apiKeyEnv}. Run "my-agent setup" to store a key, or set the ${apiKeyEnv} environment variable.`;
+}
+
+// The env a cli rob's child process needs for the provider: the key under its
+// configured name, plus the Anthropic endpoint and model when the preset has
+// one, so a claude child never falls back to its own login.
+export function childProviderEnv(
+	settings: ProviderSettings,
+	apiKey: string | undefined,
+): Record<string, string> {
+	if (apiKey === undefined) return {};
+	const env: Record<string, string> = { [settings.apiKeyEnv]: apiKey };
+	if (settings.anthropicBaseURL === undefined) return env;
+	env.ANTHROPIC_BASE_URL = settings.anthropicBaseURL;
+	env.ANTHROPIC_AUTH_TOKEN = apiKey;
+	env.ANTHROPIC_MODEL = settings.model;
+	env.ANTHROPIC_SMALL_FAST_MODEL = settings.model;
+	return env;
 }
 
 export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
@@ -291,6 +313,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				thinking: thinking.value,
 				reasoningEffort: reasoningEffort.value,
 				baseURL: baseURL.value,
+				anthropicBaseURL: PRESETS[preset].anthropicBaseURL,
 				apiKeyEnv: apiKeyEnv.value,
 				maxSteps: maxSteps.value,
 			},
@@ -310,6 +333,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				...rob,
 				model: rob.model ?? model,
 			})),
+			rooms: project.layer.rooms ?? [],
 			compaction,
 			sandbox,
 			mcpServers,
@@ -361,6 +385,7 @@ interface Layer {
 	provider: ProviderOptions;
 	permissions?: PermissionRules;
 	robs?: RobConfig[];
+	rooms?: RoomConfig[];
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
 	mcp?: McpServers;
@@ -403,6 +428,13 @@ function loadLayer(
 		};
 	}
 
+	if (role === "global" && "rooms" in raw) {
+		return {
+			ok: false,
+			error: `The global config ${filePath} cannot set rooms. Put the rooms array in ${projectPath} instead.`,
+		};
+	}
+
 	if (role === "global" && "backend" in raw) {
 		return {
 			ok: false,
@@ -442,6 +474,21 @@ function loadLayer(
 		robs = parsed.robs;
 	}
 
+	let rooms: RoomConfig[] | undefined;
+	if (role === "project" && raw.rooms !== undefined) {
+		const parsed = parseRooms(
+			raw.rooms,
+			(robs ?? []).map((rob) => rob.name),
+		);
+		if (!parsed.ok) {
+			return {
+				ok: false,
+				error: `Invalid rooms in ${filePath}: ${parsed.error}`,
+			};
+		}
+		rooms = parsed.rooms;
+	}
+
 	let compaction: CompactionOptions | undefined;
 	if (raw.compaction !== undefined) {
 		const parsed = compactionOptionsSchema.safeParse(raw.compaction);
@@ -479,6 +526,7 @@ function loadLayer(
 			provider: provider.data,
 			permissions,
 			robs,
+			rooms,
 			compaction,
 			sandbox,
 			mcp,

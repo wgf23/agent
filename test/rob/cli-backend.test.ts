@@ -1,4 +1,4 @@
-import { chmod, readFile, stat } from "node:fs/promises";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,12 +11,26 @@ import {
 	defaultSessionDir,
 	piToolAllowlist,
 } from "../../src/rob/cli-backend.js";
+import { Team } from "../../src/rob/team.js";
 import type { Inbound } from "../../src/rob/types.js";
+import { createMockProvider } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+import { allowAllAuthorizerFactory, fakeBridge } from "./helpers.js";
 
 const FIXTURE = fileURLToPath(
 	new URL("../fixtures/fake-pi.mjs", import.meta.url),
 );
+
+// The preamble for the fixture's lone rob: no teammates and no bridged tools.
+const LONE_ROB_PREAMBLE = [
+	'You are rob "reviewer", one member of a team of robs.',
+	"Your role: review code",
+	"You are the only rob: there is no teammate to message.",
+	"",
+	"Team tools:",
+	"",
+	"send_message is fire-and-forget: the message is delivered when the teammate next runs, and their reply arrives later as a message from them.",
+].join("\n");
 
 let workspace: string;
 
@@ -33,6 +47,8 @@ afterEach(async () => {
 	delete process.env.FAKE_PI_STEER_FILE;
 	delete process.env.FAKE_PI_ENV_FILE;
 	delete process.env.FAKE_PI_ENV_NAME;
+	delete process.env.FAKE_PI_TEAM_CALLS;
+	delete process.env.FAKE_PI_TEAM_RESULTS;
 });
 
 describe("createCliBackend missing command", () => {
@@ -50,6 +66,7 @@ describe("createCliBackend missing command", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: {},
 			signal: new AbortController().signal,
 			onEvent: (event) => events.push(event),
@@ -125,6 +142,7 @@ describe("cli backend", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "hi", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: {},
 			signal: new AbortController().signal,
 			onEvent: () => {},
@@ -206,7 +224,7 @@ describe("cli backend", () => {
 			"--model",
 			"deepseek-v4-flash",
 			"--append-system-prompt",
-			"review code",
+			LONE_ROB_PREAMBLE,
 			"--session-dir",
 			sessionDir,
 			"--continue",
@@ -315,6 +333,7 @@ describe("cli backend", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "long task", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: {},
 			signal: new AbortController().signal,
 			onEvent: (event) => {
@@ -429,6 +448,86 @@ describe("cli backend", () => {
 		});
 	});
 
+	it("carries a fake pi's team tool calls through the turn's gateway", async () => {
+		const callsFile = path.join(workspace, "team-calls.json");
+		const resultsFile = path.join(workspace, "team-results.json");
+		const argvFile = path.join(workspace, "argv.json");
+		await writeFile(
+			callsFile,
+			JSON.stringify([
+				{
+					name: "send_message",
+					args: { to: "worker", text: "ping from pi" },
+				},
+				{ name: "delegate", args: { task: "summarize the log" } },
+				{ name: "send_message", args: { to: "nobody", text: "lost" } },
+			]),
+			"utf8",
+		);
+		process.env.FAKE_PI_SCENARIO = "team";
+		process.env.FAKE_PI_TEAM_CALLS = callsFile;
+		process.env.FAKE_PI_TEAM_RESULTS = resultsFile;
+		process.env.FAKE_PI_ARGV_FILE = argvFile;
+
+		const subagent = createMockProvider([
+			[
+				{ type: "text_delta", text: "the sub-agent answer" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [
+				{
+					name: "planner",
+					role: "plan",
+					backend: {
+						kind: "cli",
+						command: FIXTURE,
+						provider: "deepseek",
+						model: "deepseek-v4-flash",
+					},
+				},
+				{ name: "worker", role: "work" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: (rob) =>
+				rob.name === "planner" ? subagent : createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		team.start();
+		team.dispatch("planner", "reach the team");
+
+		await waitFor(
+			() => team.readDms().length === 1 && team.statuses()[0].status === "idle",
+			"the pi turn to finish with one DM logged",
+		);
+		await team.stop();
+
+		expect(team.readDms()).toEqual([
+			{
+				from: "planner",
+				to: "worker",
+				text: "ping from pi",
+				at: expect.any(Number),
+			},
+		]);
+		expect(JSON.parse(await readFile(resultsFile, "utf8"))).toEqual([
+			'Message queued for "worker".',
+			"the sub-agent answer",
+			"Unknown rob: nobody",
+			"Denied by the my-agent approval bridge.",
+		]);
+
+		const argv = JSON.parse(await readFile(argvFile, "utf8"));
+		expect(argv[argv.indexOf("--tools") + 1]).toBe(
+			"read,write,edit,bash,send_message,delegate",
+		);
+		expect(argv[argv.indexOf("--append-system-prompt") + 1]).toContain(
+			'- "worker": work',
+		);
+	});
+
 	it("kills the child on abort and ends the turn as aborted", async () => {
 		const pidFile = path.join(workspace, "pid.txt");
 		process.env.FAKE_PI_SCENARIO = "sleep";
@@ -447,6 +546,7 @@ describe("cli backend", () => {
 			history: [],
 			inbound: [{ kind: "user", from: "user", text: "sleep", at: 0 }],
 			workspaceRoot: workspace,
+			bridge: fakeBridge(),
 			rules: { read_file: "allow" },
 			signal: controller.signal,
 			onEvent: (event) => events.push(event),
@@ -497,6 +597,7 @@ async function runSteeredTurn(
 		history: [],
 		inbound: [{ kind: "user", from: "user", text: "long task", at: 0 }],
 		workspaceRoot: workspace,
+		bridge: fakeBridge(),
 		rules: {},
 		signal: new AbortController().signal,
 		onEvent: (event) => {
@@ -532,6 +633,7 @@ async function runTurn(options: {
 			{ kind: "user", from: "user", text: "hello", at: 0 },
 		],
 		workspaceRoot: workspace,
+		bridge: fakeBridge(),
 		rules: options.rules ?? {},
 		signal: new AbortController().signal,
 		onEvent: (event) => events.push(event),

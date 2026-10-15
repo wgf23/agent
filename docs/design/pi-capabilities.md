@@ -138,7 +138,7 @@ TOOL_END bash isError= false {"content":[{"type":"text","text":"FORBID\n"}],"det
 
 结论：API 支持阻塞，允许和拒绝两条路径都生效。注意 `ctx.ui.confirm` 只在 `--mode rpc` 下可用；在 `--mode json`/`-p` 下是 no-op，等于拒绝。安装包还自带 `examples/extensions/permission-gate.ts`，用同一 `tool_call` 钩子做危险命令确认。
 
-## 扩展回调到我们的进程（G6，已用真实 pi 验证机制，未实现）
+## 扩展回调到我们的进程（G6，机制已用真实 pi 验证；R6 已实现，见 `src/rob/gateway/`）
 
 扩展工具可以在 `execute` 里用 Node 内建模块连回我们的进程。最简单的可用机制是 Unix domain socket：
 
@@ -164,5 +164,5 @@ TOOL_END {"content":[{"type":"text","text":"{\"ok\":true,\"echoed\":\"HELLO\"}"}
 | G3 | `message_end.stopReason` + `errorMessage`，退出码 0 | 已实现并验证 |
 | G4 | 子 agent 的 `usage` 事件累加到 rob | 已实现并验证 |
 | G5 | `--mode rpc` + `steer`，空闲 steer 补投递，未投递计数失败 | 已实现并验证 |
-| G6 | 扩展工具 + Unix socket 回调 | 机制已验证，未实现 |
+| G6 | 扩展工具 + Unix socket 回调 | 机制已验证；R6 已实现（pi） |
 | G7 | `tool_call` 钩子 + `ctx.ui.confirm` 阻塞 | 已实现并验证 |
