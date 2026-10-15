@@ -81,6 +81,20 @@ The server also starts with **no API key at all**. Open Settings (the gear in th
 
 Build both the CLI and the web client with `pnpm build`. For hot-reload development, run `pnpm dev serve` in one terminal and `pnpm web:dev` in another, then open the Vite URL (`http://localhost:5173`), which proxies `/api` to the server on 4317.
 
+### Files
+
+The sidebar's `文件` button toggles a file rail on the right. The rail lists the workspace with `GET /api/files`, directories first, and reads each folder the first time it is expanded. `显示隐藏文件` and `显示被忽略的文件` reveal the entries a filter held back without a second read, and `刷新` drops the cache. The header chip names the directory the rail is rooted at; opening it browses the disk and re-roots the rail at another directory of the same workspace.
+
+A file row downloads through `GET /api/files/download`, which streams the bytes as an attachment with its length and refuses a directory with `400`. Clicking a file's name instead asks the workspace chat to read that path. A directory row's `打包下载` streams the subtree as a zip from `GET /api/files/archive`; names are posix and relative, subdirectories are zero-length trailing-slash entries, and a symlink is followed only when it stays inside the workspace.
+
+Dropping files on a directory row (or the tree body) uploads them with `POST /api/files/upload`, one request per file so each row shows its own progress. The stored name is always the basename, `path` chooses the target directory, and a name that already exists comes back as `{ ok: false, failed: [{ name, reason: "exists" }] }` with a per-row overwrite retry. The route carries a body limit above the server's global 1 MiB, so one file up to 100 MiB streams rather than being rejected.
+
+Each row's `⋯` menu adds 新建文件夹 (`POST /api/files/mkdir`), an inline 重命名 (`/api/files/rename`), a 移动到… picker (`/api/files/move`), and a 删除 (`/api/files/delete`) that arms a confirm naming a directory's entry count. A rename or delete of the root, an existing destination, and a move into the source's own subtree are `400`; a missing source is `404`; a directory delete needs `recursive: true`, so a non-empty directory without it is refused and left on disk.
+
+The rail follows the agent: a successful `write_file` or `edit_file` emits a `files_changed` event naming the workspace-relative paths, and the rail re-reads the directories it has open and pulses the written rows. A `bash` run refreshes blindly, because its paths are unknown.
+
+Every path is bounded by the workspace resolver, so a `..` or a symlink out of the root is refused before any read or write; the directory browse is bounded to the home directory plus the active workspace root; an upload keeps only the basename; and the overwrite and delete paths are confirmed in the UI. `pnpm files:e2e` drives every route against a real server and a throwaway workspace, with no provider key needed.
+
 ## Configuration
 
 Precedence, highest first: command-line flags, environment variables, the project file `<workspace>/my-agent.json`, the global file `~/.config/my-agent/config.json`, built-in defaults.
