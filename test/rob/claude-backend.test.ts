@@ -60,7 +60,7 @@ afterEach(async () => {
 });
 
 describe("claudeToolAllowlist", () => {
-	it("maps an allow for every tool to its claude name and denies the rest", () => {
+	it("exposes an allow for every tool under its claude name and omits the rest", () => {
 		expect(
 			claudeToolAllowlist({
 				read_file: "allow",
@@ -71,13 +71,10 @@ describe("claudeToolAllowlist", () => {
 				bash: "deny",
 				web_fetch: "deny",
 			}),
-		).toEqual({
-			allowed: ["Read", "Write"],
-			disallowed: ["Edit", "Glob", "Grep", "Bash", "WebFetch", "WebSearch"],
-		});
+		).toEqual(["Read", "Write"]);
 	});
 
-	it("moves ask and deny tools into the disallowed list", () => {
+	it("omits an ask or deny tool from the exposed set", () => {
 		expect(
 			claudeToolAllowlist({
 				read_file: "allow",
@@ -88,10 +85,7 @@ describe("claudeToolAllowlist", () => {
 				bash: "deny",
 				web_fetch: "ask",
 			}),
-		).toEqual({
-			allowed: ["Read", "Glob", "Grep"],
-			disallowed: ["Write", "Edit", "Bash", "WebFetch", "WebSearch"],
-		});
+		).toEqual(["Read", "Glob", "Grep"]);
 	});
 
 	it("blanket-allows a scalar allow and a list of only * allows", () => {
@@ -100,10 +94,7 @@ describe("claudeToolAllowlist", () => {
 				write_file: "allow",
 				bash: [{ pattern: "*", action: "allow" }],
 			}),
-		).toEqual({
-			allowed: ["Read", "Write", "Glob", "Grep", "Bash"],
-			disallowed: ["Edit", "WebFetch", "WebSearch"],
-		});
+		).toEqual(["Read", "Write", "Glob", "Grep", "Bash"]);
 	});
 
 	it("does not blanket-allow a tool with any specific pattern, deny, or ask entry", () => {
@@ -115,16 +106,11 @@ describe("claudeToolAllowlist", () => {
 					{ pattern: "src/**", action: "deny" },
 				],
 			}),
-		).toEqual({
-			allowed: ["Glob", "Grep"],
-			disallowed: ["Read", "Write", "Edit", "Bash", "WebFetch", "WebSearch"],
-		});
+		).toEqual(["Glob", "Grep"]);
 	});
 
-	it("exposes web_search as claude's WebSearch allowlist tool", () => {
-		expect(claudeToolAllowlist({ web_search: "allow" }).allowed).toContain(
-			"WebSearch",
-		);
+	it("exposes web_search as claude's WebSearch tool", () => {
+		expect(claudeToolAllowlist({ web_search: "allow" })).toContain("WebSearch");
 	});
 });
 
@@ -206,8 +192,8 @@ describe("claude backend", () => {
 			LONE_ROB_PREAMBLE,
 			"--allowedTools",
 			"Read,Write",
-			"--disallowedTools",
-			"Edit,Glob,Grep,Bash,WebFetch,WebSearch",
+			"--tools",
+			"Read,Write",
 			"--strict-mcp-config",
 			"--session-id",
 			sid,

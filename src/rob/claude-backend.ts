@@ -77,20 +77,14 @@ export function defaultClaudeConfigDir(
 	return path.join(base, rob);
 }
 
-// A tool that resolves to allow is exposed via --allowedTools; ask and deny
-// tools are denied via --disallowedTools. Interactive approval is not bridged,
-// so an ask tool is treated as denied instead of left to prompt.
-export function claudeToolAllowlist(rules: PermissionRules): {
-	allowed: string[];
-	disallowed: string[];
-} {
-	const allowed: string[] = [];
-	const disallowed: string[] = [];
-	for (const [tool, claudeTool] of CLAUDE_TOOLS) {
-		if (toolBlanketAllows(rules, tool)) allowed.push(claudeTool);
-		else disallowed.push(claudeTool);
-	}
-	return { allowed, disallowed };
+// The claude built-ins a rob exposes, passed to claude as --tools: an exact
+// allowlist, so a built-in outside it is never available to the rob. Only a
+// tool that resolves to allow is exposed; interactive approval is not bridged,
+// so an ask tool counts as deny instead of being left to prompt.
+export function claudeToolAllowlist(rules: PermissionRules): string[] {
+	return CLAUDE_TOOLS.filter(([tool]) => toolBlanketAllows(rules, tool)).map(
+		([, claudeTool]) => claudeTool,
+	);
 }
 
 // A tool is blanket-allowed only when its rules cannot resolve to anything but
@@ -142,13 +136,13 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 				);
 			}
 
-			const { allowed, disallowed } = claudeToolAllowlist(turn.rules);
+			const exposed = claudeToolAllowlist(turn.rules);
 			// The gateway authorizes a team call, so claude gates nothing there: a
 			// team tool's allowed entry only carries the call to the shim.
 			const teamTools = defs.map(
 				(def) => `mcp__${TEAM_MCP_SERVER}__${def.name}`,
 			);
-			const allowedTools = [...allowed, ...teamTools];
+			const allowedTools = [...exposed, ...teamTools];
 			const prompt = turn.inbound.map(promptFor).join("\n\n");
 			const args = [
 				"-p",
@@ -166,9 +160,10 @@ export function createClaudeBackend(options: ClaudeBackendOptions): RobBackend {
 				...(allowedTools.length > 0
 					? ["--allowedTools", allowedTools.join(",")]
 					: []),
-				...(disallowed.length > 0
-					? ["--disallowedTools", disallowed.join(",")]
-					: []),
+				// --tools is an exact allowlist over claude's built-ins, so nothing
+				// outside it is left for --disallowedTools to deny.
+				"--tools",
+				exposed.join(","),
 				...(mcpConfigFile === undefined ? [] : ["--mcp-config", mcpConfigFile]),
 				// Only the MCP servers named above load; the user's own never do.
 				"--strict-mcp-config",
