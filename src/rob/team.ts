@@ -11,6 +11,7 @@ import type { Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import { ApprovalQueue } from "./approvals.js";
+import { writeRoomDeliverable } from "./deliverable.js";
 import type { TeamEvent, TeamListener } from "./events.js";
 import {
 	startTeamGateway,
@@ -140,6 +141,8 @@ export class Team implements TeamPort {
 		now: () => Date.now(),
 		emit: (event) => this.emit({ kind: "room", event }),
 		runTurn: (member, turn) => this.runRoomTurn(member, turn),
+		writeDeliverable: (draft) =>
+			writeRoomDeliverable(this.options.workspaceRoot, draft),
 	};
 	private gateway: { port: TeamGateway; started: Promise<void> } | null = null;
 	private started = false;

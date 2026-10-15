@@ -122,6 +122,24 @@ export const deliverableRefSchema: z.ZodType<RoomDeliverableRef> = z.object({
 	coordinator: robNameSchema,
 });
 
+/** What the room asks its host to write. Text and naming facts only: the room
+ *  never sees the workspace path policy or the filesystem. `transcript` is the
+ *  slice this run appended, which the room's own caps already bound. */
+export interface RoomDeliverableDraft {
+	readonly room: RoomName;
+	readonly coordinator: RobName;
+	readonly task: string; // mention-stripped body of the send that opened the run
+	readonly outcome: RunOutcome;
+	readonly participants: readonly RobName[];
+	readonly transcript: readonly RoomEntry[];
+	readonly body: string; // the coordinator's reply
+	readonly at: number;
+}
+
+export type DeliverableOutcome =
+	| { readonly status: "written"; readonly path: string }
+	| { readonly status: "failed"; readonly reason: string };
+
 /** The durable shape of one room: everything a restart needs, and nothing the
  *  scheduler can rebuild. `seen` cursors and the last outcome are not here on
  *  purpose; `runOpen` is only a marker that a run must not be restored. */
@@ -342,6 +360,9 @@ export interface RoomHost {
 	 *  closed. Implementations wait for the rob to be between turns first, bind the
 	 *  room reply tool to the turn, and end the turn when `turn.signal` aborts. */
 	runTurn(member: RobName, turn: RoomTurn): Promise<RoomTurnResult>;
+	/** Writes the coordinator's deliverable into the workspace. The host owns
+	 *  the path policy and the atomic write; the room only supplies the text. */
+	writeDeliverable(draft: RoomDeliverableDraft): Promise<DeliverableOutcome>;
 	emit(event: RoomEvent): void;
 	now(): number;
 }

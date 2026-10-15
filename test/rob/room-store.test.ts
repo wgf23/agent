@@ -75,6 +75,7 @@ function readOrThrow(name: string): StoredRoom {
 const idleHost: RoomHost = {
 	members: () => ["planner", "builder"],
 	runTurn: async () => "completed",
+	writeDeliverable: async () => ({ status: "failed", reason: "not used" }),
 	emit: () => undefined,
 	now: () => 1000,
 };

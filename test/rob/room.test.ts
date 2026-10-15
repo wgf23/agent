@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+	type DeliverableOutcome,
 	ROOM_TURN_TIMEOUT_MS,
 	Room,
+	type RoomDeliverableDraft,
 	type RoomEvent,
 	type RoomHost,
 	type RoomReplyOutcome,
@@ -35,6 +37,7 @@ class FakeRoomHost implements RoomHost {
 		readonly from: RobName;
 		readonly outcome: RoomReplyOutcome;
 	}> = [];
+	readonly deliverableDrafts: RoomDeliverableDraft[] = [];
 	peakInFlight = 0;
 	inFlight = 0;
 
@@ -72,6 +75,16 @@ class FakeRoomHost implements RoomHost {
 
 	emit(event: RoomEvent): void {
 		this.events.push(event);
+	}
+
+	async writeDeliverable(
+		draft: RoomDeliverableDraft,
+	): Promise<DeliverableOutcome> {
+		this.deliverableDrafts.push(draft);
+		return {
+			status: "written",
+			path: "docs/deliverables/20260101T000000-ship-it.md",
+		};
 	}
 
 	async runTurn(member: RobName, turn: RoomTurn): Promise<RoomTurnResult> {

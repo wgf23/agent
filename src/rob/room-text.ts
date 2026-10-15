@@ -170,7 +170,7 @@ export function renderRoomOutcome(
 	}
 }
 
-function speakerOf(entry: RoomEntry): string {
+export function speakerOf(entry: RoomEntry): string {
 	switch (entry.kind) {
 		case "user":
 			return "user";
