@@ -31,6 +31,7 @@
 		"e2e:team": "tsx scripts/e2e-team.ts"
 	},
 	"dependencies": {
+		"@fastify/multipart": "^9.4.0",
 		"@fastify/static": "^10.1.6",
 		"commander": "^15.0.0",
 		"diff": "^9.0.0",

@@ -184,6 +184,7 @@ export default function App() {
 			<FileTree
 				listFiles={hub.listFiles}
 				fileDownloadUrl={hub.fileDownloadUrl}
+				upload={hub.upload}
 				open={filesOpen}
 			/>
 

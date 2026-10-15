@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer } from "react";
-import { createApi } from "./api";
+import { createApi, type UploadOptions, type UploadResult } from "./api";
 import type {
 	ApprovalChoice,
 	BotDraft,
@@ -72,6 +72,13 @@ export interface Hub {
 	// The download URL for one file, so a plain <a download> in the panel
 	// streams it without going through fetch.
 	fileDownloadUrl: (path: string) => string;
+	// Uploads one file into a workspace directory and reports its progress; the
+	// panel owns the per-file list and the overwrite retry.
+	upload: (
+		path: string,
+		file: File,
+		options?: UploadOptions,
+	) => Promise<UploadResult>;
 	// Resolves with the server's optional non-blocking warning so the dialog can
 	// surface it; throws the server's error message on failure.
 	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
@@ -190,6 +197,14 @@ export function useHub(): Hub {
 		[],
 	);
 
+	// Forwarded whole so the panel keeps the per-file progress callback and the
+	// overwrite retry; a refusal rejects with the server's message.
+	const upload = useCallback(
+		(path: string, file: File, options?: UploadOptions) =>
+			api.upload(path, file, options),
+		[],
+	);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -262,5 +277,6 @@ export function useHub(): Hub {
 		saveProvider,
 		listFiles,
 		fileDownloadUrl,
+		upload,
 	};
 }
