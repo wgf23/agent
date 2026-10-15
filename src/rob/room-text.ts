@@ -73,6 +73,22 @@ export function renderRoomTurn(input: {
 	return lines.join("\n");
 }
 
+/** Names a run the process was inside when the room was last saved. Load
+ *  annotates it once and never restores the run. */
+export function renderRestartNotice(): string {
+	return "Run interrupted by a restart.";
+}
+
+/** Names the fields where my-agent.json and a saved room disagree. The saved
+ *  room is the source of truth, so this is a notice, not a correction. */
+export function renderConfigDrift(differences: readonly string[]): string {
+	return `my-agent.json disagrees with this room's saved state (${differences.join("; ")}). The saved state is used; edit the room to change it.`;
+}
+
+export function renderStorageFailure(detail: string): string {
+	return `Saving this room failed: ${detail}`;
+}
+
 /** The one renderer of room outcome text; the TUI, the serve routes and the
  *  room_reply tool all read their wording from here, so no surface invents its
  *  own phrasing for a rejection. */

@@ -1,8 +1,11 @@
 import { z } from "zod";
+import { errorMessage } from "../util/errors.js";
 import {
 	parseRoomMentions,
 	ROOM_PASS_SENTINEL,
+	renderRestartNotice,
 	renderRoomTurn,
+	renderStorageFailure,
 } from "./room-text.js";
 import { type RobName, robNameSchema } from "./types.js";
 
@@ -17,6 +20,7 @@ export const ROOM_MIN_MEMBERS = 2;
 export const ROOM_MAX_MEMBERS = 6;
 export const ROOM_MAX_ROUNDS = 3;
 export const ROOM_MAX_MESSAGES_PER_RUN = 10;
+export const ROOM_MAX_QUEUED_SENDS = 5;
 export const ROOM_TURN_TIMEOUT_MS = 120_000;
 export const ROOM_RUN_TIMEOUT_MS = 300_000;
 
@@ -35,6 +39,19 @@ export const roomConfigSchema = z
 	.object({ name: roomNameSchema, members: z.array(robNameSchema) })
 	.strict();
 export type RoomConfig = z.infer<typeof roomConfigSchema>;
+
+/** One user send waiting for the live run to end. The entry is already in the
+ *  transcript; only the run it would start is deferred, so the queue stores an
+ *  id and never a second copy of the text. */
+export interface QueuedSend {
+	readonly entryId: number;
+	readonly at: number;
+}
+
+export const queuedSendSchema: z.ZodType<QueuedSend> = z.object({
+	entryId: z.number(),
+	at: z.number(),
+});
 
 /** One shared, id-ordered transcript row. Ids are assigned by the room, monotonic,
  *  never reused; a surface that applies `entry` events cannot reorder a room. */
@@ -59,6 +76,60 @@ export type RoomEntry =
 			readonly text: string;
 	  };
 
+// Typed against the union so the schema and the type fail together when either
+// changes; the ledger is the only untrusted input and parses through this.
+export const roomEntrySchema: z.ZodType<RoomEntry> = z.discriminatedUnion(
+	"kind",
+	[
+		z.object({
+			id: z.number(),
+			at: z.number(),
+			kind: z.literal("user"),
+			text: z.string(),
+		}),
+		z.object({
+			id: z.number(),
+			at: z.number(),
+			kind: z.literal("member"),
+			from: robNameSchema,
+			text: z.string(),
+		}),
+		z.object({
+			id: z.number(),
+			at: z.number(),
+			kind: z.literal("system"),
+			text: z.string(),
+		}),
+	],
+);
+
+/** Where the last deliverable landed. `path` is workspace-relative. */
+export interface RoomDeliverableRef {
+	readonly at: number;
+	readonly path: string;
+	readonly coordinator: RobName;
+}
+
+export const deliverableRefSchema: z.ZodType<RoomDeliverableRef> = z.object({
+	at: z.number(),
+	path: z.string(),
+	coordinator: robNameSchema,
+});
+
+/** The durable shape of one room: everything a restart needs, and nothing the
+ *  scheduler can rebuild. `seen` cursors and the last outcome are not here on
+ *  purpose; `runOpen` is only a marker that a run must not be restored. */
+export interface RoomState {
+	readonly name: RoomName;
+	readonly createdAt: number;
+	readonly members: readonly RobName[]; // membership order = turn order
+	readonly coordinator: RobName | null; // null = no wrap-up step
+	readonly transcript: readonly RoomEntry[];
+	readonly queue: readonly QueuedSend[];
+	readonly runOpen: boolean; // a run was live when this state was captured
+	readonly deliverable: RoomDeliverableRef | null;
+}
+
 /** The room is idle or running exactly one bounded run; there is no third state. */
 export type RoomRun =
 	| { readonly phase: "idle" }
@@ -77,6 +148,7 @@ export interface RoomLimits {
 	readonly maxMembers: number;
 	readonly maxRounds: number;
 	readonly maxMessagesPerRun: number;
+	readonly maxQueuedSends: number; // travels to surfaces, like the rest
 }
 
 /** The plain-data snapshot surfaces render. Fresh copies; callers never see the
@@ -84,8 +156,11 @@ export interface RoomLimits {
 export interface RoomView {
 	readonly name: RoomName;
 	readonly members: readonly RobName[]; // membership order = turn order
+	readonly coordinator: RobName | null;
 	readonly transcript: readonly RoomEntry[];
 	readonly run: RoomRun;
+	readonly pending: number; // queued sends, not entry ids
+	readonly deliverable: RoomDeliverableRef | null;
 	readonly limits: RoomLimits;
 }
 
@@ -238,6 +313,17 @@ export interface RoomHost {
 	now(): number;
 }
 
+/** The one persistence port. One method, whole-state: the file is never a
+ *  partial patch, so no caller can write a room halfway. Team owns the store
+ *  and hands the room this adapter; the room never touches the file itself. */
+export interface RoomLedger {
+	/** Orders and coalesces this room's writes. The promise settles when this
+	 *  state or a newer one is on disk; it rejects with the write error. */
+	save(state: RoomState): Promise<void>;
+	/** Resolves when nothing is in flight; the room flushes on stop. */
+	flush(): Promise<void>;
+}
+
 /** Internal: membership order plus how much of the transcript this member has
  *  already been shown. The cursor is the rob's room context, since Rob keeps one
  *  shared history and shares no state with the room. */
@@ -263,28 +349,55 @@ export class Room {
 	readonly name: RoomName;
 
 	private readonly host: RoomHost;
+	private readonly ledger: RoomLedger;
+	private readonly createdAt: number;
 	private members: Member[];
-	private readonly transcript: RoomEntry[] = [];
-	private nextId = 1;
+	private coordinator: RobName | null;
+	private readonly transcript: RoomEntry[];
+	private readonly queue: QueuedSend[];
+	private deliverable: RoomDeliverableRef | null;
+	private nextId: number;
 	private live: LiveRun | null = null;
 	private running: Promise<void> | null = null;
 	private stopped = false;
+	private storageFailed = false;
 	private readonly stoppedPromise: Promise<void>;
-	private releaseStop: () => void = () => undefined;
+	private resolveStopped: () => void = () => undefined;
 
-	/** `members` must already satisfy validateRoomMembers; Team is the only
-	 *  constructor caller and validates before constructing. */
+	/** `state` is the ledger's record (validated by the store on load) or the
+	 *  seed Team built from config; Team is the only constructor caller. A
+	 *  notice and a still-open run both land as system entries, because the
+	 *  room is the transcript's only writer. */
 	constructor(options: {
-		name: RoomName;
-		members: readonly RobName[];
+		state: RoomState;
 		host: RoomHost;
+		ledger: RoomLedger;
+		notice?: string;
 	}) {
-		this.name = options.name;
+		this.name = options.state.name;
 		this.host = options.host;
-		this.members = options.members.map((name) => ({ name, seen: 0 }));
+		this.ledger = options.ledger;
+		this.createdAt = options.state.createdAt;
+		this.members = options.state.members.map((name) => ({ name, seen: 0 }));
+		this.coordinator = options.state.coordinator;
+		this.transcript = options.state.transcript.map((entry) => ({ ...entry }));
+		this.queue = options.state.queue.map((send) => ({ ...send }));
+		this.deliverable =
+			options.state.deliverable === null
+				? null
+				: { ...options.state.deliverable };
+		this.nextId =
+			this.transcript.reduce((max, entry) => Math.max(max, entry.id), 0) + 1;
 		this.stoppedPromise = new Promise((resolve) => {
-			this.releaseStop = resolve;
+			this.resolveStopped = resolve;
 		});
+		if (options.notice !== undefined) {
+			this.append({ kind: "system", text: options.notice });
+		}
+		if (options.state.runOpen) {
+			this.append({ kind: "system", text: renderRestartNotice() });
+		}
+		if (options.notice !== undefined || options.state.runOpen) this.persist();
 	}
 
 	/** A fresh copy. The only read surface; no caller mutates room state. */
@@ -292,14 +405,33 @@ export class Room {
 		return {
 			name: this.name,
 			members: this.memberNames(),
+			coordinator: this.coordinator,
 			transcript: this.transcript.map((entry) => ({ ...entry })),
 			run: this.live === null ? { phase: "idle" } : this.runSnapshot(this.live),
+			pending: this.queue.length,
+			deliverable: this.deliverable === null ? null : { ...this.deliverable },
 			limits: {
 				minMembers: ROOM_MIN_MEMBERS,
 				maxMembers: ROOM_MAX_MEMBERS,
 				maxRounds: ROOM_MAX_ROUNDS,
 				maxMessagesPerRun: ROOM_MAX_MESSAGES_PER_RUN,
+				maxQueuedSends: ROOM_MAX_QUEUED_SENDS,
 			},
+		};
+	}
+
+	/** The durable shape, a fresh copy. `runOpen` marks a live run so load can
+	 *  annotate it without restoring it. */
+	state(): RoomState {
+		return {
+			name: this.name,
+			createdAt: this.createdAt,
+			members: this.memberNames(),
+			coordinator: this.coordinator,
+			transcript: this.transcript.map((entry) => ({ ...entry })),
+			queue: this.queue.map((send) => ({ ...send })),
+			runOpen: this.live !== null,
+			deliverable: this.deliverable === null ? null : { ...this.deliverable },
 		};
 	}
 
@@ -326,6 +458,7 @@ export class Room {
 		this.live = run;
 		this.emitRun(run);
 		this.start(run);
+		this.persist();
 		return { status: "started", entry: { ...entry } };
 	}
 
@@ -349,6 +482,7 @@ export class Room {
 		run.posted += 1;
 		run.spokeThisRound += 1;
 		run.repliedThisTurn = true;
+		this.persist();
 		return { status: "posted", entry: { ...entry } };
 	}
 
@@ -370,6 +504,7 @@ export class Room {
 			room: this.name,
 			members: this.memberNames(),
 		});
+		this.persist();
 		return { status: "ok", members: this.memberNames() };
 	}
 
@@ -378,20 +513,26 @@ export class Room {
 		if (this.live !== null) this.finish(this.live, "interrupted");
 	}
 
-	/** Terminal, idempotent. Resolves when the run loop has exited, so Team.stop
-	 *  can await it before stopping robs. */
+	/** Terminal, idempotent. Resolves once the run loop has exited and the
+	 *  ledger has no write in flight, so Team.stop cannot outrun the last
+	 *  save before it stops the robs. */
 	stop(): Promise<void> {
 		if (this.stopped) return this.stoppedPromise;
 		this.stopped = true;
 		if (this.live !== null) this.finish(this.live, "stopped");
-		if (this.running === null) this.releaseStop();
+		void this.completeStop();
 		return this.stoppedPromise;
+	}
+
+	private async completeStop(): Promise<void> {
+		if (this.running !== null) await this.running.catch(() => undefined);
+		await this.ledger.flush();
+		this.resolveStopped();
 	}
 
 	private start(run: LiveRun): void {
 		const task: Promise<void> = this.runRounds(run).finally(() => {
 			if (this.running === task) this.running = null;
-			if (this.stopped && this.running === null) this.releaseStop();
 		});
 		this.running = task;
 	}
@@ -501,19 +642,28 @@ export class Room {
 	private append(
 		entry:
 			| { kind: "user"; text: string }
-			| { kind: "member"; from: RobName; text: string },
+			| { kind: "member"; from: RobName; text: string }
+			| { kind: "system"; text: string },
 	): RoomEntry {
 		const at = this.host.now();
-		const row: RoomEntry =
-			entry.kind === "user"
-				? { id: this.nextId, at, kind: "user", text: entry.text }
-				: {
-						id: this.nextId,
-						at,
-						kind: "member",
-						from: entry.from,
-						text: entry.text,
-					};
+		let row: RoomEntry;
+		switch (entry.kind) {
+			case "user":
+				row = { id: this.nextId, at, kind: "user", text: entry.text };
+				break;
+			case "member":
+				row = {
+					id: this.nextId,
+					at,
+					kind: "member",
+					from: entry.from,
+					text: entry.text,
+				};
+				break;
+			case "system":
+				row = { id: this.nextId, at, kind: "system", text: entry.text };
+				break;
+		}
 		this.nextId += 1;
 		this.transcript.push(row);
 		this.emit({ kind: "entry", room: this.name, entry: { ...row } });
@@ -533,6 +683,29 @@ export class Room {
 			run: this.runSnapshot(run),
 			outcome,
 		});
+		// The run boundary is durable state too: without it a crash after a
+		// clean finish would still look like a run that was open.
+		this.persist();
+	}
+
+	/** Hands the newest state to the ledger, coalesced. Each public mutation
+	 *  offers one save at its end, so one user action is one save offer. A write
+	 *  failure becomes one system entry per failure streak, so it is visible
+	 *  where the user looks and cannot loop. */
+	private persist(): void {
+		void this.ledger.save(this.state()).then(
+			() => {
+				this.storageFailed = false;
+			},
+			(error: unknown) => {
+				if (this.storageFailed) return;
+				this.storageFailed = true;
+				this.append({
+					kind: "system",
+					text: renderStorageFailure(errorMessage(error)),
+				});
+			},
+		);
 	}
 
 	private runSnapshot(run: LiveRun): RoomRun {

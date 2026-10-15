@@ -4,11 +4,14 @@ import {
 	Room,
 	type RoomEvent,
 	type RoomHost,
+	type RoomLedger,
 	type RoomReplyOutcome,
+	type RoomState,
 	type RoomTurn,
 	type RoomTurnResult,
 	validateRoomMembers,
 } from "../../src/rob/room.js";
+import { newRoomState } from "../../src/rob/room-store.js";
 import type { RobName } from "../../src/rob/types.js";
 import { waitFor } from "./helpers.js";
 
@@ -112,6 +115,16 @@ class FakeRoomHost implements RoomHost {
 	}
 }
 
+// The room's persistence is a port, so a test can hold the states it offered
+// instead of touching a filesystem (graft 3).
+class MemoryRoomLedger implements RoomLedger {
+	readonly saves: RoomState[] = [];
+	async save(state: RoomState): Promise<void> {
+		this.saves.push(state);
+	}
+	async flush(): Promise<void> {}
+}
+
 function makeRoom(
 	options: {
 		readonly members?: readonly RobName[];
@@ -119,8 +132,9 @@ function makeRoom(
 		readonly scripts?: Partial<Record<RobName, TurnAction[]>>;
 		readonly fallback?: TurnAction;
 		readonly clock?: () => number;
+		readonly state?: RoomState;
 	} = {},
-): { room: Room; host: FakeRoomHost } {
+): { room: Room; host: FakeRoomHost; ledger: MemoryRoomLedger } {
 	const members = options.members ?? ["planner", "builder", "reviewer"];
 	const host = new FakeRoomHost({
 		roster: options.roster ?? members,
@@ -128,9 +142,14 @@ function makeRoom(
 		fallback: options.fallback,
 		clock: options.clock,
 	});
-	const room = new Room({ name: "ship-it", members, host });
+	const ledger = new MemoryRoomLedger();
+	const room = new Room({
+		state: options.state ?? newRoomState("ship-it", 1000, members, null),
+		host,
+		ledger,
+	});
 	host.attach(room);
-	return { room, host };
+	return { room, host, ledger };
 }
 
 async function settle(room: Room): Promise<void> {
@@ -257,13 +276,17 @@ describe("Room", () => {
 		expect(room.view()).toEqual({
 			name: "ship-it",
 			members: ["planner", "builder", "reviewer"],
+			coordinator: null,
 			transcript: [{ id: 1, at: 1000, kind: "user", text: "status?" }],
 			run: { phase: "idle" },
+			pending: 0,
+			deliverable: null,
 			limits: {
 				minMembers: 2,
 				maxMembers: 6,
 				maxRounds: 3,
 				maxMessagesPerRun: 10,
+				maxQueuedSends: 5,
 			},
 		});
 	});

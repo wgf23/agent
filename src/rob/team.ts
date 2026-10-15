@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { WORKSPACE_BOT } from "../../shared/protocol.js";
 import type { AgentEvent } from "../agent/events.js";
 import type {
 	ApprovalChoice,
@@ -23,16 +24,26 @@ import {
 	type RoomConfig,
 	type RoomCreateOutcome,
 	type RoomHost,
+	type RoomLedger,
 	type RoomMembershipOutcome,
 	type RoomName,
 	type RoomReplyOutcome,
 	type RoomSendOutcome,
+	type RoomState,
 	type RoomTurn,
 	type RoomTurnResult,
 	type RoomView,
 	roomConfigSchema,
 	validateRoomMembers,
 } from "./room.js";
+import {
+	createRoomStore,
+	ledgerFor,
+	newRoomState,
+	type RoomStore,
+	type StoredRoom,
+} from "./room-store.js";
+import { renderConfigDrift, renderStorageFailure } from "./room-text.js";
 import {
 	createTeamOperations,
 	robToolRules,
@@ -119,6 +130,10 @@ export class Team implements TeamPort {
 	private readonly listeners = new Set<TeamListener>();
 	private readonly roomRegistry = new Map<RoomName, Room>();
 	private readonly roomTurns = new Map<RobName, PendingRoomTurn>();
+	private readonly roomStore: RoomStore;
+	// The room's only persistence handle; built once from the store.
+	private readonly roomLedger: RoomLedger;
+	private readonly startupProblems: string[] = [];
 	private readonly roomHost: RoomHost = {
 		members: () => [...this.robs.keys()],
 		now: () => Date.now(),
@@ -134,14 +149,11 @@ export class Team implements TeamPort {
 		for (const config of options.robs) {
 			this.robs.set(config.name, this.createRob(config));
 		}
-		for (const config of options.rooms ?? []) {
-			const outcome = this.createRoom(config);
-			if (outcome.status === "rejected") {
-				throw new Error(
-					`Invalid room "${config.name}" in TeamOptions: ${outcome.reason}.`,
-				);
-			}
-		}
+		this.roomStore = createRoomStore({
+			workspaceRoot: options.workspaceRoot,
+		});
+		this.roomLedger = ledgerFor(this.roomStore);
+		this.openRooms();
 	}
 
 	// Adds a rob at runtime and starts its loop when the team is already
@@ -178,6 +190,91 @@ export class Team implements TeamPort {
 		});
 	}
 
+	/** One synchronous pass over the union of configured rooms and ledgers: a
+	 *  ledger is the room's state once it exists, and only a room with no
+	 *  ledger is seeded from config (and writes its first ledger). */
+	private openRooms(): void {
+		const seeded = new Map<RoomName, RoomConfig>();
+		for (const config of this.options.rooms ?? []) {
+			if (seeded.has(config.name)) {
+				throw new Error(`Duplicate room "${config.name}" in TeamOptions.`);
+			}
+			seeded.set(config.name, config);
+		}
+		const { records, failed } = this.roomStore.readAll();
+		const ledgers = new Map(records.map((record) => [record.name, record]));
+		const names = new Set<string>([
+			...seeded.keys(),
+			...ledgers.keys(),
+			...failed.map((entry) => entry.name),
+		]);
+		for (const name of names) {
+			const config = seeded.get(name);
+			const record = ledgers.get(name);
+			if (record !== undefined) {
+				const { version, workspaceRoot, updatedAt, ...state } = record;
+				this.roomRegistry.set(
+					name,
+					new Room({
+						state,
+						host: this.roomHost,
+						ledger: this.roomLedger,
+						notice:
+							config === undefined ? undefined : configDrift(config, record),
+					}),
+				);
+				continue;
+			}
+			const read = this.roomStore.read(name);
+			if (config === undefined) {
+				// A runtime-created room whose ledger cannot be read: its file is
+				// left in place and the problem is reported once, at start().
+				const reason = read.ok
+					? "the ledger disappeared between listing and reading"
+					: read.error;
+				this.startupProblems.push(
+					`Room "${name}" could not be read (${reason}); its file was left in place.`,
+				);
+				continue;
+			}
+			const room = new Room({
+				state: this.seedState(name, config),
+				host: this.roomHost,
+				ledger: this.roomLedger,
+				notice: read.ok ? undefined : renderStorageFailure(read.error),
+			});
+			this.roomRegistry.set(name, room);
+			this.offerSeed(room);
+		}
+	}
+
+	/** Validates a config room before it becomes a seed, preserving the v1
+	 *  constructor guard for callers that build TeamOptions directly. */
+	private seedState(name: RoomName, config: RoomConfig): RoomState {
+		const parsed = roomConfigSchema.safeParse(config);
+		if (!parsed.success) {
+			throw new Error(`Invalid room "${name}" in TeamOptions: invalid_name.`);
+		}
+		if (this.robs.has(name)) {
+			throw new Error(`Invalid room "${name}" in TeamOptions: name_taken.`);
+		}
+		const validation = validateRoomMembers(parsed.data.members, [
+			...this.robs.keys(),
+		]);
+		if (validation.status === "rejected") {
+			throw new Error(
+				`Invalid room "${name}" in TeamOptions: ${validation.reason}.`,
+			);
+		}
+		return newRoomState(name, this.roomHost.now(), validation.members, null);
+	}
+
+	/** The first ledger write. A failure is left to the room's next save, which
+	 *  reports it in the transcript; startup must not throw. */
+	private offerSeed(room: Room): void {
+		void this.roomLedger.save(room.state()).catch(() => undefined);
+	}
+
 	subscribe(listener: TeamListener): () => void {
 		this.listeners.add(listener);
 		return () => {
@@ -191,6 +288,11 @@ export class Team implements TeamPort {
 		void this.ensureGateway().catch(() => undefined);
 		for (const [name, rob] of this.robs) {
 			this.loops.set(name, rob.run());
+		}
+		// Listeners subscribe before start() (TeamHub, runTeamCommand), so the
+		// startup problems reach them; no new TeamEvent arm is needed.
+		for (const text of this.startupProblems) {
+			this.emit({ kind: "notice", rob: WORKSPACE_BOT, text });
 		}
 	}
 
@@ -234,15 +336,16 @@ export class Team implements TeamPort {
 		const validation = validateRoomMembers(members, [...this.robs.keys()]);
 		if (validation.status === "rejected") return validation;
 		const room = new Room({
-			name,
-			members: validation.members,
+			state: newRoomState(name, this.roomHost.now(), validation.members, null),
 			host: this.roomHost,
+			ledger: this.roomLedger,
 		});
 		this.roomRegistry.set(name, room);
 		this.emit({
 			kind: "room",
 			event: { kind: "members", room: name, members: validation.members },
 		});
+		this.offerSeed(room);
 		return { status: "created", room: room.view() };
 	}
 
@@ -623,4 +726,27 @@ function resolveRobRules(
 		...project,
 		...rob.permissions,
 	};
+}
+
+/** Names the fields where my-agent.json and an existing ledger disagree. The
+ *  ledger wins, so this only feeds one system entry; no config value is
+ *  applied to a room that already exists. */
+function configDrift(
+	config: RoomConfig,
+	record: StoredRoom,
+): string | undefined {
+	const differences: string[] = [];
+	if (!sameNames(config.members, record.members)) {
+		differences.push(
+			`members are now ${record.members.join(", ")}, not ${config.members.join(", ")}`,
+		);
+	}
+	return differences.length === 0 ? undefined : renderConfigDrift(differences);
+}
+
+function sameNames(left: readonly string[], right: readonly string[]): boolean {
+	return (
+		left.length === right.length &&
+		left.every((name, index) => name === right[index])
+	);
 }

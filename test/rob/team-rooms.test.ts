@@ -53,6 +53,7 @@ const ROOM_LIMITS = {
 	maxMembers: 6,
 	maxRounds: 3,
 	maxMessagesPerRun: 10,
+	maxQueuedSends: 5,
 };
 
 describe("Team rooms", () => {
@@ -82,8 +83,11 @@ describe("Team rooms", () => {
 			room: {
 				name: "ship-it",
 				members: ["planner", "builder"],
+				coordinator: null,
 				transcript: [],
 				run: { phase: "idle" },
+				pending: 0,
+				deliverable: null,
 				limits: ROOM_LIMITS,
 			},
 		});
@@ -120,6 +124,7 @@ describe("Team rooms", () => {
 			{
 				name: "ship-it",
 				members: ["planner", "builder"],
+				coordinator: null,
 				transcript: [
 					{
 						id: 1,
@@ -136,6 +141,8 @@ describe("Team rooms", () => {
 					},
 				],
 				run: { phase: "idle" },
+				pending: 0,
+				deliverable: null,
 				limits: ROOM_LIMITS,
 			},
 		]);
@@ -245,8 +252,11 @@ describe("Team rooms", () => {
 			{
 				name: "ship-it",
 				members: ["planner", "builder"],
+				coordinator: null,
 				transcript: [],
 				run: { phase: "idle" },
+				pending: 0,
+				deliverable: null,
 				limits: ROOM_LIMITS,
 			},
 		]);

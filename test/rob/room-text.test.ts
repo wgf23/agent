@@ -145,13 +145,17 @@ describe("renderRoomOutcome", () => {
 	const view: RoomView = {
 		name: "ship-it",
 		members: ["planner", "builder"],
+		coordinator: null,
 		transcript: [],
 		run: { phase: "idle" },
+		pending: 0,
+		deliverable: null,
 		limits: {
 			minMembers: 2,
 			maxMembers: 6,
 			maxRounds: 3,
 			maxMessagesPerRun: 10,
+			maxQueuedSends: 5,
 		},
 	};
 

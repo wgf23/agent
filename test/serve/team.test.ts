@@ -66,6 +66,7 @@ const roomLimits = {
 	maxMembers: 6,
 	maxRounds: 3,
 	maxMessagesPerRun: 10,
+	maxQueuedSends: 5,
 };
 
 function createRoomHub(provider: Provider): TeamHub {
