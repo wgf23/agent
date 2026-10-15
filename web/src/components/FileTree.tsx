@@ -8,7 +8,7 @@ import {
 	useState,
 } from "react";
 import type { UploadOptions, UploadResult } from "../api";
-import type { FileEntry, FileListResponse } from "../protocol";
+import type { FileEntry, FileListResponse, FsDirsResponse } from "../protocol";
 import {
 	ArrowDownIcon,
 	ArrowUpIcon,
@@ -18,6 +18,7 @@ import {
 	RefreshIcon,
 	SymlinkIcon,
 } from "./icons";
+import WorkspacePicker from "./WorkspacePicker";
 
 interface Props {
 	// The client call, forwarded from the hub; the panel owns the cache and
@@ -36,6 +37,12 @@ interface Props {
 		file: File,
 		options?: UploadOptions,
 	) => Promise<UploadResult>;
+	// The same bounded directory browse the workspace picker uses, so the panel's
+	// root chip offers only directories the server already allows.
+	listDirs: (path?: string) => Promise<FsDirsResponse>;
+	// The active workspace root (absolute), so the root chip can map a browse
+	// path back to the workspace-relative path this panel lists by.
+	workspaceRoot: string;
 	// Wide screens show the panel inline; a sidebar button folds it away.
 	open: boolean;
 }
@@ -57,13 +64,19 @@ interface UploadItem {
 // directory is fetched the first time it is expanded, then cached; the flags
 // re-read from scratch so every visible directory matches them, and 刷新 drops
 // the cache entirely. Each directory row (and the empty body) is also a drop
-// target that streams files into that directory.
+// target that streams files into that directory. The header's chip re-roots the
+// panel at another directory of the same workspace.
 export default function FileTree({
 	listFiles,
 	fileDownloadUrl,
 	upload,
+	listDirs,
+	workspaceRoot,
 	open,
 }: Props) {
+	// The directory the panel lists at its top level; workspace-relative, so ""
+	// is the workspace root and the paths the routes take stay unchanged.
+	const [root, setRoot] = useState("");
 	const [cache, setCache] = useState<Record<string, FileListResponse>>({});
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [loading, setLoading] = useState<Set<string>>(new Set());
@@ -71,8 +84,8 @@ export default function FileTree({
 	const [showHidden, setShowHidden] = useState(false);
 	const [showIgnored, setShowIgnored] = useState(false);
 	const [uploads, setUploads] = useState<UploadItem[]>([]);
-	// The directory a drag is currently over ("" is the root), so only that row
-	// highlights.
+	// The directory a drag is currently over (the panel root is ""), so only
+	// that row highlights.
 	const [dragDir, setDragDir] = useState<string | null>(null);
 
 	// The picker is opened by a row's button; this holds the directory that
@@ -104,13 +117,14 @@ export default function FileTree({
 	);
 
 	// The root loads on mount. A flag change drops the cache and collapses the
-	// tree so a directory fetched under the old flags is never shown stale.
+	// tree so a directory fetched under the old flags is never shown stale; a
+	// new panel root re-reads from scratch the same way.
 	useEffect(() => {
 		setCache({});
 		setExpanded(new Set());
 		setError(null);
-		void load("");
-	}, [load]);
+		void load(root);
+	}, [load, root]);
 
 	const toggleDir = (path: string) => {
 		setExpanded((prev) => {
@@ -126,7 +140,20 @@ export default function FileTree({
 	const refresh = () => {
 		setCache({});
 		setExpanded(new Set());
-		void load("");
+		void load(root);
+	};
+
+	// The workspace root without a trailing slash, so a relative path and an
+	// absolute one map both ways without doubling the separator.
+	const workspaceBase = workspaceRoot.replace(/\/+$/, "");
+
+	// The root chip hands back an absolute path; the panel lists by
+	// workspace-relative ones, so a path outside the workspace cannot become
+	// the panel's root and the picker offers it as browse-only.
+	const relFromWorkspace = (absPath: string): string | null => {
+		if (absPath === workspaceBase) return "";
+		if (!absPath.startsWith(`${workspaceBase}/`)) return null;
+		return absPath.slice(workspaceBase.length + 1);
 	};
 
 	const updateUpload = (id: number, patch: Partial<UploadItem>) => {
@@ -371,7 +398,7 @@ export default function FileTree({
 		);
 	};
 
-	const root = cache[""];
+	const listing = cache[root];
 
 	return (
 		<aside className={`file-panel ${open ? "" : "closed"}`} aria-label="文件树">
@@ -382,7 +409,7 @@ export default function FileTree({
 					className="icon-btn"
 					title="上传文件"
 					aria-label="上传文件"
-					onClick={() => pickFiles("")}
+					onClick={() => pickFiles(root)}
 				>
 					<ArrowUpIcon />
 				</button>
@@ -395,6 +422,17 @@ export default function FileTree({
 				>
 					<RefreshIcon />
 				</button>
+			</div>
+			<div className="file-panel-root">
+				<WorkspacePicker
+					root={root === "" ? workspaceBase : `${workspaceBase}/${root}`}
+					listDirs={listDirs}
+					canOpen={(path) => relFromWorkspace(path) !== null}
+					onOpen={(path) => {
+						const rel = relFromWorkspace(path);
+						if (rel !== null) setRoot(rel);
+					}}
+				/>
 			</div>
 			<input
 				ref={fileInputRef}
@@ -439,12 +477,12 @@ export default function FileTree({
 					</ul>
 				</div>
 			)}
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: the empty body drops files at the workspace root */}
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: the empty body drops files at the panel root */}
 			<div
-				className={`file-panel-body ${dragDir === "" ? "drop-target" : ""}`}
-				onDragOver={(event) => handleDragOver(event, "")}
+				className={`file-panel-body ${dragDir === root ? "drop-target" : ""}`}
+				onDragOver={(event) => handleDragOver(event, root)}
 				onDragLeave={handleDragLeave}
-				onDrop={(event) => handleDrop(event, "")}
+				onDrop={(event) => handleDrop(event, root)}
 			>
 				{error !== null ? (
 					<div className="file-panel-error" role="alert">
@@ -453,13 +491,13 @@ export default function FileTree({
 							重试
 						</button>
 					</div>
-				) : root === undefined ? (
+				) : listing === undefined ? (
 					<p className="file-panel-loading">加载中…</p>
-				) : root.entries.length === 0 ? (
+				) : listing.entries.length === 0 ? (
 					<p className="file-empty">空目录</p>
 				) : (
 					<ul className="file-tree">
-						{root.entries.map((entry) => renderEntry(entry))}
+						{listing.entries.map((entry) => renderEntry(entry))}
 					</ul>
 				)}
 			</div>

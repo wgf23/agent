@@ -1,7 +1,11 @@
 import type { Dirent } from "node:fs";
-import { lstat, readdir, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import type { FileEntry, FileListResponse } from "../../shared/protocol.js";
+import type {
+	FileEntry,
+	FileListResponse,
+	FsDirEntry,
+} from "../../shared/protocol.js";
 import { loadGitignore } from "../util/gitignore.js";
 import { resolveInWorkspace } from "../util/paths.js";
 
@@ -26,6 +30,16 @@ export class NotADirectoryError extends Error {
 	constructor(relative: string) {
 		super(`Not a directory: ${relative}`);
 		this.name = "NotADirectoryError";
+	}
+}
+
+// A browse target that exists but could not be read (a permission denial, an
+// I/O failure). The route answers 400 with this reason, distinct from the 404
+// a missing path gets.
+export class BrowseError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "BrowseError";
 	}
 }
 
@@ -90,6 +104,95 @@ export async function listDirectory(
 		ignored,
 		truncated,
 	};
+}
+
+// Whether an absolute path is one of the browse roots or lives inside one.
+// Purely lexical, so it is trivially unit-testable and never touches disk: both
+// sides are normalized, which is what makes a `..` that climbs back out of a
+// root read as false even though the string still starts with the root. A
+// symlink out of a root is not caught here; the browse route only ever lists
+// under a root the user already opened.
+export function isInsideBrowseRoots(
+	target: string,
+	roots: readonly string[],
+): boolean {
+	const resolved = path.resolve(target);
+	return roots.some((root) => isInside(path.resolve(root), resolved));
+}
+
+// The lexical check above passes for a path that is textually inside a root but
+// reaches it through a symlink, so the real path is checked too. This is the
+// same rule resolveInWorkspace applies to files: a link inside the home must not
+// widen the browse boundary to the rest of the host.
+export async function assertBrowsePath(
+	absPath: string,
+	roots: readonly string[],
+): Promise<void> {
+	if (!isInsideBrowseRoots(absPath, roots)) {
+		throw new BrowseError(`Path is outside the browse roots: ${absPath}`);
+	}
+	const realTarget = await realpathDeepest(absPath);
+	const realRoots = await Promise.all(roots.map((root) => realpath(root)));
+	if (!realRoots.some((root) => isInside(root, realTarget))) {
+		throw new BrowseError(
+			`Path escapes the browse roots through a symlink: ${absPath}`,
+		);
+	}
+}
+
+// realpath() fails on a path that does not exist yet, so resolve the deepest
+// existing ancestor and re-attach the missing suffix, exactly as the workspace
+// resolver does. A read of the missing part is left to the caller's readdir.
+async function realpathDeepest(target: string): Promise<string> {
+	const suffix: string[] = [];
+	let current = target;
+	for (;;) {
+		try {
+			const real = await realpath(current);
+			return path.join(real, ...suffix.reverse());
+		} catch (error) {
+			if (!isMissing(error)) throw error;
+			const parent = path.dirname(current);
+			if (parent === current) return target;
+			suffix.push(path.basename(current));
+			current = parent;
+		}
+	}
+}
+
+function isInside(root: string, target: string): boolean {
+	if (target === root) return true;
+	const rel = path.relative(root, target);
+	return (
+		rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)
+	);
+}
+
+// Lists only the subdirectories of one absolute browse path, sorted by name.
+// A missing or non-directory path is the same NotADirectoryError the workspace
+// listing raises (a 404); anything else that stops the read (a permission
+// denial) is a BrowseError the route answers 400 for, so an unreadable root is
+// never mistaken for an empty one.
+export async function browseDirectories(
+	absPath: string,
+): Promise<FsDirEntry[]> {
+	let dirents: Dirent[];
+	try {
+		dirents = await readdir(absPath, { withFileTypes: true });
+	} catch (error) {
+		if (isMissing(error)) throw new NotADirectoryError(absPath);
+		throw new BrowseError(`Cannot read directory: ${absPath}`);
+	}
+
+	// Directories only: a file is not a browse target, and a symlink is left
+	// out rather than followed, so a link can never widen the browse boundary.
+	const dirs: FsDirEntry[] = [];
+	for (const dirent of dirents) {
+		if (!dirent.isDirectory()) continue;
+		dirs.push({ name: dirent.name, path: path.join(absPath, dirent.name) });
+	}
+	dirs.sort((a, b) => a.name.localeCompare(b.name));
+	return dirs;
 }
 
 // Stats one path inside the workspace and classifies it, so a download route

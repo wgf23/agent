@@ -2449,6 +2449,187 @@ select.field-input option {
 	overflow-wrap: anywhere;
 }
 
+/* The panel root chip sits on its own row under the header. */
+.file-panel-root {
+	padding: 0 12px 10px;
+}
+
+/* ---------- Workspace picker ---------- */
+
+.workspace-picker {
+	position: relative;
+	flex-basis: 100%;
+}
+
+.workspace-trigger {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding: 5px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--text-2);
+	font-size: 12.5px;
+	text-align: left;
+	transition:
+		border-color 0.12s,
+		color 0.12s;
+}
+
+.workspace-trigger:hover {
+	border-color: var(--border-strong);
+	color: var(--text);
+}
+
+.workspace-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workspace-caret {
+	flex: none;
+	font-size: 10px;
+	color: var(--text-3);
+}
+
+/* ---------- Workspace browser modal ---------- */
+
+.modal.workspace-browser {
+	width: 520px;
+}
+
+.browser-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	color: var(--text-3);
+}
+
+.browser-crumb {
+	padding: 2px 5px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--text-2);
+	font: inherit;
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+button.browser-crumb:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.browser-crumb.current {
+	color: var(--text);
+	font-weight: 600;
+}
+
+.browser-toolbar {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.browser-list,
+.browser-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 220px;
+	overflow-y: auto;
+}
+
+.browser-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 13px;
+	text-align: left;
+	transition:
+		background 0.12s,
+		border-color 0.12s,
+		color 0.12s;
+}
+
+.browser-row:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.browser-row.selected {
+	border-color: var(--border-strong);
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.browser-row.active {
+	background: var(--surface-2);
+	color: var(--text);
+	font-weight: 550;
+}
+
+.browser-row:disabled {
+	opacity: 0.55;
+}
+
+.browser-folder {
+	flex: none;
+	font-size: 12px;
+}
+
+.browser-row-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.browser-row-mark {
+	flex: none;
+	color: var(--accent-text);
+}
+
+.browser-section-label {
+	margin-top: 4px;
+	font-size: 11.5px;
+	color: var(--text-3);
+}
+
+.browser-empty {
+	margin: 4px 2px;
+	font-size: 12.5px;
+	color: var(--text-3);
+}
+
+.browser-form {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.browser-input {
+	flex: 1;
+	min-width: 0;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 880px) {

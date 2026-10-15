@@ -96,6 +96,13 @@ const invocations: Array<{
 		method: "GET",
 		body: undefined,
 	},
+	{
+		name: "listDirs",
+		run: (api) => api.listDirs("/home/x"),
+		path: "/api/fs/dirs?path=%2Fhome%2Fx",
+		method: "GET",
+		body: undefined,
+	},
 ];
 
 describe("fileDownloadUrl", () => {

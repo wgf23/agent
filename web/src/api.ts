@@ -1,4 +1,4 @@
-import type { FileListResponse } from "./protocol";
+import type { FileListResponse, FsDirsResponse } from "./protocol";
 
 export interface ApiClient {
 	// A read-only listing of one workspace directory; "" is the root. The two
@@ -10,6 +10,10 @@ export interface ApiClient {
 	// The same-origin URL that streams one workspace file, so a plain
 	// <a download> lets the browser download it itself.
 	fileDownloadUrl(path: string): string;
+	// A read-only filesystem browse of directories, bounded by the server to
+	// the home directory and the active workspace root; an omitted path means
+	// home. A path outside every root rejects with the server's reason.
+	listDirs(path?: string): Promise<FsDirsResponse>;
 	// Streams one file into `path` (relative, "" is the root) as
 	// multipart/form-data, using XMLHttpRequest so the caller can show upload
 	// progress (fetch has none). Resolves with the per-file result the server
@@ -118,6 +122,22 @@ export function createApi(
 		return `/api/files/download?path=${encodeURIComponent(path)}`;
 	}
 
+	// The browse path is absolute and percent-encoded into the query; an
+	// omitted path sends no query at all, which the server reads as home. A
+	// refusal (outside the roots, unreadable) keeps the server's reason and its
+	// status so the caller can show either inline.
+	async function listDirs(path?: string): Promise<FsDirsResponse> {
+		const route =
+			path === undefined
+				? "/api/fs/dirs"
+				: `/api/fs/dirs?path=${encodeURIComponent(path)}`;
+		const response = await request(route);
+		if (!response.ok) {
+			throw await failure(response, `GET ${route} failed: ${response.status}`);
+		}
+		return (await response.json()) as FsDirsResponse;
+	}
+
 	// One file is posted per request so the caller sees that file's own upload
 	// progress. The body is multipart/form-data and the browser sets its own
 	// boundary. A non-2xx answer rejects with the server's reason; a 2xx
@@ -163,7 +183,7 @@ export function createApi(
 		});
 	}
 
-	return { listFiles, fileDownloadUrl, upload };
+	return { listFiles, fileDownloadUrl, listDirs, upload };
 }
 
 // A 2xx upload body is the route's UploadResult; anything else (an error object,

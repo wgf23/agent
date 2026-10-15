@@ -163,6 +163,22 @@ export interface FileListResponse {
 	truncated: boolean;
 }
 
+// One subdirectory in a filesystem browse listing. `path` is absolute so the
+// browser can enter it directly; `name` is the basename shown in the list.
+export interface FsDirEntry {
+	name: string;
+	path: string;
+}
+
+// The answer to one browse read: the absolute path that was read, its
+// containing directory when that is still inside a browse root (null at a root
+// with no allowed parent), and the subdirectories, sorted by name.
+export interface FsDirsResponse {
+	path: string;
+	parent: string | null;
+	dirs: FsDirEntry[];
+}
+
 // Room wire types mirror src/rob/room.ts: the server maps domain events at the
 // hub boundary, exactly as AgentEvent is mapped, and the client only renders.
 

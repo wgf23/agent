@@ -4,6 +4,7 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	FileListResponse,
+	FsDirsResponse,
 	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
@@ -72,6 +73,9 @@ export interface Hub {
 	// The download URL for one file, so a plain <a download> in the panel
 	// streams it without going through fetch.
 	fileDownloadUrl: (path: string) => string;
+	// A read-only filesystem browse of directories for the panel's root chip,
+	// bounded by the server to the home and the active workspace root.
+	listDirs: (path?: string) => Promise<FsDirsResponse>;
 	// Uploads one file into a workspace directory and reports its progress; the
 	// panel owns the per-file list and the overwrite retry.
 	upload: (
@@ -205,6 +209,8 @@ export function useHub(): Hub {
 		[],
 	);
 
+	const listDirs = useCallback((path?: string) => api.listDirs(path), []);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -277,6 +283,7 @@ export function useHub(): Hub {
 		saveProvider,
 		listFiles,
 		fileDownloadUrl,
+		listDirs,
 		upload,
 	};
 }
