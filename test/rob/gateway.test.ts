@@ -15,7 +15,11 @@ import {
 	PROTOCOL_VERSION,
 	parseRequest,
 } from "../../src/rob/gateway/wire.js";
+import { Team } from "../../src/rob/team.js";
 import type { Tool } from "../../src/tools/types.js";
+import { createMockProvider } from "../helpers/mock-provider.js";
+import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+import { allowAllAuthorizerFactory } from "./helpers.js";
 
 const SECRET = "planner-secret";
 const IDLE_SECRET = "worker-secret";
@@ -26,6 +30,37 @@ function tool(name: string): Tool {
 		description: `${name} tool`,
 		readOnly: true,
 		execute: async () => ({ ok: true, output: "" }),
+	};
+}
+
+function openCaller(socketPath: string) {
+	const socket = connect(socketPath);
+	socket.setEncoding("utf8");
+	let buffer = "";
+	const pending = new Map<number, (reply: GatewayResponse) => void>();
+	socket.on("data", (chunk: string) => {
+		buffer += chunk;
+		let newline = buffer.indexOf("\n");
+		while (newline !== -1) {
+			const reply = JSON.parse(buffer.slice(0, newline)) as GatewayResponse;
+			buffer = buffer.slice(newline + 1);
+			pending.get(reply.id)?.(reply);
+			pending.delete(reply.id);
+			newline = buffer.indexOf("\n");
+		}
+	});
+	return {
+		call(request: Record<string, unknown>): Promise<GatewayResponse> {
+			const id = request.id as number;
+			const reply = new Promise<GatewayResponse>((resolve) => {
+				pending.set(id, resolve);
+			});
+			socket.write(`${JSON.stringify(request)}\n`);
+			return reply;
+		},
+		close(): void {
+			socket.destroy();
+		},
 	};
 }
 
@@ -106,37 +141,6 @@ describe("team gateway", () => {
 	afterEach(async () => {
 		await gateway.stop();
 	});
-
-	function openCaller(socketPath: string) {
-		const socket = connect(socketPath);
-		socket.setEncoding("utf8");
-		let buffer = "";
-		const pending = new Map<number, (reply: GatewayResponse) => void>();
-		socket.on("data", (chunk: string) => {
-			buffer += chunk;
-			let newline = buffer.indexOf("\n");
-			while (newline !== -1) {
-				const reply = JSON.parse(buffer.slice(0, newline)) as GatewayResponse;
-				buffer = buffer.slice(newline + 1);
-				pending.get(reply.id)?.(reply);
-				pending.delete(reply.id);
-				newline = buffer.indexOf("\n");
-			}
-		});
-		return {
-			call(request: Record<string, unknown>): Promise<GatewayResponse> {
-				const id = request.id as number;
-				const reply = new Promise<GatewayResponse>((resolve) => {
-					pending.set(id, resolve);
-				});
-				socket.write(`${JSON.stringify(request)}\n`);
-				return reply;
-			},
-			close(): void {
-				socket.destroy();
-			},
-		};
-	}
 
 	it("serves a tool call to the turn's bridge and replies keyed by id", async () => {
 		const caller = openCaller(gateway.socketPath);
@@ -366,5 +370,114 @@ describe("gatewayClientSource", () => {
 		expect(calls).toEqual([
 			{ tool: "send_message", args: { to: "worker", text: "hi" } },
 		]);
+	});
+});
+
+describe("team gateway end to end", () => {
+	let workspace: string;
+
+	beforeEach(async () => {
+		workspace = await makeWorkspace("my-agent-rob-gateway-");
+	});
+
+	afterEach(async () => {
+		await removeWorkspace(workspace);
+	});
+
+	it("serves a real team turn over the socket", async () => {
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan" },
+				{ name: "worker", role: "work" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+		});
+		team.start();
+		const bridge = await team.beginTurn("planner", {
+			signal: new AbortController().signal,
+			workspaceRoot: workspace,
+			authorize: async () => ({ allowed: true }),
+			runSubagent: async (task) => `sub: ${task}`,
+		});
+
+		const env = bridge.childEnv();
+		expect(Object.keys(env).sort()).toEqual(
+			[GATEWAY_SOCKET_ENV, GATEWAY_SECRET_ENV].sort(),
+		);
+		const socketPath = env[GATEWAY_SOCKET_ENV];
+		const secret = env[GATEWAY_SECRET_ENV];
+		const caller = openCaller(socketPath);
+
+		expect(
+			await caller.call({
+				v: 1,
+				id: 1,
+				secret,
+				tool: "send_message",
+				args: { to: "worker", text: "ping" },
+			}),
+		).toEqual({
+			v: PROTOCOL_VERSION,
+			id: 1,
+			ok: true,
+			text: 'Message queued for "worker".',
+		});
+		expect(team.readDms()).toEqual([
+			{ from: "planner", to: "worker", text: "ping", at: expect.any(Number) },
+		]);
+
+		expect(
+			await caller.call({
+				v: 1,
+				id: 2,
+				secret,
+				tool: "send_message",
+				args: { to: 42, text: "ping" },
+			}),
+		).toEqual({
+			v: PROTOCOL_VERSION,
+			id: 2,
+			ok: false,
+			reason: "invalid_args",
+			text: "Invalid arguments for send_message.",
+		});
+
+		expect(
+			await caller.call({
+				v: 1,
+				id: 3,
+				secret,
+				tool: "delegate",
+				args: { task: "count the files" },
+			}),
+		).toEqual({
+			v: PROTOCOL_VERSION,
+			id: 3,
+			ok: true,
+			text: "sub: count the files",
+		});
+
+		bridge.close();
+		expect(
+			await caller.call({
+				v: 1,
+				id: 4,
+				secret,
+				tool: "send_message",
+				args: { to: "worker", text: "late" },
+			}),
+		).toEqual({
+			v: PROTOCOL_VERSION,
+			id: 4,
+			ok: false,
+			reason: "not_running",
+			text: "This rob has no turn in flight.",
+		});
+		caller.close();
+
+		await team.stop();
 	});
 });
