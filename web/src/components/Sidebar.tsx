@@ -4,7 +4,7 @@ import type {
 	SessionSummaryInfo,
 	UsageTotals,
 } from "../protocol";
-import type { ConnectionStatus } from "../state";
+import type { ClientRoom, ConnectionStatus } from "../state";
 import { STATUS_LABEL } from "../status";
 import { GearIcon, PlusIcon } from "./icons";
 
@@ -15,16 +15,18 @@ interface Props {
 	onViewChange: (view: View) => void;
 	workspace: BotInfo | null;
 	robs: BotInfo[];
+	rooms: ClientRoom[];
 	botStates: Record<string, BotState>;
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
-	selectedBot: string | null;
-	onSelectBot: (name: string) => void;
+	selectedId: string | null;
+	onSelect: (name: string) => void;
 	allowAll: boolean;
 	onToggleAllowAll: (on: boolean) => void;
 	onNewSession: (bot: string) => void;
 	onOpenSession: (bot: string, id: string) => void;
 	onCreateBot: () => void;
+	onCreateRoom: () => void;
 	onOpenSettings: () => void;
 	usage: UsageTotals;
 	connection: ConnectionStatus;
@@ -36,22 +38,24 @@ export default function Sidebar(props: Props) {
 		onViewChange,
 		workspace,
 		robs,
+		rooms,
 		botStates,
 		sessions,
 		activeSessionId,
-		selectedBot,
-		onSelectBot,
+		selectedId,
+		onSelect,
 		allowAll,
 		onToggleAllowAll,
 		onNewSession,
 		onOpenSession,
 		onCreateBot,
+		onCreateRoom,
 		onOpenSettings,
 		usage,
 		connection,
 	} = props;
 
-	const showSessions = workspace !== null && selectedBot === workspace.name;
+	const showSessions = workspace !== null && selectedId === workspace.name;
 
 	return (
 		<aside className="sidebar">
@@ -78,7 +82,7 @@ export default function Sidebar(props: Props) {
 				onClick={() => {
 					if (workspace === null) return;
 					onNewSession(workspace.name);
-					onSelectBot(workspace.name);
+					onSelect(workspace.name);
 					onViewChange("chat");
 				}}
 			>
@@ -125,9 +129,9 @@ export default function Sidebar(props: Props) {
 										<BotItem
 											bot={bot}
 											state={botStates[bot.name]}
-											selected={view === "chat" && bot.name === selectedBot}
+											selected={view === "chat" && bot.name === selectedId}
 											onClick={() => {
-												onSelectBot(bot.name);
+												onSelect(bot.name);
 												onViewChange("chat");
 											}}
 										/>
@@ -135,6 +139,38 @@ export default function Sidebar(props: Props) {
 								),
 						)}
 					</ul>
+				</section>
+
+				<section className="sidebar-section">
+					<div className="sidebar-label">
+						<span>Rooms</span>
+						<button
+							type="button"
+							className="sidebar-action"
+							onClick={onCreateRoom}
+							title="创建房间"
+						>
+							<PlusIcon size={14} />
+						</button>
+					</div>
+					{rooms.length === 0 ? (
+						<p className="sidebar-empty">还没有房间</p>
+					) : (
+						<ul className="room-list">
+							{rooms.map((room) => (
+								<li key={room.name}>
+									<RoomItem
+										room={room}
+										selected={view === "chat" && room.name === selectedId}
+										onClick={() => {
+											onSelect(room.name);
+											onViewChange("chat");
+										}}
+									/>
+								</li>
+							))}
+						</ul>
+					)}
 				</section>
 
 				{showSessions && (
@@ -232,6 +268,35 @@ function BotItem({
 					{STATUS_LABEL[status]}
 				</span>
 			)}
+		</button>
+	);
+}
+
+function RoomItem({
+	room,
+	selected,
+	onClick,
+}: {
+	room: ClientRoom;
+	selected: boolean;
+	onClick: () => void;
+}) {
+	const run = room.run;
+	const running = run.phase === "running";
+	return (
+		<button
+			type="button"
+			className={`room-item ${selected ? "selected" : ""}`}
+			onClick={onClick}
+			title={`${room.name} · ${room.members.join("、")}`}
+		>
+			<span className={`status-dot ${running ? "working" : "idle"}`} />
+			<span className="bot-name">{room.name}</span>
+			<span className={`bot-status-text ${running ? "working" : ""}`}>
+				{running
+					? `第 ${run.round}/${run.rounds} 轮`
+					: `${room.members.length} 名成员`}
+			</span>
 		</button>
 	);
 }

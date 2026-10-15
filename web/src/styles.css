@@ -398,6 +398,7 @@ h3 {
 }
 
 .bot-list,
+.room-list,
 .session-list {
 	list-style: none;
 	margin: 0;
@@ -407,7 +408,8 @@ h3 {
 	gap: 1px;
 }
 
-.bot-item {
+.bot-item,
+.room-item {
 	display: flex;
 	align-items: center;
 	gap: 9px;
@@ -422,12 +424,14 @@ h3 {
 	transition: background 0.12s;
 }
 
-.bot-item:hover {
+.bot-item:hover,
+.room-item:hover {
 	background: var(--surface-hover);
 	color: var(--text);
 }
 
-.bot-item.selected {
+.bot-item.selected,
+.room-item.selected {
 	background: var(--surface);
 	color: var(--text);
 	box-shadow: var(--shadow-sm);

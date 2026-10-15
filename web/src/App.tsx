@@ -4,7 +4,9 @@ import BotPlaza from "./components/BotPlaza";
 import Composer from "./components/Composer";
 import MessageList from "./components/MessageList";
 import NewBotDialog from "./components/NewBotDialog";
+import NewRoomDialog from "./components/NewRoomDialog";
 import PermissionModal from "./components/PermissionModal";
+import RoomView from "./components/RoomView";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
 import { robBots, workspaceBot } from "./state";
@@ -15,22 +17,36 @@ export default function App() {
 	const { state } = hub;
 
 	const [view, setView] = useState<View>("chat");
-	const [selectedBot, setSelectedBot] = useState<string | null>(null);
+	// One id names the open conversation, bot or room. Room and rob names can
+	// never collide: creating either checks the other.
+	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [dialogOpen, setDialogOpen] = useState(false);
+	const [roomDialogOpen, setRoomDialogOpen] = useState(false);
 
 	const bots = state.bots;
 	const workspace = workspaceBot(bots);
 	const robs = robBots(bots);
-	const botName = selectedBot ?? workspace?.name ?? bots[0]?.name ?? null;
+	const rooms = Object.values(state.rooms);
 
-	// Keep the selection valid as the bot roster (re)loads.
+	const currentRoom = selectedId !== null ? state.rooms[selectedId] : undefined;
+	const currentBot =
+		currentRoom !== undefined
+			? null
+			: (bots.find((bot) => bot.name === selectedId) ??
+				workspace ??
+				bots[0] ??
+				null);
+	const botName = currentBot?.name ?? null;
+
+	// Keep the selection valid as the bot roster and rooms (re)load.
 	useEffect(() => {
-		if (selectedBot === null || !bots.some((bot) => bot.name === selectedBot)) {
-			setSelectedBot(workspace?.name ?? bots[0]?.name ?? null);
-		}
-	}, [bots, selectedBot, workspace?.name]);
+		const known =
+			selectedId !== null &&
+			(bots.some((bot) => bot.name === selectedId) ||
+				state.rooms[selectedId] !== undefined);
+		if (!known) setSelectedId(workspace?.name ?? bots[0]?.name ?? null);
+	}, [bots, selectedId, state.rooms, workspace?.name]);
 
-	const currentBot = bots.find((bot) => bot.name === botName) ?? null;
 	const messages = botName !== null ? (state.transcripts[botName] ?? []) : [];
 	const botState = botName !== null ? state.botStates[botName] : undefined;
 	const approval = state.approvals[0] ?? null;
@@ -43,8 +59,8 @@ export default function App() {
 		loadSettings().catch(() => {});
 	}, [loadSettings]);
 
-	const openBot = (name: string) => {
-		setSelectedBot(name);
+	const openConversation = (name: string) => {
+		setSelectedId(name);
 		setView("chat");
 	};
 
@@ -55,16 +71,18 @@ export default function App() {
 				onViewChange={setView}
 				workspace={workspace ?? null}
 				robs={robs}
+				rooms={rooms}
 				botStates={state.botStates}
 				sessions={state.sessions}
 				activeSessionId={state.activeSessionId}
-				selectedBot={botName}
-				onSelectBot={openBot}
+				selectedId={selectedId}
+				onSelect={openConversation}
 				allowAll={state.allowAll}
 				onToggleAllowAll={hub.setAllowAll}
 				onNewSession={hub.newSession}
 				onOpenSession={hub.openSession}
 				onCreateBot={() => setDialogOpen(true)}
+				onCreateRoom={() => setRoomDialogOpen(true)}
 				onOpenSettings={hub.openSettings}
 				usage={state.usage}
 				connection={state.connection}
@@ -88,8 +106,16 @@ export default function App() {
 						botStates={state.botStates}
 						dms={state.dms}
 						notices={state.notices}
-						onOpenBot={openBot}
+						onOpenBot={openConversation}
 						onCreateBot={() => setDialogOpen(true)}
+					/>
+				) : currentRoom !== undefined ? (
+					<RoomView
+						key={currentRoom.name}
+						room={currentRoom}
+						configured={configured}
+						onSend={(text) => hub.sendToRoom(currentRoom.name, text)}
+						onInterrupt={() => hub.interruptRoom(currentRoom.name)}
 					/>
 				) : currentBot === null ? (
 					<div className="empty-page">
@@ -164,6 +190,17 @@ export default function App() {
 					model={state.model}
 					onCreateBot={hub.createBot}
 					onClose={() => setDialogOpen(false)}
+				/>
+			)}
+			{roomDialogOpen && (
+				<NewRoomDialog
+					robs={robs}
+					onCreateRoom={hub.createRoom}
+					onCreated={(name) => {
+						setRoomDialogOpen(false);
+						openConversation(name);
+					}}
+					onClose={() => setRoomDialogOpen(false)}
 				/>
 			)}
 			{state.settingsOpen && (
