@@ -789,15 +789,20 @@ describe("Room", () => {
 		});
 	});
 
-	it("rejects a second send while live and a whitespace-only send", async () => {
+	it("queues a second send while live and rejects a whitespace-only send", async () => {
 		const { room } = makeRoom({
 			members: ["planner", "builder"],
 			scripts: { planner: [hang] },
 		});
 
 		room.send("one");
-		expect(room.send("two")).toEqual({ status: "rejected", reason: "busy" });
-		expect(room.send("   ")).toEqual({ status: "rejected", reason: "busy" });
+		expect(room.send("two")).toEqual({
+			status: "queued",
+			entry: { id: 2, at: 1000, kind: "user", text: "two" },
+			waiting: 1,
+		});
+		expect(room.send("   ")).toEqual({ status: "rejected", reason: "empty" });
+		expect(room.view().pending).toBe(1);
 		await room.stop();
 
 		const fresh = makeRoom();

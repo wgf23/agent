@@ -3,6 +3,7 @@ import { errorMessage } from "../util/errors.js";
 import {
 	parseRoomMentions,
 	ROOM_PASS_SENTINEL,
+	renderAbsentMembers,
 	renderRestartNotice,
 	renderRoomTurn,
 	renderStorageFailure,
@@ -207,12 +208,19 @@ export type RoomEvent =
 
 /** Machine-readable outcomes, in the shape DeliveryOutcome already uses. Text for
  *  models and users is rendered in one place (room-text.ts). `unknown_room` is
- *  produced by Team.sendToRoom, the only public sender. */
+ *  produced by Team.sendToRoom, the only public sender. Sending never refuses
+ *  because a run is live: the id is assigned and the entry appended in both
+ *  live cases, so a "queued" send is a real message. */
 export type RoomSendOutcome =
 	| { readonly status: "started"; readonly entry: RoomEntry }
 	| {
+			readonly status: "queued";
+			readonly entry: RoomEntry;
+			readonly waiting: number; // queue length including this send
+	  }
+	| {
 			readonly status: "rejected";
-			readonly reason: "unknown_room" | "busy" | "stopped" | "empty";
+			readonly reason: "unknown_room" | "stopped" | "empty" | "queue_full";
 	  };
 
 /** The machine reasons a room reply can be refused; the gateway and the team
@@ -342,6 +350,10 @@ interface LiveRun {
 	spokeThisRound: number;
 	repliedThisTurn: boolean;
 	turnController: AbortController | null;
+	/** The last entry id the prompt of the current turn can contain. Entries
+	 *  appended after this while the turn is in flight (a queued send) must
+	 *  stay unseen for members who were not shown them. */
+	through: number;
 	readonly deadline: number;
 }
 
@@ -435,31 +447,44 @@ export class Room {
 		};
 	}
 
-	/** Appends the user's entry (mentions and all), scopes the run to the
-	 *  mentions, and starts the bounded rounds. One run at a time: a send while a
-	 *  run is live is rejected, not queued. */
+	/** Appends the user's entry always; starts a run when idle, queues one when
+	 *  a run is live. Only `empty` and `queue_full` refuse. */
 	send(text: string): RoomSendOutcome {
 		if (this.stopped) return { status: "rejected", reason: "stopped" };
-		if (this.live !== null) return { status: "rejected", reason: "busy" };
 		if (text.trim() === "") return { status: "rejected", reason: "empty" };
+		if (this.live !== null && this.queue.length >= ROOM_MAX_QUEUED_SENDS) {
+			return { status: "rejected", reason: "queue_full" };
+		}
 
+		const idle = this.live === null;
 		const entry = this.append({ kind: "user", text });
-		const run: LiveRun = {
-			round: 1,
-			rounds: ROOM_MAX_ROUNDS,
-			addressed: parseRoomMentions(text, this.memberNames()).addressed,
-			current: null,
-			posted: 0,
-			spokeThisRound: 0,
-			repliedThisTurn: false,
-			turnController: null,
-			deadline: this.host.now() + ROOM_RUN_TIMEOUT_MS,
-		};
-		this.live = run;
-		this.emitRun(run);
-		this.start(run);
+		if (idle) {
+			this.startRun(text);
+		} else {
+			this.queue.push({ entryId: entry.id, at: this.host.now() });
+		}
 		this.persist();
-		return { status: "started", entry: { ...entry } };
+		return idle
+			? { status: "started", entry: { ...entry } }
+			: {
+					status: "queued",
+					entry: { ...entry },
+					waiting: this.queue.length,
+				};
+	}
+
+	/** Starts the next queued send, if any. Idempotent: a no-op while stopped or
+	 *  while a run is live, so Team.start and the run loop's tail can both call
+	 *  it without coordination. The only drain path, so queued work never
+	 *  overlaps a live run. */
+	resume(): void {
+		if (this.stopped || this.live !== null) return;
+		const next = this.queue.shift();
+		if (next === undefined) return;
+		const entry = this.transcript.find((row) => row.id === next.entryId);
+		if (entry?.kind !== "user") return; // ids only; a miss cannot happen
+		this.startRun(entry.text);
+		this.persist();
 	}
 
 	/** The room_reply path. Accepts only the member whose turn is open, only while
@@ -537,59 +562,80 @@ export class Room {
 		this.running = task;
 	}
 
-	private async runRounds(run: LiveRun): Promise<void> {
-		try {
-			while (this.live === run) {
-				if (this.host.now() >= run.deadline) {
-					this.finish(run, "run_timeout");
-					return;
-				}
-				run.spokeThisRound = 0;
-				for (const member of this.participants(run)) {
-					if (this.live !== run) return;
-					if (this.host.now() >= run.deadline) {
-						this.finish(run, "run_timeout");
-						return;
-					}
-					run.current = member.name;
-					this.emitRun(run);
-					const result = await this.takeTurn(run, member);
-					if (this.live !== run) return;
-					run.current = null;
-					member.seen = this.nextId - 1;
-					this.emitTurn(
-						run,
-						member.name,
-						turnState(result, run.repliedThisTurn),
-					);
-					if (result === "stopped") {
-						this.finish(run, "stopped");
-						return;
-					}
-					if (run.posted >= ROOM_MAX_MESSAGES_PER_RUN) {
-						this.finish(run, "message_cap");
-						return;
-					}
-				}
-				if (run.spokeThisRound === 0) {
-					this.finish(run, "settled");
-					return;
-				}
-				if (run.round >= run.rounds) {
-					this.finish(run, "max_rounds");
-					return;
-				}
-				run.round += 1;
-			}
-		} catch {
-			this.finish(run, "error");
+	/** One path for a fresh send and a dequeued send, so they cannot diverge. */
+	private startRun(text: string): void {
+		const run: LiveRun = {
+			round: 1,
+			rounds: ROOM_MAX_ROUNDS,
+			addressed: parseRoomMentions(text, this.memberNames()).addressed,
+			current: null,
+			posted: 0,
+			spokeThisRound: 0,
+			repliedThisTurn: false,
+			turnController: null,
+			through: 0,
+			deadline: this.host.now() + ROOM_RUN_TIMEOUT_MS,
+		};
+		// A member that left the team is not a participant; name any absentees
+		// once, so a round that nobody can answer has an explanation.
+		const wanted =
+			run.addressed.length > 0 ? run.addressed : this.memberNames();
+		const absent = wanted.filter((name) => !this.host.members().includes(name));
+		if (absent.length > 0) {
+			this.append({ kind: "system", text: renderAbsentMembers(absent) });
 		}
+		this.live = run;
+		this.emitRun(run);
+		this.start(run);
+	}
+
+	/** The run's tail: finish it, then drain the queue. The tail is one of the
+	 *  two resume() callers, and resume() is a no-op while a run is live, so a
+	 *  send that arrived mid-run cannot be lost or overlapped. */
+	private async runRounds(run: LiveRun): Promise<void> {
+		let outcome: RunOutcome = "error";
+		try {
+			outcome = await this.rounds(run);
+		} catch {
+			outcome = "error";
+		}
+		if (this.live === run) this.finish(run, outcome);
+		if (!this.stopped) this.resume();
+	}
+
+	/** The v1 round loop verbatim, returning its reason instead of finishing. */
+	private async rounds(run: LiveRun): Promise<RunOutcome> {
+		while (this.live === run) {
+			if (this.host.now() >= run.deadline) return "run_timeout";
+			run.spokeThisRound = 0;
+			for (const member of this.participants(run)) {
+				if (this.live !== run) return "error";
+				if (this.host.now() >= run.deadline) return "run_timeout";
+				run.current = member.name;
+				this.emitRun(run);
+				const result = await this.takeTurn(run, member);
+				if (this.live !== run) return "error";
+				run.current = null;
+				member.seen = this.seenThrough(member, run.through);
+				this.emitTurn(run, member.name, turnState(result, run.repliedThisTurn));
+				if (result === "stopped") return "stopped";
+				if (run.posted >= ROOM_MAX_MESSAGES_PER_RUN) return "message_cap";
+			}
+			if (run.spokeThisRound === 0) return "settled";
+			if (run.round >= run.rounds) return "max_rounds";
+			run.round += 1;
+		}
+		return "error";
 	}
 
 	private participants(run: LiveRun): readonly Member[] {
 		const addressed = new Set(run.addressed);
-		if (addressed.size === 0) return this.members;
-		return this.members.filter((member) => addressed.has(member.name));
+		const roster = this.host.members();
+		const members = this.members.filter((member) =>
+			roster.includes(member.name),
+		);
+		if (addressed.size === 0) return members;
+		return members.filter((member) => addressed.has(member.name));
 	}
 
 	private async takeTurn(
@@ -608,6 +654,7 @@ export class Room {
 			expired = true;
 			controller.abort();
 		}, budget);
+		run.through = this.nextId - 1;
 		try {
 			const result = await this.host.runTurn(member.name, {
 				room: this.name,
@@ -623,6 +670,23 @@ export class Room {
 			clearTimeout(timer);
 			run.turnController = null;
 		}
+	}
+
+	/** The last entry id this member has been shown, plus any they authored
+	 *  after it. The plain v1 rule (`nextId - 1`) would swallow an entry that a
+	 *  user appended while the turn was in flight, so the queued send's own run
+	 *  would ask the member to answer something they never saw. */
+	private seenThrough(member: Member, through: number): number {
+		let seen = Math.max(member.seen, through);
+		for (const entry of this.transcript) {
+			if (entry.id <= seen) continue;
+			if (entry.kind === "member" && entry.from === member.name) {
+				seen = entry.id;
+				continue;
+			}
+			break;
+		}
+		return seen;
 	}
 
 	private turnText(run: LiveRun, member: Member): string {

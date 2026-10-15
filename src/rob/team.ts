@@ -294,6 +294,9 @@ export class Team implements TeamPort {
 		for (const text of this.startupProblems) {
 			this.emit({ kind: "notice", rob: WORKSPACE_BOT, text });
 		}
+		for (const room of this.roomRegistry.values()) {
+			room.resume();
+		}
 	}
 
 	dispatch(name: string, text: string): void {

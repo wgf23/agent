@@ -89,6 +89,11 @@ export function renderStorageFailure(detail: string): string {
 	return `Saving this room failed: ${detail}`;
 }
 
+/** Names room members that are no longer on the team, once per run. */
+export function renderAbsentMembers(members: readonly RobName[]): string {
+	return `No longer on the team: ${members.map((name) => `@${name}`).join(", ")}.`;
+}
+
 /** The one renderer of room outcome text; the TUI, the serve routes and the
  *  room_reply tool all read their wording from here, so no surface invents its
  *  own phrasing for a rejection. */
@@ -104,6 +109,8 @@ export function renderRoomOutcome(
 		case "started":
 		case "posted":
 			return `Posted to room "${room}".`;
+		case "queued":
+			return `Queued for room "${room}" (${outcome.waiting} waiting).`;
 		case "passed":
 			return `Passed in room "${room}".`;
 		case "ok":
@@ -122,6 +129,8 @@ export function renderRoomOutcome(
 			return `Room "${room}" is stopped.`;
 		case "empty":
 			return "The room message was empty.";
+		case "queue_full":
+			return `Room "${room}" reached its send queue cap.`;
 		case "not_a_member":
 			return `You are not a member of room "${room}".`;
 		case "not_your_turn":
