@@ -7,6 +7,7 @@ import type {
 	DmInfo,
 	PresetInfo,
 	ProviderView,
+	RoomDeliverableInfo,
 	RoomEventInfo,
 	RoomInfo,
 	RoomMessageView,
@@ -32,9 +33,11 @@ export type RoomOutcome = Extract<
 export interface ClientRoom {
 	name: string;
 	members: string[];
+	coordinator: string | null;
 	transcript: RoomMessageView[];
 	run: RoomRunView;
 	lastOutcome: RoomOutcome | null;
+	deliverable: RoomDeliverableInfo | null;
 }
 
 export interface NoticeView {
@@ -492,9 +495,11 @@ function toClientRoom(room: RoomInfo): ClientRoom {
 	return {
 		name: room.name,
 		members: room.members,
+		coordinator: room.coordinator,
 		transcript: room.transcript.slice(-ROOM_TRANSCRIPT_CAP),
 		run: room.run,
 		lastOutcome: null,
+		deliverable: room.deliverable,
 	};
 }
 
@@ -514,9 +519,11 @@ function updateRoom(
 	const existing = state.rooms[name] ?? {
 		name,
 		members: [],
+		coordinator: null,
 		transcript: [],
 		run: { phase: "idle" as const },
 		lastOutcome: null,
+		deliverable: null,
 	};
 	return {
 		...state,

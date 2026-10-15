@@ -1,16 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+	type DeliverableOutcome,
+	ROOM_MAX_STORED_ENTRIES,
 	ROOM_TURN_TIMEOUT_MS,
 	Room,
+	type RoomDeliverableDraft,
+	type RoomEntry,
 	type RoomEvent,
 	type RoomHost,
 	type RoomReplyOutcome,
+	type RoomState,
 	type RoomTurn,
 	type RoomTurnResult,
 	validateRoomMembers,
 } from "../../src/rob/room.js";
+import { newRoomState } from "../../src/rob/room-store.js";
 import type { RobName } from "../../src/rob/types.js";
-import { waitFor } from "./helpers.js";
+import { MemoryRoomLedger, waitFor } from "./helpers.js";
 
 type TurnAction =
 	| { readonly kind: "post"; readonly texts: readonly string[] }
@@ -33,6 +39,7 @@ class FakeRoomHost implements RoomHost {
 		readonly from: RobName;
 		readonly outcome: RoomReplyOutcome;
 	}> = [];
+	readonly deliverableDrafts: RoomDeliverableDraft[] = [];
 	peakInFlight = 0;
 	inFlight = 0;
 
@@ -70,6 +77,16 @@ class FakeRoomHost implements RoomHost {
 
 	emit(event: RoomEvent): void {
 		this.events.push(event);
+	}
+
+	async writeDeliverable(
+		draft: RoomDeliverableDraft,
+	): Promise<DeliverableOutcome> {
+		this.deliverableDrafts.push(draft);
+		return {
+			status: "written",
+			path: "docs/deliverables/20260101T000000-ship-it.md",
+		};
 	}
 
 	async runTurn(member: RobName, turn: RoomTurn): Promise<RoomTurnResult> {
@@ -119,8 +136,10 @@ function makeRoom(
 		readonly scripts?: Partial<Record<RobName, TurnAction[]>>;
 		readonly fallback?: TurnAction;
 		readonly clock?: () => number;
+		readonly state?: RoomState;
+		readonly coordinator?: RobName;
 	} = {},
-): { room: Room; host: FakeRoomHost } {
+): { room: Room; host: FakeRoomHost; ledger: MemoryRoomLedger } {
 	const members = options.members ?? ["planner", "builder", "reviewer"];
 	const host = new FakeRoomHost({
 		roster: options.roster ?? members,
@@ -128,9 +147,33 @@ function makeRoom(
 		fallback: options.fallback,
 		clock: options.clock,
 	});
-	const room = new Room({ name: "ship-it", members, host });
+	const ledger = new MemoryRoomLedger();
+	const room = new Room({
+		state:
+			options.state ??
+			newRoomState("ship-it", 1000, members, options.coordinator ?? null),
+		host,
+		ledger,
+	});
 	host.attach(room);
-	return { room, host };
+	return { room, host, ledger };
+}
+
+/** A transcript that alternates user lines (odd ids) and planner replies, for
+ *  the cap tests. */
+function longTranscript(count: number): RoomEntry[] {
+	return Array.from({ length: count }, (_, index) => {
+		const id = index + 1;
+		return id % 2 === 1
+			? { id, at: 1000, kind: "user" as const, text: `m${id}` }
+			: {
+					id,
+					at: 1000,
+					kind: "member" as const,
+					from: "planner" as const,
+					text: `r${id}`,
+				};
+	});
 }
 
 async function settle(room: Room): Promise<void> {
@@ -257,13 +300,17 @@ describe("Room", () => {
 		expect(room.view()).toEqual({
 			name: "ship-it",
 			members: ["planner", "builder", "reviewer"],
+			coordinator: null,
 			transcript: [{ id: 1, at: 1000, kind: "user", text: "status?" }],
 			run: { phase: "idle" },
+			pending: 0,
+			deliverable: null,
 			limits: {
 				minMembers: 2,
 				maxMembers: 6,
 				maxRounds: 3,
 				maxMessagesPerRun: 10,
+				maxQueuedSends: 5,
 			},
 		});
 	});
@@ -766,15 +813,20 @@ describe("Room", () => {
 		});
 	});
 
-	it("rejects a second send while live and a whitespace-only send", async () => {
+	it("queues a second send while live and rejects a whitespace-only send", async () => {
 		const { room } = makeRoom({
 			members: ["planner", "builder"],
 			scripts: { planner: [hang] },
 		});
 
 		room.send("one");
-		expect(room.send("two")).toEqual({ status: "rejected", reason: "busy" });
-		expect(room.send("   ")).toEqual({ status: "rejected", reason: "busy" });
+		expect(room.send("two")).toEqual({
+			status: "queued",
+			entry: { id: 2, at: 1000, kind: "user", text: "two" },
+			waiting: 1,
+		});
+		expect(room.send("   ")).toEqual({ status: "rejected", reason: "empty" });
+		expect(room.view().pending).toBe(1);
 		await room.stop();
 
 		const fresh = makeRoom();
@@ -784,6 +836,158 @@ describe("Room", () => {
 		});
 		expect(fresh.host.turns).toEqual([]);
 		expect(fresh.room.view().transcript).toEqual([]);
+	});
+
+	it("starts a queued send after the live run ends", async () => {
+		const { room, host } = makeRoom({ members: ["planner", "builder"] });
+
+		expect(room.send("first")).toEqual({
+			status: "started",
+			entry: { id: 1, at: 1000, kind: "user", text: "first" },
+		});
+		expect(room.send("second")).toEqual({
+			status: "queued",
+			entry: { id: 2, at: 1000, kind: "user", text: "second" },
+			waiting: 1,
+		});
+		expect(room.view().pending).toBe(1);
+
+		await settle(room);
+
+		expect(host.peakInFlight).toBe(1);
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+			"planner",
+			"builder",
+		]);
+		expect(host.turns[2].turn.text).toContain("  user: second");
+		expect(
+			host.events
+				.filter((event) => event.kind === "run_ended")
+				.map((event) => event.outcome),
+		).toEqual(["settled", "settled"]);
+		expect(
+			host.events
+				.filter((event) => event.kind === "entry")
+				.map((event) => event.entry.id),
+		).toEqual([1, 2]);
+		expect(room.view().pending).toBe(0);
+	});
+
+	it("keeps the queue across an interrupt and drains it afterwards", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder"],
+			scripts: { planner: [hang, pass] },
+		});
+
+		room.send("first");
+		await drain();
+		expect(host.turns).toHaveLength(1);
+		room.send("second");
+
+		room.interrupt();
+		expect(room.view().run).toEqual({ phase: "idle" });
+		await waitFor(() => host.turns.length === 3, "the queued send to start");
+		await settle(room);
+
+		expect(
+			host.events
+				.filter((event) => event.kind === "run_ended")
+				.map((event) => event.outcome),
+		).toEqual(["interrupted", "settled"]);
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"planner",
+			"builder",
+		]);
+		expect(room.view().transcript.map((entry) => entry.id)).toEqual([1, 2]);
+	});
+
+	it("refuses a send at the queue cap with queue_full", async () => {
+		const { room } = makeRoom({
+			members: ["planner", "builder"],
+			scripts: { planner: [hang] },
+		});
+
+		room.send("first");
+		["second", "third", "fourth", "fifth", "sixth"].forEach((text, index) => {
+			expect(room.send(text)).toEqual({
+				status: "queued",
+				entry: { id: index + 2, at: 1000, kind: "user", text },
+				waiting: index + 1,
+			});
+		});
+		expect(room.send("overflow")).toEqual({
+			status: "rejected",
+			reason: "queue_full",
+		});
+		expect(room.view().pending).toBe(5);
+		expect(room.view().transcript).toHaveLength(6);
+		await room.stop();
+	});
+
+	it("scopes an @all send to every member", async () => {
+		const { room, host } = makeRoom();
+
+		room.send("@all stand up");
+		await settle(room);
+
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+			"reviewer",
+		]);
+		expect(host.turns[0].turn.text).toContain(
+			"Addressed: @planner, @builder, @reviewer.",
+		);
+	});
+
+	it("skips a member who is no longer on the team and names them once", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder", "ghost"],
+			roster: ["planner", "builder"],
+		});
+
+		room.send("who is left?");
+		await settle(room);
+
+		expect(room.view().transcript[1]).toEqual({
+			id: 2,
+			at: 1000,
+			kind: "system",
+			text: "No longer on the team: @ghost.",
+		});
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+		]);
+	});
+
+	it("annotates a run that was open at load and leaves the room idle", () => {
+		const state: RoomState = {
+			...newRoomState("ship-it", 1000, ["planner", "builder"], null),
+			transcript: [{ id: 1, at: 1000, kind: "user", text: "was running" }],
+			queue: [{ entryId: 1, at: 1000 }],
+			runOpen: true,
+		};
+		const { room, ledger } = makeRoom({
+			members: ["planner", "builder"],
+			state,
+		});
+
+		expect(room.view().run).toEqual({ phase: "idle" });
+		expect(room.view().pending).toBe(1);
+		expect(room.view().transcript).toEqual([
+			{ id: 1, at: 1000, kind: "user", text: "was running" },
+			{
+				id: 2,
+				at: 1000,
+				kind: "system",
+				text: "Run interrupted by a restart.",
+			},
+		]);
+		expect(ledger.saves.at(-1)?.runOpen).toBe(false);
 	});
 
 	it("rejects a post from a stranger or when it is not the member's turn", async () => {
@@ -881,6 +1085,7 @@ describe("Room", () => {
 		expect(room.setMembers(["builder", "reviewer"])).toEqual({
 			status: "ok",
 			members: ["builder", "reviewer"],
+			coordinator: null,
 		});
 		expect(host.events.at(-1)).toEqual({
 			kind: "members",
@@ -926,6 +1131,325 @@ describe("Room", () => {
 			reason: "busy",
 		});
 		await room.stop();
+	});
+
+	it("keeps a coordinator the new member list still holds and clears a dropped one", () => {
+		const { room } = makeRoom({
+			members: ["planner", "builder", "reviewer"],
+			coordinator: "planner",
+		});
+
+		expect(room.setMembers(["planner", "builder"])).toEqual({
+			status: "ok",
+			members: ["planner", "builder"],
+			coordinator: "planner",
+		});
+		expect(room.setMembers(["builder", "reviewer"])).toEqual({
+			status: "ok",
+			members: ["builder", "reviewer"],
+			coordinator: null,
+		});
+		expect(room.view().coordinator).toBeNull();
+		expect(room.state().coordinator).toBeNull();
+	});
+
+	it("asks the coordinator for one deliverable after the run settles", async () => {
+		const { room, host, ledger } = makeRoom({
+			members: ["planner", "builder"],
+			coordinator: "planner",
+			scripts: {
+				planner: [
+					post("working on it"),
+					pass,
+					post("The parser fix is ready."),
+				],
+				builder: [pass, pass],
+			},
+		});
+
+		room.send("do the work");
+		await settle(room);
+
+		expect(host.deliverableDrafts).toEqual([
+			{
+				room: "ship-it",
+				coordinator: "planner",
+				task: "do the work",
+				outcome: "settled",
+				participants: ["planner", "builder"],
+				transcript: [
+					{ id: 1, at: 1000, kind: "user", text: "do the work" },
+					{
+						id: 2,
+						at: 1000,
+						kind: "member",
+						from: "planner",
+						text: "working on it",
+					},
+					{
+						id: 3,
+						at: 1000,
+						kind: "member",
+						from: "planner",
+						text: "The parser fix is ready.",
+					},
+				],
+				body: "The parser fix is ready.",
+				at: 1000,
+			},
+		]);
+		expect(room.view().transcript).toEqual([
+			{ id: 1, at: 1000, kind: "user", text: "do the work" },
+			{
+				id: 2,
+				at: 1000,
+				kind: "member",
+				from: "planner",
+				text: "working on it",
+			},
+			{
+				id: 3,
+				at: 1000,
+				kind: "member",
+				from: "planner",
+				text: "The parser fix is ready.",
+			},
+			{
+				id: 4,
+				at: 1000,
+				kind: "system",
+				text: "The deliverable was written to docs/deliverables/20260101T000000-ship-it.md.",
+			},
+		]);
+		expect(room.view().deliverable).toEqual({
+			at: 1000,
+			path: "docs/deliverables/20260101T000000-ship-it.md",
+			coordinator: "planner",
+		});
+		expect(ledger.saves.at(-1)?.deliverable).toEqual({
+			at: 1000,
+			path: "docs/deliverables/20260101T000000-ship-it.md",
+			coordinator: "planner",
+		});
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+			"planner",
+			"builder",
+			"planner",
+		]);
+		expect(host.turns[4].turn.text).toBe(
+			[
+				'The run in room "ship-it" ended after 2 rounds: settled.',
+				"Compile the final deliverable now.",
+				"Reply with room_reply; your reply becomes the deliverable body, and the room writes the file.",
+				"",
+				"Task: do the work",
+				"",
+				"Since your last turn:",
+				"  (nothing new)",
+			].join("\n"),
+		);
+	});
+
+	it("strips mentions from the deliverable task and asks after the message cap", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder"],
+			coordinator: "planner",
+			scripts: {
+				planner: [
+					post("m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10"),
+					post("Final."),
+				],
+			},
+		});
+
+		room.send("@builder @planner go");
+		await settle(room);
+
+		expect(host.deliverableDrafts).toHaveLength(1);
+		const draft = host.deliverableDrafts[0];
+		expect(draft.task).toBe("go");
+		expect(draft.outcome).toBe("message_cap");
+		expect(draft.participants).toEqual(["planner", "builder"]);
+		expect(draft.body).toBe("Final.");
+		expect(draft.transcript.map((entry) => entry.id)).toEqual([
+			1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+		]);
+		expect(draft.transcript.at(-1)).toEqual({
+			id: 12,
+			at: 1000,
+			kind: "member",
+			from: "planner",
+			text: "Final.",
+		});
+	});
+
+	it("writes no deliverable for a run that finished with another send queued", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder"],
+			coordinator: "planner",
+			scripts: { planner: [pass, hang], builder: [pass] },
+		});
+
+		room.send("first");
+		room.send("second");
+		await waitFor(() => host.turns.length >= 3, "the queued run to start");
+
+		expect(room.view().pending).toBe(0);
+		expect(room.view().run.phase).toBe("running");
+		expect(host.deliverableDrafts).toEqual([]);
+
+		room.interrupt();
+		await settle(room);
+		expect(host.deliverableDrafts).toEqual([]);
+		expect(room.view().deliverable).toBeNull();
+	});
+
+	it("writes no deliverable when the run is interrupted or the room is stopped", async () => {
+		const interrupted = makeRoom({
+			members: ["planner", "builder"],
+			coordinator: "planner",
+			scripts: { planner: [hang] },
+		});
+		interrupted.room.send("go");
+		await drain();
+		interrupted.room.interrupt();
+		await settle(interrupted.room);
+		expect(interrupted.host.deliverableDrafts).toEqual([]);
+		expect(interrupted.room.view().deliverable).toBeNull();
+
+		const stopped = makeRoom({
+			members: ["planner", "builder"],
+			coordinator: "planner",
+			scripts: { planner: [hang] },
+		});
+		stopped.room.send("go");
+		await drain();
+		await stopped.room.stop();
+		expect(stopped.host.deliverableDrafts).toEqual([]);
+	});
+
+	it("writes no deliverable when the run budget expires", async () => {
+		vi.useFakeTimers();
+		try {
+			const { room, host } = makeRoom({
+				members: ["planner", "builder", "reviewer"],
+				coordinator: "planner",
+				clock: () => Date.now(),
+				scripts: {
+					planner: [post("one")],
+					builder: [hang, hang],
+					reviewer: [hang, hang],
+				},
+			});
+
+			room.send("go");
+			await drain();
+			await vi.advanceTimersByTimeAsync(ROOM_TURN_TIMEOUT_MS);
+			await drain();
+			await vi.advanceTimersByTimeAsync(ROOM_TURN_TIMEOUT_MS);
+			await drain();
+			await vi.advanceTimersByTimeAsync(ROOM_TURN_TIMEOUT_MS / 2);
+			await drain();
+
+			expect(host.events.at(-1)).toMatchObject({
+				kind: "run_ended",
+				outcome: "run_timeout",
+			});
+			expect(host.deliverableDrafts).toEqual([]);
+			expect(room.view().deliverable).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("folds an over-cap transcript into one summary and keeps the recent window", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder"],
+			state: {
+				...newRoomState("ship-it", 1000, ["planner", "builder"], null),
+				transcript: longTranscript(ROOM_MAX_STORED_ENTRIES + 5),
+			},
+		});
+
+		room.send("new");
+		await settle(room);
+
+		const transcript = room.view().transcript;
+		expect(transcript).toHaveLength(101);
+		expect(transcript[0]).toEqual({
+			id: 207,
+			at: 1000,
+			kind: "system",
+			text: '[106 earlier entries compacted: user 53, planner 53; first lines: user: "m1" | planner: "r2" | user: "m3"]',
+		});
+		expect(transcript[1].id).toBe(107);
+		expect(transcript.at(-1)?.id).toBe(206);
+		expect(transcript.some((entry) => entry.id <= 106)).toBe(false);
+		expect(
+			host.events
+				.filter((event) => event.kind === "entry")
+				.map((event) => event.entry.id),
+		).toEqual([206, 207]);
+		const prompt = host.turns[0].turn.text;
+		expect(prompt).toContain(
+			'  system: [106 earlier entries compacted: user 53, planner 53; first lines: user: "m1" | planner: "r2" | user: "m3"]',
+		);
+		expect(prompt).toContain("  (earlier messages omitted)");
+		expect(prompt).toContain("  user: m205");
+		expect(prompt).toContain("  planner: r204");
+		expect(prompt).toContain("  user: new");
+		expect(prompt).not.toContain("  planner: r186");
+	});
+
+	it("folds mid-run and gives each cursor the summary without re-delivering seen entries", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder"],
+			state: {
+				...newRoomState("ship-it", 1000, ["planner", "builder"], null),
+				transcript: longTranscript(ROOM_MAX_STORED_ENTRIES - 2),
+			},
+			scripts: { planner: [post("x")], builder: [hang] },
+		});
+
+		room.send("first");
+		await drain();
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+		]);
+
+		// A queued send lands while the builder's turn is in flight and pushes
+		// the transcript over the cap.
+		room.send("second");
+		room.interrupt();
+		await settle(room);
+		await drain();
+
+		expect(room.view().transcript[0]).toEqual({
+			id: 202,
+			at: 1000,
+			kind: "system",
+			text: '[101 earlier entries compacted: user 51, planner 50; first lines: user: "m1" | planner: "r2" | user: "m3"]',
+		});
+		await waitFor(() => host.turns.length >= 4, "the queued run to start");
+
+		const plannerPrompt = host.turns[2].turn.text;
+		expect(plannerPrompt).toContain(
+			'  system: [101 earlier entries compacted: user 51, planner 50; first lines: user: "m1" | planner: "r2" | user: "m3"]',
+		);
+		expect(plannerPrompt).toContain("  user: second");
+		expect(plannerPrompt).not.toContain("  user: m197");
+		expect(plannerPrompt).not.toContain("  (earlier messages omitted)");
+
+		const builderPrompt = host.turns[3].turn.text;
+		expect(builderPrompt).toContain("  (earlier messages omitted)");
+		expect(builderPrompt).toContain(
+			'  system: [101 earlier entries compacted: user 51, planner 50; first lines: user: "m1" | planner: "r2" | user: "m3"]',
+		);
+		expect(builderPrompt).toContain("  user: second");
+		expect(builderPrompt).toContain("  user: m197");
 	});
 });
 

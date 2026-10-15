@@ -66,6 +66,7 @@ const roomLimits = {
 	maxMembers: 6,
 	maxRounds: 3,
 	maxMessagesPerRun: 10,
+	maxQueuedSends: 5,
 };
 
 function createRoomHub(provider: Provider): TeamHub {
@@ -178,8 +179,11 @@ describe("TeamHub", () => {
 			{
 				name: "ship-it",
 				members: ["alpha", "beta"],
+				coordinator: null,
 				transcript: [],
 				run: { phase: "idle" },
+				pending: 0,
+				deliverable: null,
 				limits: roomLimits,
 			},
 		]);
@@ -199,6 +203,7 @@ describe("TeamHub", () => {
 		const created = await post("/api/rooms", {
 			name: "standup",
 			members: ["alpha", "beta"],
+			coordinator: "alpha",
 		});
 		expect(created.status).toBe(200);
 		expect(await created.json()).toEqual({
@@ -206,10 +211,23 @@ describe("TeamHub", () => {
 			room: {
 				name: "standup",
 				members: ["alpha", "beta"],
+				coordinator: "alpha",
 				transcript: [],
 				run: { phase: "idle" },
+				pending: 0,
+				deliverable: null,
 				limits: roomLimits,
 			},
+		});
+
+		const badCoordinator = await post("/api/rooms", {
+			name: "unled",
+			members: ["alpha", "beta"],
+			coordinator: "ghost",
+		});
+		expect(badCoordinator.status).toBe(400);
+		expect(await badCoordinator.json()).toEqual({
+			error: "The coordinator must be a member of the room.",
 		});
 
 		const sent = await post("/api/rooms/send", {

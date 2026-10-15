@@ -221,6 +221,7 @@ describe("clientReducer", () => {
 const shipIt: RoomInfo = {
 	name: "ship-it",
 	members: ["alpha", "beta"],
+	coordinator: null,
 	transcript: [
 		{ id: 1, at: 1_700_000_000_000, kind: "user", text: "status?" },
 		{
@@ -232,11 +233,14 @@ const shipIt: RoomInfo = {
 		},
 	],
 	run: { phase: "idle" },
+	pending: 0,
+	deliverable: null,
 	limits: {
 		minMembers: 2,
 		maxMembers: 6,
 		maxRounds: 3,
 		maxMessagesPerRun: 10,
+		maxQueuedSends: 5,
 	},
 };
 
@@ -296,6 +300,32 @@ describe("rooms", () => {
 		).toEqual(["status?", "on it", "again"]);
 		expect(state.rooms["ship-it"].run).toEqual({ phase: "idle" });
 		expect(state.rooms["ship-it"].lastOutcome).toBe("settled");
+	});
+
+	it("seeds a room's coordinator and last deliverable", () => {
+		const state = apply([
+			{
+				...hello,
+				rooms: [
+					{
+						...shipIt,
+						coordinator: "alpha",
+						deliverable: {
+							at: 1_700_000_003_000,
+							path: "docs/deliverables/20261015T143012-ship-it.md",
+							coordinator: "alpha",
+						},
+					},
+				],
+			},
+		]);
+
+		expect(state.rooms["ship-it"].coordinator).toBe("alpha");
+		expect(state.rooms["ship-it"].deliverable).toEqual({
+			at: 1_700_000_003_000,
+			path: "docs/deliverables/20261015T143012-ship-it.md",
+			coordinator: "alpha",
+		});
 	});
 
 	it("keeps the last 100 entries of a room, like the DM feed", () => {

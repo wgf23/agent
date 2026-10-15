@@ -4,7 +4,11 @@ import type { BotInfo } from "../protocol";
 
 interface Props {
 	robs: BotInfo[];
-	onCreateRoom: (name: string, members: string[]) => Promise<void>;
+	onCreateRoom: (
+		name: string,
+		members: string[],
+		coordinator: string | null,
+	) => Promise<void>;
 	onCreated: (name: string) => void;
 	onClose: () => void;
 }
@@ -17,6 +21,7 @@ export default function NewRoomDialog({
 }: Props) {
 	const [name, setName] = useState("");
 	const [members, setMembers] = useState<string[]>([]);
+	const [coordinator, setCoordinator] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -24,11 +29,12 @@ export default function NewRoomDialog({
 	const canCreate = nameValid && members.length > 0 && !submitting;
 
 	const toggle = (member: string) => {
-		setMembers((current) =>
-			current.includes(member)
-				? current.filter((item) => item !== member)
-				: [...current, member],
-		);
+		if (members.includes(member)) {
+			setMembers((current) => current.filter((item) => item !== member));
+			if (coordinator === member) setCoordinator(null);
+			return;
+		}
+		setMembers((current) => [...current, member]);
 	};
 
 	const submit = async (event: FormEvent) => {
@@ -37,7 +43,7 @@ export default function NewRoomDialog({
 		setSubmitting(true);
 		setError(null);
 		try {
-			await onCreateRoom(name.trim(), members);
+			await onCreateRoom(name.trim(), members, coordinator);
 			onCreated(name.trim());
 		} catch (caught) {
 			setError(caught instanceof Error ? caught.message : String(caught));
@@ -97,6 +103,30 @@ export default function NewRoomDialog({
 								选择 2–6 名成员；消息里的 @名字 可指定回应者
 							</span>
 						</div>
+
+						{members.length > 0 && (
+							<label className="field">
+								<span className="field-label">协调者（可选）</span>
+								<select
+									className="field-input"
+									value={coordinator ?? ""}
+									onChange={(event) => {
+										const value = event.target.value;
+										setCoordinator(value === "" ? null : value);
+									}}
+								>
+									<option value="">无</option>
+									{members.map((member) => (
+										<option key={member} value={member}>
+											{member}
+										</option>
+									))}
+								</select>
+								<span className="field-hint">
+									房间安静后由协调者汇总一份交付文档，写入 docs/deliverables/
+								</span>
+							</label>
+						)}
 
 						{error !== null && (
 							<div className="dialog-error" role="alert">

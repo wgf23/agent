@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { RoomEntry, RoomView } from "../../src/rob/room.js";
 import {
 	parseRoomMentions,
+	renderAbsentMembers,
+	renderDeliverableFailure,
+	renderDeliverableNotice,
 	renderRoomOutcome,
 	renderRoomTurn,
+	renderRoomWrapUp,
+	renderTranscriptSummary,
 } from "../../src/rob/room-text.js";
 import type { RobName } from "../../src/rob/types.js";
 
@@ -60,6 +65,36 @@ describe("parseRoomMentions", () => {
 		expect(parseRoomMentions("what changed?", members)).toEqual({
 			body: "what changed?",
 			addressed: [],
+		});
+	});
+
+	it("addresses every member for @all and drops it from the body", () => {
+		expect(parseRoomMentions("@all stand up", members)).toEqual({
+			body: "stand up",
+			addressed: ["planner", "builder", "reviewer"],
+		});
+	});
+
+	it("unions @all with a named mention in membership order", () => {
+		expect(parseRoomMentions("@all @builder take a look", members)).toEqual({
+			body: "take a look",
+			addressed: ["planner", "builder", "reviewer"],
+		});
+		expect(parseRoomMentions("@builder @all take a look", members)).toEqual({
+			body: "take a look",
+			addressed: ["planner", "builder", "reviewer"],
+		});
+	});
+
+	it("treats @all as a plain member when a member is named all", () => {
+		const team: readonly RobName[] = ["all", "builder"];
+		expect(parseRoomMentions("@all go", team)).toEqual({
+			body: "go",
+			addressed: ["all"],
+		});
+		expect(parseRoomMentions("@all @builder go", team)).toEqual({
+			body: "go",
+			addressed: ["all", "builder"],
 		});
 	});
 });
@@ -141,17 +176,105 @@ describe("renderRoomTurn", () => {
 	});
 });
 
+describe("renderRoomWrapUp", () => {
+	it("states the ending, the task, and the unseen window", () => {
+		expect(
+			renderRoomWrapUp({
+				room: "ship-it",
+				rounds: 2,
+				outcome: "settled",
+				task: "ship the parser",
+				unseen: [userLine, memberLine],
+				truncated: false,
+			}),
+		).toBe(
+			[
+				'The run in room "ship-it" ended after 2 rounds: settled.',
+				"Compile the final deliverable now.",
+				"Reply with room_reply; your reply becomes the deliverable body, and the room writes the file.",
+				"",
+				"Task: ship the parser",
+				"",
+				"Since your last turn:",
+				"  user: is the parser safe on CRLF?",
+				"  reviewer: one gap: the reader splits on LF only.",
+			].join("\n"),
+		);
+	});
+
+	it("marks a truncated window and an empty task", () => {
+		expect(
+			renderRoomWrapUp({
+				room: "ship-it",
+				rounds: 1,
+				outcome: "message_cap",
+				task: "",
+				unseen: [],
+				truncated: true,
+			}),
+		).toBe(
+			[
+				'The run in room "ship-it" ended after 1 round: message_cap.',
+				"Compile the final deliverable now.",
+				"Reply with room_reply; your reply becomes the deliverable body, and the room writes the file.",
+				"",
+				"Task: (unspecified)",
+				"",
+				"Since your last turn:",
+				"  (earlier messages omitted)",
+				"  (nothing new)",
+			].join("\n"),
+		);
+	});
+});
+
+describe("renderTranscriptSummary", () => {
+	it("counts speakers in order and samples the first lines", () => {
+		expect(renderTranscriptSummary([userLine, memberLine, systemLine])).toBe(
+			'[3 earlier entries compacted: user 1, reviewer 1, system 1; first lines: user: "is the parser safe on CRLF?" | reviewer: "one gap: the reader splits on LF only." | system: "planner timed out."]',
+		);
+	});
+
+	it("truncates a long first line and takes at most three samples", () => {
+		const long: RoomEntry = {
+			id: 4,
+			at: 0,
+			kind: "user",
+			text: `${"x".repeat(70)}\nsecond line`,
+		};
+		const fourth: RoomEntry = { id: 5, at: 0, kind: "user", text: "later" };
+		expect(renderTranscriptSummary([long, userLine, memberLine, fourth])).toBe(
+			`[4 earlier entries compacted: user 3, reviewer 1; first lines: user: "${"x".repeat(60)}..." | user: "is the parser safe on CRLF?" | reviewer: "one gap: the reader splits on LF only."]`,
+		);
+	});
+});
+
+describe("deliverable notice text", () => {
+	it("names the written path and the failure reason", () => {
+		expect(renderDeliverableNotice("docs/deliverables/x.md")).toBe(
+			"The deliverable was written to docs/deliverables/x.md.",
+		);
+		expect(renderDeliverableFailure("disk full")).toBe(
+			"The deliverable was not written: disk full",
+		);
+	});
+});
+
 describe("renderRoomOutcome", () => {
 	const view: RoomView = {
 		name: "ship-it",
 		members: ["planner", "builder"],
+		coordinator: null,
 		transcript: [],
 		run: { phase: "idle" },
+		pending: 0,
+		deliverable: null,
 		limits: {
 			minMembers: 2,
 			maxMembers: 6,
 			maxRounds: 3,
 			maxMessagesPerRun: 10,
+			maxQueuedSends: 5,
 		},
 	};
 
@@ -159,10 +282,22 @@ describe("renderRoomOutcome", () => {
 		const cases: Array<[Parameters<typeof renderRoomOutcome>[0], string]> = [
 			[{ status: "started", entry: userLine }, 'Posted to room "ship-it".'],
 			[{ status: "posted", entry: memberLine }, 'Posted to room "ship-it".'],
+			[
+				{ status: "queued", entry: userLine, waiting: 2 },
+				'Queued for room "ship-it" (2 waiting).',
+			],
 			[{ status: "passed" }, 'Passed in room "ship-it".'],
 			[
-				{ status: "ok", members: ["planner", "builder"] },
+				{ status: "ok", members: ["planner", "builder"], coordinator: null },
 				'Room "ship-it" now has members: planner, builder.',
+			],
+			[
+				{
+					status: "ok",
+					members: ["planner", "builder"],
+					coordinator: "planner",
+				},
+				'Room "ship-it" now has members: planner, builder. Coordinator: planner.',
 			],
 			[{ status: "created", room: view }, 'Created room "ship-it".'],
 			[
@@ -172,6 +307,10 @@ describe("renderRoomOutcome", () => {
 			[{ status: "rejected", reason: "busy" }, 'Room "ship-it" is busy.'],
 			[{ status: "rejected", reason: "stopped" }, 'Room "ship-it" is stopped.'],
 			[{ status: "rejected", reason: "empty" }, "The room message was empty."],
+			[
+				{ status: "rejected", reason: "queue_full" },
+				'Room "ship-it" reached its send queue cap.',
+			],
 			[
 				{ status: "rejected", reason: "not_a_member" },
 				'You are not a member of room "ship-it".',
@@ -201,6 +340,10 @@ describe("renderRoomOutcome", () => {
 				'"user" and "system" cannot be room members.',
 			],
 			[
+				{ status: "rejected", reason: "coordinator_not_member" },
+				"The coordinator must be a member of the room.",
+			],
+			[
 				{ status: "rejected", reason: "duplicate" },
 				'A room named "ship-it" already exists.',
 			],
@@ -213,5 +356,13 @@ describe("renderRoomOutcome", () => {
 		for (const [outcome, expected] of cases) {
 			expect(renderRoomOutcome(outcome, "ship-it")).toBe(expected);
 		}
+	});
+});
+
+describe("renderAbsentMembers", () => {
+	it("names the members that left the team", () => {
+		expect(renderAbsentMembers(["ghost", "phantom"])).toBe(
+			"No longer on the team: @ghost, @phantom.",
+		);
 	});
 });

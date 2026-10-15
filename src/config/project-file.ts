@@ -11,6 +11,7 @@ import {
 import {
 	type RoomConfig,
 	roomConfigSchema,
+	validateRoomCoordinator,
 	validateRoomMembers,
 } from "../rob/room.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
@@ -56,6 +57,13 @@ export function parseRooms(
 		const members = validateRoomMembers(room.members, roster);
 		if (members.status === "rejected") {
 			return { ok: false, error: renderRoomOutcome(members, room.name) };
+		}
+		const coordinator = validateRoomCoordinator(
+			room.coordinator,
+			members.members,
+		);
+		if (coordinator.status === "rejected") {
+			return { ok: false, error: renderRoomOutcome(coordinator, room.name) };
 		}
 	}
 	return { ok: true, rooms: parsed.data };

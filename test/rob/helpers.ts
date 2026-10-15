@@ -4,6 +4,7 @@ import type {
 	ApprovalRequest,
 } from "../../src/permissions/authorizer.js";
 import type { AuthorizerFactory } from "../../src/rob/rob.js";
+import type { RoomLedger, RoomState } from "../../src/rob/room.js";
 import { createTeamOperations, teamTools } from "../../src/rob/tools.js";
 import type {
 	BridgePort,
@@ -16,6 +17,16 @@ import type {
 	TeamPort,
 	TurnHost,
 } from "../../src/rob/types.js";
+
+/** The room's persistence port in memory, for tests that do not exercise the
+ *  file store (graft 3). */
+export class MemoryRoomLedger implements RoomLedger {
+	readonly saves: RoomState[] = [];
+	async save(state: RoomState): Promise<void> {
+		this.saves.push(state);
+	}
+	async flush(): Promise<void> {}
+}
 
 export function allowAllAuthorizerFactory(): AuthorizerFactory {
 	return () => async () => ({ allowed: true });

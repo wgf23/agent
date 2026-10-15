@@ -13,7 +13,10 @@ export interface SandboxSettings {
 
 export const DEFAULT_SANDBOX: SandboxSettings = {
 	mode: "auto",
-	network: false,
+	// Network is on by default: the sandbox's job is to bound the filesystem, and
+	// a sandboxed `bash` that cannot reach the network breaks ordinary work such
+	// as `npm install` or `git fetch`. Set `sandbox.network` to false to deny TCP.
+	network: true,
 	writablePaths: [],
 };
 

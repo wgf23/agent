@@ -61,6 +61,66 @@ describe("readProjectConfig", () => {
 		if (result.ok) return;
 		expect(result.error).toContain("Invalid rooms");
 	});
+
+	it("accepts a coordinator that is a member", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			JSON.stringify({
+				robs: [
+					{ name: "planner", role: "plan" },
+					{ name: "builder", role: "build" },
+				],
+				rooms: [
+					{
+						name: "ship-it",
+						members: ["planner", "builder"],
+						coordinator: "planner",
+					},
+				],
+			}),
+			"utf8",
+		);
+
+		const result = await readProjectConfig(workspace);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.config.rooms).toEqual([
+			{
+				name: "ship-it",
+				members: ["planner", "builder"],
+				coordinator: "planner",
+			},
+		]);
+	});
+
+	it("rejects a coordinator that is not a member", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			JSON.stringify({
+				robs: [
+					{ name: "planner", role: "plan" },
+					{ name: "builder", role: "build" },
+				],
+				rooms: [
+					{
+						name: "ship-it",
+						members: ["planner", "builder"],
+						coordinator: "reviewer",
+					},
+				],
+			}),
+			"utf8",
+		);
+
+		const result = await readProjectConfig(workspace);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain(
+			"The coordinator must be a member of the room.",
+		);
+	});
 });
 
 describe("addPermissionRule", () => {

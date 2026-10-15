@@ -45,7 +45,7 @@ export default function RoomView({
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const running = room.run.phase === "running";
-	const canSend = configured && !running && value.trim() !== "";
+	const canSend = configured && value.trim() !== "";
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: new entries must re-run the scroll
 	useLayoutEffect(() => {
@@ -113,7 +113,7 @@ export default function RoomView({
 	if (!configured) {
 		placeholder = "请先配置模型";
 	} else if (running) {
-		placeholder = "成员正在回复，可中断本次发送…";
+		placeholder = "成员正在回复，消息会排队…";
 	}
 
 	return (
@@ -138,6 +138,11 @@ export default function RoomView({
 						</span>
 					</div>
 					<div className="bot-header-role">{roomDetail(room)}</div>
+					{room.deliverable !== null && (
+						<div className="bot-header-role" title={room.deliverable.path}>
+							最近交付：{room.deliverable.path}
+						</div>
+					)}
 				</div>
 			</header>
 
@@ -222,7 +227,7 @@ export default function RoomView({
 				</div>
 				<p className="composer-hint">
 					{running
-						? "成员回复期间不能发送新消息；中断后可继续"
+						? "成员回复期间可继续发送，消息会排队等本次结束"
 						: "Enter 发送 · Shift+Enter 换行"}
 				</p>
 			</div>
@@ -261,13 +266,15 @@ function RoomEntryRow({ entry }: { entry: RoomMessageView }) {
 
 function roomDetail(room: ClientRoom): string {
 	const members = `成员：${room.members.join("、")}`;
+	const coordinator =
+		room.coordinator === null ? "" : ` · 协调者：${room.coordinator}`;
 	if (room.run.phase === "running") {
 		const speaker =
 			room.run.current === null ? "" : ` · ${room.run.current} 发言中`;
-		return `${members} · 第 ${room.run.round}/${room.run.rounds} 轮${speaker}`;
+		return `${members}${coordinator} · 第 ${room.run.round}/${room.run.rounds} 轮${speaker}`;
 	}
 	if (room.lastOutcome !== null) {
-		return `${members} · ${OUTCOME_LABEL[room.lastOutcome]}`;
+		return `${members}${coordinator} · ${OUTCOME_LABEL[room.lastOutcome]}`;
 	}
-	return members;
+	return `${members}${coordinator}`;
 }

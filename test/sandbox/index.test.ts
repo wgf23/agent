@@ -82,7 +82,7 @@ describe("planSandboxedBash", () => {
 				"-c",
 				"printf hi",
 			],
-			env: { LL_WRITABLE: `/ws:${tmpdir()}` },
+			env: { LL_WRITABLE: `/ws:${tmpdir()}`, LL_NETWORK: "1" },
 		});
 	});
 

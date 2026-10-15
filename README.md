@@ -158,14 +158,14 @@ In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Al
 {
   "sandbox": {
     "mode": "auto",
-    "network": false,
+    "network": true,
     "writablePaths": ["/some/extra/dir"]
   }
 }
 ```
 
 - `mode` is `"auto"` (default), `"require"`, or `"off"`. `auto` uses the best backend and warns on stderr and in the tool output when none exists. `require` refuses to run the command when no backend exists and tells you to install bubblewrap or switch mode. `off` runs the command with no sandbox at all.
-- `network` defaults to `false`; the sandbox denies TCP (and, under bubblewrap, the whole network namespace).
+- `network` defaults to `true`; set it to `false` to deny TCP (and, under bubblewrap, the whole network namespace).
 - `writablePaths` defaults to `[]`. The workspace root and the system temp directory are always writable; add other absolute paths here.
 
 The project file overrides the global file field by field, and both override the built-in defaults. The global file accepts a `sandbox` block.
@@ -275,17 +275,27 @@ A room is a named group chat over 2 to 6 of your robs. Define rooms next to your
     { "name": "builder", "role": "write code" },
     { "name": "reviewer", "role": "review diffs" }
   ],
-  "rooms": [{ "name": "ship-it", "members": ["planner", "builder", "reviewer"] }]
+  "rooms": [
+    {
+      "name": "ship-it",
+      "members": ["planner", "builder", "reviewer"],
+      "coordinator": "planner"
+    }
+  ]
 }
 ```
 
 You take part in the room. One message from you starts up to three rounds, one member turn at a time in membership order. A member adds a line by calling `room_reply`, or passes by ending its turn without calling it. A round in which nobody speaks settles the run. The other ways a run ends are the round cap, the message cap of ten, a turn or run timeout, an interrupt, and a stop.
 
-Mention `@name` to scope the run to that member; with no mention, every member answers. A member reply is gated by that rob's `permissions`; `room_reply` is always allowed, like `send_message`.
+Mention `@name` to scope the run to that member. Name several members to reach each of them, in membership order. `@all` reaches every member and unions with any named mentions. With no mention, every member answers. A member reply is gated by that rob's `permissions`; `room_reply` is always allowed, like `send_message`.
 
-In the TUI, a room appears in the left list beside the robs. Select it and type. `/room <name> <member> <member>` creates or selects a room, and `/rooms` lists them. In the web UI, rooms sit in the sidebar beside the bots; create one there, open it, and its transcript survives a reload. The web room header has an interrupt button.
+Sending while the members are still replying is fine. Your message lands in the transcript right away, and its round starts when the current send finishes. Up to five sends can wait.
 
-A room's transcript lives in memory with the team, so it is gone when the process exits. A send while a run is in flight is refused, not queued.
+When the room goes quiet and nothing is queued, a room with a `coordinator` gives that rob one final turn. The reply is the deliverable: the room writes it to `docs/deliverables/<UTC stamp>-<slug>.md` named after the message that started the run, and notes the path in the transcript. An interrupt, a stop, or a run timeout writes no file. A long transcript stays bounded: above 200 entries the oldest fold into one summary entry, and each member keeps seeing the summary plus the most recent window.
+
+Rooms are persistent. Each room's state, its transcript and queued sends included, lives in `~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json` and comes back after a restart. `MY_AGENT_ROOMS_DIR` overrides the root. `my-agent.json` is only the seed: once a room has a ledger, that ledger is the room's state.
+
+In the TUI, a room appears in the left list beside the robs. Select it and type. `/room <name> <member> <member>` creates or selects a room, and `/rooms` lists them. In the web UI, rooms sit in the sidebar beside the bots; create one there, open it, and its transcript survives a reload. The web room header has an interrupt button, the coordinator, and the last deliverable path; the create dialog offers an optional coordinator picker.
 
 ## Known limits
 
@@ -296,7 +306,7 @@ A room's transcript lives in memory with the team, so it is gone when the proces
 - A `pi`, `opencode`, or `claude` cli rob can use `send_message` and `delegate`. A bridged call returns to the team over a per-turn local socket, and the rob's authorizer and the shared approval queue still gate it. The `pi` backend relies on its approval extension loading: if the extension loads without registering its `tool_call` hook, its non-team tools run unapproved, and a failed load stops the run. An `opencode` permission request carries only opencode's action and resource, so a request that cannot be mapped back to one of the six tools is rejected, and for the shared `edit` action the bridge authorizes as `write_file` or `edit_file`, whichever the rob's rules resolve to ask. The `claude` backend has no interactive approval bridge, so an `ask` tool stays out of the exposed built-ins instead of prompting.
 - Our permission rules map eight claude built-ins: `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`, `WebFetch`, and `WebSearch` (this branch has no `web_fetch` or `web_search` tool). A `claude` cli rob's exposed built-ins are exactly the mapped ones its rules resolve to `allow`, passed to `--tools`; Claude Code's other built-ins (`Task`, `Workflow`, `NotebookEdit`, its cron and scheduling tools, and the rest) are outside our rules and are never exposed.
 - CLI backends are `pi`, `opencode`, and `claude`. `codex` and `kimi` are not implemented.
-- Rooms keep one run at a time, so a send while a run is live is refused. A room transcript is in memory and is lost when the process exits. A member turn is a full rob turn, so a round can call tools and ask for approval, and a member that is busy with its own work makes its room round wait. A room the web or TUI creates at runtime is not written back to `my-agent.json` and is gone after a restart.
+- Rooms keep one run at a time; a send while a run is live queues, up to five. A member turn is a full rob turn, so a round can call tools and ask for approval, and a member that is busy with its own work makes its room round wait. A runtime-created room is not written back to `my-agent.json`, but its ledger survives in the data root. Editing `members` or `coordinator` in `my-agent.json` does not change a room that already has a ledger; the room reports the disagreement and keeps the ledger. Two my-agent processes on one workspace can overwrite each other's room ledgers, so run one surface per workspace. A room with no coordinator never writes a deliverable.
 
 ## Development
 
