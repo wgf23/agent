@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RoomEntry, RoomView } from "../../src/rob/room.js";
 import {
 	parseRoomMentions,
+	renderAbsentMembers,
 	renderRoomOutcome,
 	renderRoomTurn,
 } from "../../src/rob/room-text.js";
@@ -60,6 +61,36 @@ describe("parseRoomMentions", () => {
 		expect(parseRoomMentions("what changed?", members)).toEqual({
 			body: "what changed?",
 			addressed: [],
+		});
+	});
+
+	it("addresses every member for @all and drops it from the body", () => {
+		expect(parseRoomMentions("@all stand up", members)).toEqual({
+			body: "stand up",
+			addressed: ["planner", "builder", "reviewer"],
+		});
+	});
+
+	it("unions @all with a named mention in membership order", () => {
+		expect(parseRoomMentions("@all @builder take a look", members)).toEqual({
+			body: "take a look",
+			addressed: ["planner", "builder", "reviewer"],
+		});
+		expect(parseRoomMentions("@builder @all take a look", members)).toEqual({
+			body: "take a look",
+			addressed: ["planner", "builder", "reviewer"],
+		});
+	});
+
+	it("treats @all as a plain member when a member is named all", () => {
+		const team: readonly RobName[] = ["all", "builder"];
+		expect(parseRoomMentions("@all go", team)).toEqual({
+			body: "go",
+			addressed: ["all"],
+		});
+		expect(parseRoomMentions("@all @builder go", team)).toEqual({
+			body: "go",
+			addressed: ["all", "builder"],
 		});
 	});
 });
@@ -163,6 +194,10 @@ describe("renderRoomOutcome", () => {
 		const cases: Array<[Parameters<typeof renderRoomOutcome>[0], string]> = [
 			[{ status: "started", entry: userLine }, 'Posted to room "ship-it".'],
 			[{ status: "posted", entry: memberLine }, 'Posted to room "ship-it".'],
+			[
+				{ status: "queued", entry: userLine, waiting: 2 },
+				'Queued for room "ship-it" (2 waiting).',
+			],
 			[{ status: "passed" }, 'Passed in room "ship-it".'],
 			[
 				{ status: "ok", members: ["planner", "builder"] },
@@ -176,6 +211,10 @@ describe("renderRoomOutcome", () => {
 			[{ status: "rejected", reason: "busy" }, 'Room "ship-it" is busy.'],
 			[{ status: "rejected", reason: "stopped" }, 'Room "ship-it" is stopped.'],
 			[{ status: "rejected", reason: "empty" }, "The room message was empty."],
+			[
+				{ status: "rejected", reason: "queue_full" },
+				'Room "ship-it" reached its send queue cap.',
+			],
 			[
 				{ status: "rejected", reason: "not_a_member" },
 				'You are not a member of room "ship-it".',
@@ -217,5 +256,13 @@ describe("renderRoomOutcome", () => {
 		for (const [outcome, expected] of cases) {
 			expect(renderRoomOutcome(outcome, "ship-it")).toBe(expected);
 		}
+	});
+});
+
+describe("renderAbsentMembers", () => {
+	it("names the members that left the team", () => {
+		expect(renderAbsentMembers(["ghost", "phantom"])).toBe(
+			"No longer on the team: @ghost, @phantom.",
+		);
 	});
 });

@@ -4,7 +4,6 @@ import {
 	Room,
 	type RoomEvent,
 	type RoomHost,
-	type RoomLedger,
 	type RoomReplyOutcome,
 	type RoomState,
 	type RoomTurn,
@@ -13,7 +12,7 @@ import {
 } from "../../src/rob/room.js";
 import { newRoomState } from "../../src/rob/room-store.js";
 import type { RobName } from "../../src/rob/types.js";
-import { waitFor } from "./helpers.js";
+import { MemoryRoomLedger, waitFor } from "./helpers.js";
 
 type TurnAction =
 	| { readonly kind: "post"; readonly texts: readonly string[] }
@@ -113,16 +112,6 @@ class FakeRoomHost implements RoomHost {
 			this.inFlight -= 1;
 		}
 	}
-}
-
-// The room's persistence is a port, so a test can hold the states it offered
-// instead of touching a filesystem (graft 3).
-class MemoryRoomLedger implements RoomLedger {
-	readonly saves: RoomState[] = [];
-	async save(state: RoomState): Promise<void> {
-		this.saves.push(state);
-	}
-	async flush(): Promise<void> {}
 }
 
 function makeRoom(
@@ -812,6 +801,158 @@ describe("Room", () => {
 		});
 		expect(fresh.host.turns).toEqual([]);
 		expect(fresh.room.view().transcript).toEqual([]);
+	});
+
+	it("starts a queued send after the live run ends", async () => {
+		const { room, host } = makeRoom({ members: ["planner", "builder"] });
+
+		expect(room.send("first")).toEqual({
+			status: "started",
+			entry: { id: 1, at: 1000, kind: "user", text: "first" },
+		});
+		expect(room.send("second")).toEqual({
+			status: "queued",
+			entry: { id: 2, at: 1000, kind: "user", text: "second" },
+			waiting: 1,
+		});
+		expect(room.view().pending).toBe(1);
+
+		await settle(room);
+
+		expect(host.peakInFlight).toBe(1);
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+			"planner",
+			"builder",
+		]);
+		expect(host.turns[2].turn.text).toContain("  user: second");
+		expect(
+			host.events
+				.filter((event) => event.kind === "run_ended")
+				.map((event) => event.outcome),
+		).toEqual(["settled", "settled"]);
+		expect(
+			host.events
+				.filter((event) => event.kind === "entry")
+				.map((event) => event.entry.id),
+		).toEqual([1, 2]);
+		expect(room.view().pending).toBe(0);
+	});
+
+	it("keeps the queue across an interrupt and drains it afterwards", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder"],
+			scripts: { planner: [hang, pass] },
+		});
+
+		room.send("first");
+		await drain();
+		expect(host.turns).toHaveLength(1);
+		room.send("second");
+
+		room.interrupt();
+		expect(room.view().run).toEqual({ phase: "idle" });
+		await waitFor(() => host.turns.length === 3, "the queued send to start");
+		await settle(room);
+
+		expect(
+			host.events
+				.filter((event) => event.kind === "run_ended")
+				.map((event) => event.outcome),
+		).toEqual(["interrupted", "settled"]);
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"planner",
+			"builder",
+		]);
+		expect(room.view().transcript.map((entry) => entry.id)).toEqual([1, 2]);
+	});
+
+	it("refuses a send at the queue cap with queue_full", async () => {
+		const { room } = makeRoom({
+			members: ["planner", "builder"],
+			scripts: { planner: [hang] },
+		});
+
+		room.send("first");
+		["second", "third", "fourth", "fifth", "sixth"].forEach((text, index) => {
+			expect(room.send(text)).toEqual({
+				status: "queued",
+				entry: { id: index + 2, at: 1000, kind: "user", text },
+				waiting: index + 1,
+			});
+		});
+		expect(room.send("overflow")).toEqual({
+			status: "rejected",
+			reason: "queue_full",
+		});
+		expect(room.view().pending).toBe(5);
+		expect(room.view().transcript).toHaveLength(6);
+		await room.stop();
+	});
+
+	it("scopes an @all send to every member", async () => {
+		const { room, host } = makeRoom();
+
+		room.send("@all stand up");
+		await settle(room);
+
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+			"reviewer",
+		]);
+		expect(host.turns[0].turn.text).toContain(
+			"Addressed: @planner, @builder, @reviewer.",
+		);
+	});
+
+	it("skips a member who is no longer on the team and names them once", async () => {
+		const { room, host } = makeRoom({
+			members: ["planner", "builder", "ghost"],
+			roster: ["planner", "builder"],
+		});
+
+		room.send("who is left?");
+		await settle(room);
+
+		expect(room.view().transcript[1]).toEqual({
+			id: 2,
+			at: 1000,
+			kind: "system",
+			text: "No longer on the team: @ghost.",
+		});
+		expect(host.turns.map((entry) => entry.member)).toEqual([
+			"planner",
+			"builder",
+		]);
+	});
+
+	it("annotates a run that was open at load and leaves the room idle", () => {
+		const state: RoomState = {
+			...newRoomState("ship-it", 1000, ["planner", "builder"], null),
+			transcript: [{ id: 1, at: 1000, kind: "user", text: "was running" }],
+			queue: [{ entryId: 1, at: 1000 }],
+			runOpen: true,
+		};
+		const { room, ledger } = makeRoom({
+			members: ["planner", "builder"],
+			state,
+		});
+
+		expect(room.view().run).toEqual({ phase: "idle" });
+		expect(room.view().pending).toBe(1);
+		expect(room.view().transcript).toEqual([
+			{ id: 1, at: 1000, kind: "user", text: "was running" },
+			{
+				id: 2,
+				at: 1000,
+				kind: "system",
+				text: "Run interrupted by a restart.",
+			},
+		]);
+		expect(ledger.saves.at(-1)?.runOpen).toBe(false);
 	});
 
 	it("rejects a post from a stranger or when it is not the member's turn", async () => {

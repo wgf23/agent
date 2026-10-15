@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import type { Provider, StreamEvent } from "../../src/providers/types.js";
 import type { TeamEvent } from "../../src/rob/events.js";
-import type { RoomConfig, RoomEvent } from "../../src/rob/room.js";
+import type { RoomConfig, RoomEvent, RoomState } from "../../src/rob/room.js";
+import {
+	createRoomStore,
+	newRoomState,
+	type StoredRoom,
+} from "../../src/rob/room-store.js";
 import { Team } from "../../src/rob/team.js";
 import {
 	createMockProvider,
@@ -36,6 +41,17 @@ function makeTeam(
 		authorizerFactory: () => readOnlyAuthorize,
 		rooms,
 	});
+}
+
+function readLedger(name: string): StoredRoom | null {
+	const result = createRoomStore({ workspaceRoot: workspace }).read(name);
+	if (!result.ok) throw new Error(result.error);
+	return result.record;
+}
+
+async function seedLedger(state: RoomState): Promise<void> {
+	const saved = await createRoomStore({ workspaceRoot: workspace }).save(state);
+	if (!saved.ok) throw new Error(saved.error);
 }
 
 const done = (text: string): StreamEvent[] => [
@@ -349,6 +365,124 @@ describe("Team rooms", () => {
 			status: "rejected",
 			reason: "stopped",
 		});
+	});
+
+	it("writes a seed ledger for a configured room", async () => {
+		const providers = {
+			planner: createMockProvider([]),
+			builder: createMockProvider([]),
+		};
+		makeTeam(providers, [{ name: "ship-it", members: ["planner", "builder"] }]);
+
+		await waitFor(() => readLedger("ship-it") !== null, "the seed ledger");
+		expect(readLedger("ship-it")).toMatchObject({
+			version: 1,
+			workspaceRoot: workspace,
+			name: "ship-it",
+			members: ["planner", "builder"],
+			coordinator: null,
+			transcript: [],
+			queue: [],
+			runOpen: false,
+			deliverable: null,
+		});
+	});
+
+	it("keeps the ledger's members and names the config disagreement", async () => {
+		await seedLedger({
+			...newRoomState("ship-it", 1000, ["planner", "builder"], null),
+			transcript: [
+				{ id: 1, at: 1000, kind: "user", text: "saved message" },
+				{
+					id: 2,
+					at: 1000,
+					kind: "member",
+					from: "planner",
+					text: "saved reply",
+				},
+			],
+		});
+		const providers = {
+			planner: createMockProvider([]),
+			builder: createMockProvider([]),
+		};
+		const team = makeTeam(providers, [
+			{ name: "ship-it", members: ["builder", "planner"] },
+		]);
+
+		const [room] = team.rooms();
+		expect(room.members).toEqual(["planner", "builder"]);
+		expect(room.transcript).toEqual([
+			{ id: 1, at: 1000, kind: "user", text: "saved message" },
+			{
+				id: 2,
+				at: 1000,
+				kind: "member",
+				from: "planner",
+				text: "saved reply",
+			},
+			{
+				id: 3,
+				at: expect.any(Number),
+				kind: "system",
+				text: "my-agent.json disagrees with this room's saved state (members are now planner, builder, not builder, planner). The saved state is used; edit the room to change it.",
+			},
+		]);
+	});
+
+	it("annotates a run open at load and resumes its queue on start", async () => {
+		await seedLedger({
+			...newRoomState("ship-it", 1000, ["planner", "builder"], null),
+			transcript: [{ id: 1, at: 1000, kind: "user", text: "run me" }],
+			queue: [{ entryId: 1, at: 1000 }],
+			runOpen: true,
+		});
+		const providers = {
+			planner: createMockProvider([done("quiet"), done("quiet")]),
+			builder: createMockProvider([done("quiet"), done("quiet")]),
+		};
+		// No config: the ledger alone owns this room after a restart.
+		const team = makeTeam(providers);
+
+		const [loaded] = team.rooms();
+		expect(loaded.transcript).toEqual([
+			{ id: 1, at: 1000, kind: "user", text: "run me" },
+			{
+				id: 2,
+				at: expect.any(Number),
+				kind: "system",
+				text: "Run interrupted by a restart.",
+			},
+		]);
+		expect(loaded.pending).toBe(1);
+
+		team.start();
+		await waitFor(
+			() =>
+				team.rooms()[0].run.phase === "idle" && team.rooms()[0].pending === 0,
+			"the queued send to run",
+			5000,
+		);
+
+		expect(team.rooms()[0].transcript.map((entry) => entry.id)).toEqual([1, 2]);
+		expect(providers.planner.requests).toHaveLength(1);
+		expect(providers.builder.requests).toHaveLength(1);
+		await team.stop();
+	});
+
+	it("still rejects an invalid configured room at construction", () => {
+		const providers = {
+			planner: createMockProvider([]),
+			builder: createMockProvider([]),
+		};
+		expect(() =>
+			makeTeam(providers, [{ name: "solo", members: ["planner"] }]),
+		).toThrow('Invalid room "solo" in TeamOptions: member_count.');
+		expect(() =>
+			makeTeam(providers, [
+				{ name: "Bad Name", members: ["planner", "builder"] },
+			]),
+		).toThrow('Invalid room "Bad Name" in TeamOptions: invalid_name.');
 	});
 });
 
