@@ -21,7 +21,12 @@ export type RobName = z.infer<typeof robNameSchema>;
 
 export const PI_CLI_COMMAND = "pi";
 export const OPENCODE_CLI_COMMAND = "opencode";
-const CLI_COMMANDS = [PI_CLI_COMMAND, OPENCODE_CLI_COMMAND] as const;
+export const CLAUDE_CLI_COMMAND = "claude";
+const CLI_COMMANDS = [
+	PI_CLI_COMMAND,
+	OPENCODE_CLI_COMMAND,
+	CLAUDE_CLI_COMMAND,
+] as const;
 
 const nativeBackendSchema = z.object({ kind: z.literal("native") }).strict();
 
@@ -29,8 +34,8 @@ const cliBackendSchema = z
 	.object({
 		kind: z.literal("cli"),
 		command: z.string().min(1),
-		// pi needs an explicit provider and model; opencode resolves both from
-		// the user's own opencode setup, so they are optional there.
+		// pi needs an explicit provider and model; opencode and claude resolve
+		// both from their own setup, so they are optional there.
 		provider: z.string().min(1).optional(),
 		model: z.string().min(1).optional(),
 		sessionDir: z.string().min(1).optional(),
@@ -67,7 +72,7 @@ export const robConfigSchema = z
 			ctx.addIssue({
 				code: "custom",
 				path: ["backend", "command"],
-				message: `Unsupported CLI command "${backend.command}". Only "pi" and "opencode" are supported.`,
+				message: `Unsupported CLI command "${backend.command}". Only "pi", "opencode", and "claude" are supported.`,
 			});
 			return;
 		}
