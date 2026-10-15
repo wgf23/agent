@@ -50,7 +50,9 @@ export function renderRoomTurn(input: {
 	unseen: readonly RoomEntry[];
 	truncated: boolean;
 }): string {
-	const lines = [`[room:${input.room} round ${input.round}/${input.rounds}]`];
+	// The room name rides in the inbound header (`headerFor`); this line carries
+	// the round, which the flat `Inbound` has no field for.
+	const lines = [`Round ${input.round}/${input.rounds}.`];
 	if (input.addressed.length > 0) {
 		lines.push(
 			`Addressed: ${input.addressed.map((member) => `@${member}`).join(", ")}.`,

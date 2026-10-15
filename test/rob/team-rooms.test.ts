@@ -191,7 +191,7 @@ describe("Team rooms", () => {
 		expect(providers.planner.requests[0].messages.at(-1)).toEqual({
 			role: "user",
 			content: [
-				"[room:ship-it] [room:ship-it round 1/3]",
+				"[room:ship-it] Round 1/3.",
 				"Since your last turn:",
 				"  user: who takes the parser?",
 				"10 messages left in this send.",
@@ -203,7 +203,7 @@ describe("Team rooms", () => {
 		expect(providers.builder.requests[0].messages.at(-1)).toEqual({
 			role: "user",
 			content: [
-				"[room:ship-it] [room:ship-it round 1/3]",
+				"[room:ship-it] Round 1/3.",
 				"Since your last turn:",
 				"  user: who takes the parser?",
 				"  planner: I can take the parser fix.",

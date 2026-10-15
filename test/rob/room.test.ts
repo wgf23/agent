@@ -338,7 +338,7 @@ describe("Room", () => {
 		expect(host.turns[1].turn.text).toContain(
 			"  planner: I can take the parser fix.",
 		);
-		expect(host.turns[2].turn.text).toContain("[room:ship-it round 2/3]");
+		expect(host.turns[2].turn.text).toContain("Round 2/3.");
 		expect(host.turns[2].turn.text).toContain("  (nothing new)");
 		expect(host.events.at(-1)).toEqual({
 			kind: "run_ended",
@@ -378,7 +378,7 @@ describe("Room", () => {
 		});
 		expect(host.turns[0].turn.text).toBe(
 			[
-				"[room:ship-it round 1/3]",
+				"Round 1/3.",
 				"Addressed: @reviewer.",
 				"Since your last turn:",
 				"  user: @reviewer is the parser safe on CRLF?",
@@ -390,7 +390,7 @@ describe("Room", () => {
 		);
 		expect(host.turns[1].turn.text).toBe(
 			[
-				"[room:ship-it round 2/3]",
+				"Round 2/3.",
 				"Addressed: @reviewer.",
 				"Since your last turn:",
 				"  (nothing new)",

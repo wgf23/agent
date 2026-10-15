@@ -78,7 +78,7 @@ describe("renderRoomTurn", () => {
 			}),
 		).toBe(
 			[
-				"[room:ship-it round 2/3]",
+				"Round 2/3.",
 				"Since your last turn:",
 				"  user: is the parser safe on CRLF?",
 				"  reviewer: one gap: the reader splits on LF only.",
@@ -103,7 +103,7 @@ describe("renderRoomTurn", () => {
 			}),
 		).toBe(
 			[
-				"[room:ship-it round 1/3]",
+				"Round 1/3.",
 				"Addressed: @reviewer.",
 				"Since your last turn:",
 				"  (earlier messages omitted)",
@@ -129,7 +129,7 @@ describe("renderRoomTurn", () => {
 			}),
 		).toBe(
 			[
-				"[room:ship-it round 2/3]",
+				"Round 2/3.",
 				"Since your last turn:",
 				"  (nothing new)",
 				"10 messages left in this send.",
