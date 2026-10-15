@@ -238,7 +238,7 @@ describe("resolveConfig sandbox", () => {
 		if (!result.ok) return;
 		expect(result.config.sandbox).toEqual({
 			mode: "auto",
-			network: false,
+			network: true,
 			writablePaths: [],
 		});
 	});
@@ -269,7 +269,7 @@ describe("resolveConfig sandbox", () => {
 		if (!result.ok) return;
 		expect(result.config.sandbox).toEqual({
 			mode: "off",
-			network: false,
+			network: true,
 			writablePaths: [],
 		});
 	});

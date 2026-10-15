@@ -158,14 +158,14 @@ In the TUI, the dialog offers `y` allow once, `a` allow always, and `n` deny. Al
 {
   "sandbox": {
     "mode": "auto",
-    "network": false,
+    "network": true,
     "writablePaths": ["/some/extra/dir"]
   }
 }
 ```
 
 - `mode` is `"auto"` (default), `"require"`, or `"off"`. `auto` uses the best backend and warns on stderr and in the tool output when none exists. `require` refuses to run the command when no backend exists and tells you to install bubblewrap or switch mode. `off` runs the command with no sandbox at all.
-- `network` defaults to `false`; the sandbox denies TCP (and, under bubblewrap, the whole network namespace).
+- `network` defaults to `true`; set it to `false` to deny TCP (and, under bubblewrap, the whole network namespace).
 - `writablePaths` defaults to `[]`. The workspace root and the system temp directory are always writable; add other absolute paths here.
 
 The project file overrides the global file field by field, and both override the built-in defaults. The global file accepts a `sandbox` block.
