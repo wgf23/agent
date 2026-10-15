@@ -12,7 +12,7 @@
 - R5：opencode CLI 后端（`opencode serve` 私有常驻进程、每 rob 一个持久会话、回合中途 steer、`dispose` 关闭进程与 SSE、serve 模式权限强制）。实现见 `src/rob/opencode-backend.ts`。
 - R5.1：opencode rob 审批桥（`ask` 工具翻译成 opencode `ask` 规则并暴露；`permission.asked` 经该 rob 的 authorizer 和共享 FIFO 审批队列回答；规则翻译修正为「只有不可能解析成其他效果时才普通 allow」；abort/dispose 拒绝所有待决请求）。
 - R6：team gateway（`Team.beginTurn` 每回合在本地 Unix socket 上开一条带 secret 的通道；`tools.ts` 用同一组 `Tool` 对象实现 `send_message` 和 `delegate`；`roster.ts` 组装名册提示；pi 扩展注册这两个工具，调用经 socket 回到 gateway，由该 rob 的 authorizer 授权一次）。实现见 `src/rob/gateway/`。
-- R6.1：opencode 的 MCP shim（`teamMcpShim` 生成一个 stdio MCP 服务，`--mcp-config` 的等价物是 `OPENCODE_CONFIG_CONTENT` 里的 `mcp` 配置；opencode 对 MCP 调用发 `permission.asked`，bridge 放行后由 gateway 授权一次）。提交 `ea4b4b2`、`9a5f9b3`、`824503c`。
+- R6.1：opencode 的 MCP shim（`teamMcpShim` 生成一个 stdio MCP 服务，`--mcp-config` 的等价物是 `OPENCODE_CONFIG_CONTENT` 里的 `mcp` 配置；opencode 对 MCP 调用发 `permission.asked`，bridge 放行后由 gateway 授权一次）。提交 `ea4b4b2`、`9a5f9b3`、`824503c`。真实 opencode 2.0.24 + DeepSeek 探针验证：opencode 调用 `myagent-team_send_message`，权限动作名正是 `myagent-team_<tool>`，gateway 收到并写入 DM 日志。
 - R7：claude CLI 后端（每回合一个 `claude -p --output-format stream-json --verbose` 进程；每 rob 一个 `CLAUDE_CONFIG_DIR`；首回合 `--session-id`、成功回合后 `--resume`；规则解析为 `allow` 的内建工具进 `--allowedTools`，`ask`/`deny` 进 `--disallowedTools`；每回合写 MCP shim 与 `team-mcp.json` 并合并 `turn.bridge.childEnv()`，团队工具以 `mcp__myagent-team__<tool>` 进 `--allowedTools`）。实现见 `src/rob/claude-backend.ts`。提交 `f388b7d`（移植）、`a96c6b8`（bridge）、`108d91a`（配置接入 `CLAUDE_CLI_COMMAND`）、`4dbdfad`（测试）。
 
 codex、kimi 的 CLI 后端仍未实现。cli 后端支持 pi、opencode 和 claude；三者都已接入 team gateway。
