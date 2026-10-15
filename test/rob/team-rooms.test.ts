@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import type { Provider, StreamEvent } from "../../src/providers/types.js";
@@ -298,6 +300,13 @@ describe("Team rooms", () => {
 		expect(
 			team.createRoom({ name: "voices", members: ["planner", "user"] }),
 		).toEqual({ status: "rejected", reason: "reserved_member" });
+		expect(
+			team.createRoom({
+				name: "unled",
+				members: ["planner", "builder"],
+				coordinator: "ghost",
+			}),
+		).toEqual({ status: "rejected", reason: "coordinator_not_member" });
 		expect(team.rooms()).toHaveLength(1);
 
 		expect(team.sendToRoom("ghost", "hi")).toEqual({
@@ -368,12 +377,18 @@ describe("Team rooms", () => {
 		});
 	});
 
-	it("writes a seed ledger for a configured room", async () => {
+	it("writes a seed ledger for a configured room, coordinator included", async () => {
 		const providers = {
 			planner: createMockProvider([]),
 			builder: createMockProvider([]),
 		};
-		makeTeam(providers, [{ name: "ship-it", members: ["planner", "builder"] }]);
+		makeTeam(providers, [
+			{
+				name: "ship-it",
+				members: ["planner", "builder"],
+				coordinator: "planner",
+			},
+		]);
 
 		await waitFor(() => readLedger("ship-it") !== null, "the seed ledger");
 		expect(readLedger("ship-it")).toMatchObject({
@@ -381,12 +396,118 @@ describe("Team rooms", () => {
 			workspaceRoot: workspace,
 			name: "ship-it",
 			members: ["planner", "builder"],
-			coordinator: null,
+			coordinator: "planner",
 			transcript: [],
 			queue: [],
 			runOpen: false,
 			deliverable: null,
 		});
+	});
+
+	it("writes the coordinator's deliverable into the workspace after the room settles", async () => {
+		const providers = {
+			planner: createMockProvider([
+				done("nothing to add"),
+				roomReply("The parser fix is ready."),
+			]),
+			builder: createMockProvider([done("quiet")]),
+		};
+		const team = makeTeam(providers, [
+			{
+				name: "ship-it",
+				members: ["planner", "builder"],
+				coordinator: "planner",
+			},
+		]);
+		team.start();
+		team.sendToRoom("ship-it", "do the work");
+
+		await waitFor(
+			() => team.rooms()[0].deliverable !== null,
+			"the deliverable",
+			5000,
+		);
+		const room = team.rooms()[0];
+		const ref = room.deliverable;
+		if (ref === null) throw new Error("no deliverable ref");
+		expect(ref.path).toMatch(
+			/^docs\/deliverables\/\d{8}T\d{6}-do-the-work\.md$/,
+		);
+		expect(ref.coordinator).toBe("planner");
+		expect(room.coordinator).toBe("planner");
+		expect(room.transcript).toEqual([
+			{ id: 1, at: expect.any(Number), kind: "user", text: "do the work" },
+			{
+				id: 2,
+				at: expect.any(Number),
+				kind: "member",
+				from: "planner",
+				text: "The parser fix is ready.",
+			},
+			{
+				id: 3,
+				at: expect.any(Number),
+				kind: "system",
+				text: `The deliverable was written to ${ref.path}.`,
+			},
+		]);
+
+		const written = await readFile(path.join(workspace, ref.path), "utf8");
+		expect(written).toContain("# do the work");
+		expect(written).toContain("- Room: ship-it");
+		expect(written).toContain("- Coordinator: planner");
+		expect(written).toContain("- Outcome: settled");
+		expect(written).toContain("- Participants: planner, builder");
+		expect(written).toContain("## Room");
+		expect(written).toContain("user: do the work");
+		expect(written).toContain("planner: The parser fix is ready.");
+		expect(written).toContain("## Deliverable");
+		expect(written).toContain("The parser fix is ready.");
+
+		const wrapUp = providers.planner.requests[1]?.messages.at(-1);
+		expect(wrapUp?.content).toContain(
+			'The run in room "ship-it" ended after 1 round: settled.',
+		);
+		expect(wrapUp?.content).toContain("Task: do the work");
+		expect(
+			providers.planner.requests[1]?.tools.map((tool) => tool.name),
+		).toContain("room_reply");
+
+		await waitFor(
+			() => readLedger("ship-it")?.deliverable !== null,
+			"the ledger deliverable",
+		);
+		expect(readLedger("ship-it")?.deliverable).toEqual({
+			at: expect.any(Number),
+			path: ref.path,
+			coordinator: "planner",
+		});
+		await team.stop();
+	});
+
+	it("names a coordinator the config and the ledger disagree on", async () => {
+		await seedLedger(
+			newRoomState("ship-it", 1000, ["planner", "builder"], "planner"),
+		);
+		const providers = {
+			planner: createMockProvider([]),
+			builder: createMockProvider([]),
+		};
+		// No coordinator in config: the ledger's coordinator stays in charge.
+		const team = makeTeam(providers, [
+			{ name: "ship-it", members: ["planner", "builder"] },
+		]);
+
+		const [room] = team.rooms();
+		expect(room.coordinator).toBe("planner");
+		expect(room.transcript).toEqual([
+			{
+				id: 1,
+				at: expect.any(Number),
+				kind: "system",
+				text: "my-agent.json disagrees with this room's saved state (coordinator is now planner, not none). The saved state is used; edit the room to change it.",
+			},
+		]);
 	});
 
 	it("keeps the ledger's members and names the config disagreement", async () => {

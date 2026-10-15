@@ -302,6 +302,32 @@ describe("rooms", () => {
 		expect(state.rooms["ship-it"].lastOutcome).toBe("settled");
 	});
 
+	it("seeds a room's coordinator and last deliverable", () => {
+		const state = apply([
+			{
+				...hello,
+				rooms: [
+					{
+						...shipIt,
+						coordinator: "alpha",
+						deliverable: {
+							at: 1_700_000_003_000,
+							path: "docs/deliverables/20261015T143012-ship-it.md",
+							coordinator: "alpha",
+						},
+					},
+				],
+			},
+		]);
+
+		expect(state.rooms["ship-it"].coordinator).toBe("alpha");
+		expect(state.rooms["ship-it"].deliverable).toEqual({
+			at: 1_700_000_003_000,
+			path: "docs/deliverables/20261015T143012-ship-it.md",
+			coordinator: "alpha",
+		});
+	});
+
 	it("keeps the last 100 entries of a room, like the DM feed", () => {
 		const entries: ServerEvent[] = Array.from({ length: 101 }, (_, index) => ({
 			type: "room",

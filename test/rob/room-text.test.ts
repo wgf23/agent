@@ -3,8 +3,12 @@ import type { RoomEntry, RoomView } from "../../src/rob/room.js";
 import {
 	parseRoomMentions,
 	renderAbsentMembers,
+	renderDeliverableFailure,
+	renderDeliverableNotice,
 	renderRoomOutcome,
 	renderRoomTurn,
+	renderRoomWrapUp,
+	renderTranscriptSummary,
 } from "../../src/rob/room-text.js";
 import type { RobName } from "../../src/rob/types.js";
 
@@ -168,6 +172,90 @@ describe("renderRoomTurn", () => {
 				"Reply with room_reply if you have something brief to add.",
 				"End your turn without calling room_reply to pass.",
 			].join("\n"),
+		);
+	});
+});
+
+describe("renderRoomWrapUp", () => {
+	it("states the ending, the task, and the unseen window", () => {
+		expect(
+			renderRoomWrapUp({
+				room: "ship-it",
+				rounds: 2,
+				outcome: "settled",
+				task: "ship the parser",
+				unseen: [userLine, memberLine],
+				truncated: false,
+			}),
+		).toBe(
+			[
+				'The run in room "ship-it" ended after 2 rounds: settled.',
+				"Compile the final deliverable now.",
+				"Reply with room_reply; your reply becomes the deliverable body, and the room writes the file.",
+				"",
+				"Task: ship the parser",
+				"",
+				"Since your last turn:",
+				"  user: is the parser safe on CRLF?",
+				"  reviewer: one gap: the reader splits on LF only.",
+			].join("\n"),
+		);
+	});
+
+	it("marks a truncated window and an empty task", () => {
+		expect(
+			renderRoomWrapUp({
+				room: "ship-it",
+				rounds: 1,
+				outcome: "message_cap",
+				task: "",
+				unseen: [],
+				truncated: true,
+			}),
+		).toBe(
+			[
+				'The run in room "ship-it" ended after 1 round: message_cap.',
+				"Compile the final deliverable now.",
+				"Reply with room_reply; your reply becomes the deliverable body, and the room writes the file.",
+				"",
+				"Task: (unspecified)",
+				"",
+				"Since your last turn:",
+				"  (earlier messages omitted)",
+				"  (nothing new)",
+			].join("\n"),
+		);
+	});
+});
+
+describe("renderTranscriptSummary", () => {
+	it("counts speakers in order and samples the first lines", () => {
+		expect(renderTranscriptSummary([userLine, memberLine, systemLine])).toBe(
+			'[3 earlier entries compacted: user 1, reviewer 1, system 1; first lines: user: "is the parser safe on CRLF?" | reviewer: "one gap: the reader splits on LF only." | system: "planner timed out."]',
+		);
+	});
+
+	it("truncates a long first line and takes at most three samples", () => {
+		const long: RoomEntry = {
+			id: 4,
+			at: 0,
+			kind: "user",
+			text: `${"x".repeat(70)}\nsecond line`,
+		};
+		const fourth: RoomEntry = { id: 5, at: 0, kind: "user", text: "later" };
+		expect(renderTranscriptSummary([long, userLine, memberLine, fourth])).toBe(
+			`[4 earlier entries compacted: user 3, reviewer 1; first lines: user: "${"x".repeat(60)}..." | user: "is the parser safe on CRLF?" | reviewer: "one gap: the reader splits on LF only."]`,
+		);
+	});
+});
+
+describe("deliverable notice text", () => {
+	it("names the written path and the failure reason", () => {
+		expect(renderDeliverableNotice("docs/deliverables/x.md")).toBe(
+			"The deliverable was written to docs/deliverables/x.md.",
+		);
+		expect(renderDeliverableFailure("disk full")).toBe(
+			"The deliverable was not written: disk full",
 		);
 	});
 });
