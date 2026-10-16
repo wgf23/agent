@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+	closeBotSession,
 	deleteSession,
+	forgetMemory,
+	loadBotTranscript,
+	loadMemory,
+	removeBot,
 	renameSession,
 	searchSessions,
+	setWake,
+	updateBot,
 } from "../../web/src/api";
 import type { SearchResponse } from "../../web/src/protocol";
 
@@ -86,6 +93,117 @@ describe("sidebar requests", () => {
 		);
 		await expect(deleteSession("b", "ses_1", failure)).rejects.toThrow(
 			"Unknown session: ses_1",
+		);
+	});
+});
+
+describe("bot ledger requests", () => {
+	it("reads the transcript and memory from the bot's literal routes", async () => {
+		const transcript = {
+			bot: "writer",
+			sessionId: "chs_1",
+			messages: [],
+			sessions: [],
+		};
+		const transcriptCalls: Call[] = [];
+		expect(
+			await loadBotTranscript(
+				"writer",
+				recordingFetch(transcriptCalls, transcript),
+			),
+		).toEqual(transcript);
+		expect(transcriptCalls).toEqual([
+			{ path: "/api/bots/writer/transcript", method: "GET", body: undefined },
+		]);
+
+		const memory = { bot: "writer", entries: [] };
+		const memoryCalls: Call[] = [];
+		expect(
+			await loadMemory("writer", recordingFetch(memoryCalls, memory)),
+		).toEqual(memory);
+		expect(memoryCalls).toEqual([
+			{ path: "/api/bots/writer/memory", method: "GET", body: undefined },
+		]);
+	});
+
+	it("writes the forget, wake, close, edit, and delete bodies literally", async () => {
+		const forgetCalls: Call[] = [];
+		await forgetMemory("writer", "mem_1", recordingFetch(forgetCalls));
+		expect(forgetCalls).toEqual([
+			{
+				path: "/api/bots/writer/memory/forget",
+				method: "POST",
+				body: { id: "mem_1" },
+			},
+		]);
+
+		const wakeCalls: Call[] = [];
+		await setWake(
+			"writer",
+			{ everyMs: 60000, prompt: "tick" },
+			recordingFetch(wakeCalls),
+		);
+		expect(wakeCalls).toEqual([
+			{
+				path: "/api/bots/writer/wake",
+				method: "POST",
+				body: { everyMs: 60000, prompt: "tick" },
+			},
+		]);
+
+		const closeCalls: Call[] = [];
+		await closeBotSession("writer", "chs_1", recordingFetch(closeCalls));
+		expect(closeCalls).toEqual([
+			{
+				path: "/api/sessions/close",
+				method: "POST",
+				body: { bot: "writer", id: "chs_1" },
+			},
+		]);
+
+		const updateCalls: Call[] = [];
+		await updateBot(
+			"writer",
+			{ role: "edits", model: "deepseek-chat" },
+			recordingFetch(updateCalls),
+		);
+		expect(updateCalls).toEqual([
+			{
+				path: "/api/bots/writer",
+				method: "PATCH",
+				body: { role: "edits", model: "deepseek-chat" },
+			},
+		]);
+
+		const removeCalls: Call[] = [];
+		await removeBot("writer", recordingFetch(removeCalls));
+		expect(removeCalls).toEqual([
+			{ path: "/api/bots/writer", method: "DELETE", body: undefined },
+		]);
+	});
+
+	it("surfaces the server's reason on every bot ledger verb", async () => {
+		const failure = recordingFetch([], { error: "Unknown bot: ghost" }, 404);
+		await expect(loadBotTranscript("ghost", failure)).rejects.toThrow(
+			"Unknown bot: ghost",
+		);
+		await expect(loadMemory("ghost", failure)).rejects.toThrow(
+			"Unknown bot: ghost",
+		);
+		await expect(forgetMemory("ghost", "mem_1", failure)).rejects.toThrow(
+			"Unknown bot: ghost",
+		);
+		await expect(setWake("ghost", { clear: true }, failure)).rejects.toThrow(
+			"Unknown bot: ghost",
+		);
+		await expect(closeBotSession("ghost", "chs_1", failure)).rejects.toThrow(
+			"Unknown bot: ghost",
+		);
+		await expect(updateBot("ghost", { role: "x" }, failure)).rejects.toThrow(
+			"Unknown bot: ghost",
+		);
+		await expect(removeBot("ghost", failure)).rejects.toThrow(
+			"Unknown bot: ghost",
 		);
 	});
 });

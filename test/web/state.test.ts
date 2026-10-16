@@ -307,6 +307,88 @@ describe("clientReducer", () => {
 		expect(state.subagents.alpha[0].at).toBe(5);
 		expect(state.subagents.alpha.at(-1)?.at).toBe(SUBAGENT_FEED_MAX + 4);
 	});
+
+	it("keeps a bot's sessions out of the chat's list", () => {
+		// The chat has sessions of its own; a bot_sessions event must fill only
+		// the bot-keyed maps and leave the chat's list and active id exactly as
+		// they were. This is the regression guard for the clobbering defect.
+		const chatSessions = [
+			{
+				id: "chs_chat",
+				updatedAt: 5,
+				messageCount: 2,
+				firstUserText: "hi",
+				title: null,
+			},
+		];
+		const before = apply([hello, { type: "sessions", sessions: chatSessions }]);
+		const writerSessions = [
+			{
+				id: "chs_1",
+				updatedAt: 2,
+				messageCount: 1,
+				firstUserText: "first",
+				title: null,
+			},
+			{
+				id: "chs_2",
+				updatedAt: 1,
+				messageCount: 1,
+				firstUserText: "second",
+				title: null,
+			},
+		];
+
+		const after = clientReducer(before, {
+			type: "server",
+			event: {
+				type: "bot_sessions",
+				bot: "writer",
+				sessions: writerSessions,
+				currentSessionId: "chs_1",
+			},
+		});
+
+		expect(after.botSessions.writer).toEqual(writerSessions);
+		expect(after.botActiveSession.writer).toBe("chs_1");
+		expect(after.sessions).toEqual(chatSessions);
+		expect(after.activeSessionId).toBe("ses_1");
+	});
+
+	it("replaces only the selected bot's transcript on session_opened", () => {
+		const after = apply([
+			hello,
+			{
+				type: "session_opened",
+				bot: "writer",
+				sessionId: "chs_1",
+				messages: [
+					{ id: 1, role: "user", text: "draft", reasoning: "", tools: [] },
+				],
+			},
+		]);
+
+		expect(after.transcripts.writer).toEqual([
+			{ id: 1, role: "user", text: "draft", reasoning: "", tools: [] },
+		]);
+		expect(after.botActiveSession.writer).toBe("chs_1");
+		// The chat's own active session is untouched by a bot's channel switch.
+		expect(after.activeSessionId).toBe("ses_1");
+		expect(after.transcripts.assistant).toEqual([]);
+	});
+
+	it("fills a bot's memory from a memory_loaded action", () => {
+		const entries = [
+			{ id: "mem_1", at: 1, kind: "fact" as const, text: "the sky is teal" },
+		];
+		const loaded = clientReducer(initialState(), {
+			type: "memory_loaded",
+			bot: "writer",
+			entries,
+		});
+
+		expect(loaded.memory.writer).toEqual(entries);
+	});
 });
 
 const shipIt: RoomInfo = {

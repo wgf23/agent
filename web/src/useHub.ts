@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useReducer } from "react";
 import {
+	closeBotSession as closeBotSessionRequest,
 	deleteSession as deleteSessionRequest,
+	forgetMemory as forgetMemoryRequest,
+	loadBotTranscript,
+	loadMemory,
+	removeBot as removeBotRequest,
 	renameSession as renameSessionRequest,
 	searchSessions,
+	setWake as setWakeRequest,
+	updateBot as updateBotRequest,
 } from "./api";
 import type {
 	AgentListResponse,
@@ -16,6 +23,8 @@ import type {
 	SendBody,
 	ServerEvent,
 	SettingsResponse,
+	SetWakeBody,
+	UpdateBotBody,
 } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
 
@@ -60,6 +69,21 @@ export interface Hub {
 	// Rejects with the server's message so the row can show it inline.
 	renameSession: (bot: string, id: string, title: string) => Promise<void>;
 	deleteSession: (bot: string, id: string) => Promise<void>;
+	// Selects a bot: loads its transcript and session list, then its memory, so
+	// the sidebar and memory panel fill without a second request.
+	selectBot: (bot: string) => void;
+	// Rejects with the server's message so the panel can show it inline.
+	forgetMemory: (bot: string, id: string) => Promise<void>;
+	// Reports a refusal on the banner; the editor's button re-renders from the
+	// roster event the server sends after arming the timer.
+	setWake: (bot: string, body: SetWakeBody) => Promise<void>;
+	closeBotSession: (bot: string, id: string) => void;
+	// Rejects with the server's message so the settings panel can show it
+	// inline.
+	updateBot: (bot: string, draft: UpdateBotBody) => Promise<void>;
+	// Resolves once the server accepts; the hub drops the bot from the roster
+	// immediately so a deleted bot cannot stay selected, then rejects on failure.
+	removeBot: (bot: string) => Promise<void>;
 	// A read-only search over the chat's sessions and every room's transcript;
 	// a blank query is not sent, and the answer lands in state.search for the
 	// sidebar panel.
@@ -170,6 +194,100 @@ export function useHub(): Hub {
 	const deleteSession = useCallback(async (bot: string, id: string) => {
 		await deleteSessionRequest(bot, id);
 	}, []);
+
+	// A request this client made was refused: the server's reason goes to the
+	// same banner as an SSE error so it is never swallowed.
+	const reportRequestError = useCallback((error: unknown) => {
+		dispatch({
+			type: "request_error",
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}, []);
+
+	const selectBot = useCallback(
+		(bot: string) => {
+			void (async () => {
+				try {
+					// One read answers both questions: the transcript replaces this
+					// bot's transcript, its session list fills the bot-keyed maps.
+					const transcript = await loadBotTranscript(bot);
+					dispatch({
+						type: "server",
+						event: {
+							type: "session_opened",
+							bot,
+							sessionId: transcript.sessionId,
+							messages: transcript.messages,
+						},
+					});
+					dispatch({
+						type: "server",
+						event: {
+							type: "bot_sessions",
+							bot,
+							sessions: transcript.sessions,
+							currentSessionId: transcript.sessionId,
+						},
+					});
+					const memory = await loadMemory(bot);
+					dispatch({ type: "memory_loaded", bot, entries: memory.entries });
+				} catch (error) {
+					reportRequestError(error);
+				}
+			})();
+		},
+		[reportRequestError],
+	);
+
+	const forgetMemory = useCallback(async (bot: string, id: string) => {
+		await forgetMemoryRequest(bot, id);
+		// Re-read so the panel reflects the ledger, not a local guess.
+		const memory = await loadMemory(bot);
+		dispatch({ type: "memory_loaded", bot, entries: memory.entries });
+	}, []);
+
+	const setWake = useCallback(
+		async (bot: string, body: SetWakeBody) => {
+			try {
+				// The server re-emits the roster after arming the timer, so the
+				// fresh `bots` event refreshes the wake badge with no extra read.
+				await setWakeRequest(bot, body);
+			} catch (error) {
+				reportRequestError(error);
+			}
+		},
+		[reportRequestError],
+	);
+
+	const closeBotSession = useCallback(
+		(bot: string, id: string) => {
+			closeBotSessionRequest(bot, id).catch(reportRequestError);
+		},
+		[reportRequestError],
+	);
+
+	const updateBot = useCallback(async (bot: string, draft: UpdateBotBody) => {
+		await updateBotRequest(bot, draft);
+	}, []);
+
+	const removeBot = useCallback(
+		async (bot: string) => {
+			await removeBotRequest(bot);
+			// The server broadcasts the fresh roster, but drop the bot here too
+			// so a deleted bot cannot stay selected until that event arrives.
+			dispatch({
+				type: "server",
+				event: {
+					type: "bots",
+					bots: state.bots.filter((entry) => entry.name !== bot),
+					states: Object.values(state.botStates).filter(
+						(entry) => entry.bot !== bot,
+					),
+				},
+			});
+		},
+		[state.bots, state.botStates],
+	);
 
 	// A blank query is the server's 400; not sending it gets the same answer
 	// without the round trip. The result lands in the search slice, and a
@@ -331,6 +449,12 @@ export function useHub(): Hub {
 		openSession,
 		renameSession,
 		deleteSession,
+		selectBot,
+		forgetMemory,
+		setWake,
+		closeBotSession,
+		updateBot,
+		removeBot,
 		search,
 		clearSearch,
 		createBot,

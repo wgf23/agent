@@ -8,6 +8,7 @@ import type {
 	BotStatus,
 	DmInfo,
 	InstallPhase,
+	MemoryEntryView,
 	PresetInfo,
 	ProviderView,
 	RoomDeliverableInfo,
@@ -23,6 +24,7 @@ import type {
 	TranscriptMessage,
 	UsageTotals,
 } from "./protocol";
+import { WORKSPACE_BOT } from "./protocol";
 
 // A bot's retained sub-agent activity is capped so a long run cannot grow the
 // client without bound; the oldest entries drop first.
@@ -75,6 +77,12 @@ export interface ClientState {
 	botStates: Record<string, BotState>;
 	sessions: SessionSummaryInfo[];
 	activeSessionId: string | null;
+	// A bot's sessions live in their own maps keyed by bot name, so switching a
+	// bot's channel can never clobber the workspace chat's sessions.
+	botSessions: Record<string, SessionSummaryInfo[]>;
+	botActiveSession: Record<string, string | null>;
+	// A bot's memory, replaced wholesale after each read or edit.
+	memory: Record<string, MemoryEntryView[]>;
 	transcripts: Record<string, TranscriptMessage[]>;
 	approvals: ApprovalRequestInfo[];
 	allowAll: boolean;
@@ -107,6 +115,7 @@ export type ClientAction =
 	| { type: "settings_close" }
 	| { type: "settings_error"; error: string | null }
 	| { type: "agents_loaded"; agents: AgentStatusView[] }
+	| { type: "memory_loaded"; bot: string; entries: MemoryEntryView[] }
 	// A search's four transitions: start keeps the prior results, results and
 	// failure drop `loading`, and clear resets the slice to its default.
 	| { type: "search_started"; query: string }
@@ -127,6 +136,9 @@ export function initialState(): ClientState {
 		botStates: {},
 		sessions: [],
 		activeSessionId: null,
+		botSessions: {},
+		botActiveSession: {},
+		memory: {},
 		transcripts: {},
 		approvals: [],
 		allowAll: false,
@@ -234,6 +246,12 @@ export function clientReducer(
 		case "agents_loaded":
 			return { ...state, agents: action.agents };
 
+		case "memory_loaded":
+			return {
+				...state,
+				memory: { ...state.memory, [action.bot]: action.entries },
+			};
+
 		// A new search keeps the previous results on screen while it loads and
 		// clears any prior error, so the panel never blanks mid-query.
 		case "search_started":
@@ -325,9 +343,25 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			};
 
 		case "session_opened":
+			// A bot's channel switch replaces only that bot's transcript; the
+			// chat keeps its own active id. The workspace chat is the one bot
+			// whose active session the top-level `activeSessionId` tracks.
+			if (event.bot === WORKSPACE_BOT) {
+				return {
+					...state,
+					activeSessionId: event.sessionId,
+					transcripts: {
+						...state.transcripts,
+						[event.bot]: event.messages,
+					},
+				};
+			}
 			return {
 				...state,
-				activeSessionId: event.sessionId,
+				botActiveSession: {
+					...state.botActiveSession,
+					[event.bot]: event.sessionId,
+				},
 				transcripts: {
 					...state.transcripts,
 					[event.bot]: event.messages,
@@ -337,10 +371,17 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 		case "sessions":
 			return { ...state, sessions: event.sessions };
 
-		// A bot's session list is its own event so it cannot clobber the chat's;
-		// this client does not render it yet.
+		// A bot's session list is its own event so it cannot clobber the chat's:
+		// it fills the bot-keyed maps only, never `sessions`/`activeSessionId`.
 		case "bot_sessions":
-			return state;
+			return {
+				...state,
+				botSessions: { ...state.botSessions, [event.bot]: event.sessions },
+				botActiveSession: {
+					...state.botActiveSession,
+					[event.bot]: event.currentSessionId,
+				},
+			};
 
 		case "bot_status":
 			return {
