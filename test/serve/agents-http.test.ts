@@ -181,7 +181,7 @@ describe("agent routes", () => {
 		await supervisor.dispose();
 	});
 
-	it("refuses an install on a non-loopback bind", async () => {
+	it("refuses an install and a cancel on a non-loopback bind", async () => {
 		const { app, hub, supervisor, port } = await startServer(
 			okInstall,
 			"0.0.0.0",
@@ -197,6 +197,13 @@ describe("agent routes", () => {
 		);
 		expect(response.status).toBe(403);
 		expect(okInstall).not.toHaveBeenCalled();
+
+		const cancel = await fetch(`http://127.0.0.1:${port}/api/agents/cancel`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ id: "pi" }),
+		});
+		expect(cancel.status).toBe(403);
 
 		app.server.closeAllConnections?.();
 		await app.close();
