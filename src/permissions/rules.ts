@@ -23,6 +23,7 @@ const DEFAULTS: PermissionRules = {
 	edit_file: "ask",
 	bash: "ask",
 	web_fetch: "ask",
+	web_search: "ask",
 };
 
 export function defaultRules(): PermissionRules {
@@ -97,6 +98,8 @@ export function toolSubject(toolName: string, args: unknown): string {
 			return stringValue(record.pattern);
 		case "web_fetch":
 			return stringValue(record.url);
+		case "web_search":
+			return stringValue(record.query);
 		default:
 			return "";
 	}

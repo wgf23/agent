@@ -22,6 +22,8 @@ export function summarizeArgs(name: string, args: unknown): string {
 		}
 		case "web_fetch":
 			return argString(args, "url") ?? "";
+		case "web_search":
+			return argString(args, "query") ?? "";
 		default:
 			return JSON.stringify(args ?? {}).slice(0, UNKNOWN_JSON_MAX_CHARS);
 	}
