@@ -114,7 +114,7 @@ export interface TeamTool extends Tool {
 	run(args: unknown, ctx: ToolContext): Promise<TeamCallOutcome>;
 }
 
-function buildTeamTool<TSchema extends z.ZodType>(spec: {
+export function buildTeamTool<TSchema extends z.ZodType>(spec: {
 	name: string;
 	description: string;
 	readOnly: boolean;

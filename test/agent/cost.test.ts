@@ -137,4 +137,195 @@ describe("runHeadless max-cost budget", () => {
 			stderr.mockRestore();
 		}
 	});
+
+	it("stops before executing a tool once the first step exceeds the cap", async () => {
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{ type: "usage", inputTokens: 1_000_000, outputTokens: 0 },
+					{
+						type: "tool_call",
+						id: "call_1",
+						name: "read_file",
+						args: { path: "a.txt" },
+					},
+					{ type: "finish", reason: "tool_calls" },
+				],
+				[
+					{ type: "text_delta", text: "unreachable" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+			const events: AgentEvent[] = [];
+
+			const code = await runHeadless({
+				prompt: "read a.txt",
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+				maxCost: 0.1, // 1M input tokens on deepseek-flash costs $0.15.
+				onEvent: (event) => events.push(event),
+			});
+
+			expect(code).toBe(1);
+			expect(events).toContainEqual({
+				type: "done",
+				reason: "budget",
+				steps: 1,
+			});
+			// The over-cap check runs before the loop executes tool calls, so the
+			// side effect never happens and the provider is not asked again.
+			expect(events.some((event) => event.type === "tool_started")).toBe(false);
+			expect(provider.requests).toHaveLength(1);
+		} finally {
+			stderr.mockRestore();
+		}
+	});
+
+	it("does not stop when the accumulated cost exactly equals the cap", async () => {
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{ type: "usage", inputTokens: 1000, outputTokens: 0 },
+					{
+						type: "tool_call",
+						id: "call_1",
+						name: "read_file",
+						args: { path: "a.txt" },
+					},
+					{ type: "finish", reason: "tool_calls" },
+				],
+				[
+					{ type: "text_delta", text: "done" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+			const events: AgentEvent[] = [];
+
+			// 1000 input tokens on deepseek-flash costs exactly $0.00015; the
+			// guard is `>` so equality must not trip the cap.
+			const code = await runHeadless({
+				prompt: "read a.txt",
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+				maxCost: 0.00015,
+				onEvent: (event) => events.push(event),
+			});
+
+			expect(code).toBe(0);
+			expect(events).toContainEqual({
+				type: "done",
+				reason: "finished",
+				steps: 2,
+			});
+			expect(
+				events.some(
+					(event) => event.type === "done" && event.reason === "budget",
+				),
+			).toBe(false);
+			expect(provider.requests).toHaveLength(2);
+		} finally {
+			stderr.mockRestore();
+		}
+	});
+
+	it("keeps running a zero cap for an unpriced model, which costs nothing", async () => {
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{ type: "usage", inputTokens: 5000, outputTokens: 5000 },
+					{
+						type: "tool_call",
+						id: "call_1",
+						name: "read_file",
+						args: { path: "a.txt" },
+					},
+					{ type: "finish", reason: "tool_calls" },
+				],
+				[
+					{ type: "text_delta", text: "done" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+			const events: AgentEvent[] = [];
+
+			const code = await runHeadless({
+				prompt: "read a.txt",
+				provider,
+				model: "openai/gpt-4o-mini", // no pricing entry -> estimateCost is 0
+				workspaceRoot,
+				env: { OPENAI_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+				maxCost: 0,
+				onEvent: (event) => events.push(event),
+			});
+
+			// 0 > 0 is false, so an unpriced model never trips even a zero cap.
+			expect(code).toBe(0);
+			expect(events).toContainEqual({
+				type: "done",
+				reason: "finished",
+				steps: 2,
+			});
+			expect(provider.requests).toHaveLength(2);
+		} finally {
+			stderr.mockRestore();
+		}
+	});
+
+	it("runs unbounded when no cap is set", async () => {
+		const stderr = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			const provider = createMockProvider([
+				[
+					{ type: "usage", inputTokens: 1_000_000, outputTokens: 1_000_000 },
+					{
+						type: "tool_call",
+						id: "call_1",
+						name: "read_file",
+						args: { path: "a.txt" },
+					},
+					{ type: "finish", reason: "tool_calls" },
+				],
+				[
+					{ type: "text_delta", text: "done" },
+					{ type: "finish", reason: "stop" },
+				],
+			]);
+			const events: AgentEvent[] = [];
+
+			const code = await runHeadless({
+				prompt: "read a.txt",
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+				onEvent: (event) => events.push(event),
+			});
+
+			expect(code).toBe(0);
+			expect(events).toContainEqual({
+				type: "done",
+				reason: "finished",
+				steps: 2,
+			});
+			expect(provider.requests).toHaveLength(2);
+		} finally {
+			stderr.mockRestore();
+		}
+	});
 });
