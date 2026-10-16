@@ -3886,3 +3886,60 @@ button.browser-crumb:hover {
 		overflow-x: hidden;
 	}
 }
+/* ---------- Mobile touch targets, hover fallbacks, and modals ---------- */
+
+/* A coarse pointer (touch) gets 44px hit areas; a mouse-driven desktop is
+   pointer:fine and is omitted here, so it is untouched. */
+@media (pointer: coarse) {
+	.nav-item,
+	.region-tab,
+	.tab,
+	.bot-item,
+	.room-item,
+	.session-item,
+	.sidebar-action,
+	.session-action,
+	.session-close,
+	.btn {
+		min-height: 44px;
+	}
+
+	.icon-btn,
+	.session-close {
+		min-width: 44px;
+	}
+}
+
+/* Touch has no hover, so affordances a finger cannot reveal stay visible. */
+@media (hover: none) {
+	.markdown .code-copy {
+		opacity: 1;
+	}
+}
+
+@media (max-width: 640px) {
+	.modal {
+		width: calc(100vw - 24px);
+		max-width: 100%;
+		max-height: calc(100vh - 24px);
+		/* biome-ignore lint/suspicious/noDuplicateProperties: 100dvh overrides the 100vh fallback where supported */
+		max-height: calc(100dvh - 24px);
+	}
+
+	.modal.approval {
+		width: calc(100vw - 24px);
+	}
+
+	.modal-body {
+		min-height: 0;
+	}
+
+	.modal-backdrop {
+		padding: env(safe-area-inset-top) env(safe-area-inset-right)
+			env(safe-area-inset-bottom) env(safe-area-inset-left);
+	}
+
+	.modal-actions {
+		flex-wrap: wrap;
+	}
+}
