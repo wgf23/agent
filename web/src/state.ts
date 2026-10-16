@@ -164,11 +164,11 @@ export function initialState(): ClientState {
 	};
 }
 
-export function workspaceBot(bots: BotInfo[]): BotInfo | undefined {
+export function workspaceBot(bots: readonly BotInfo[]): BotInfo | undefined {
 	return bots.find((bot) => bot.kind === "workspace");
 }
 
-export function robBots(bots: BotInfo[]): BotInfo[] {
+export function robBots(bots: readonly BotInfo[]): BotInfo[] {
 	return bots.filter((bot) => bot.kind === "rob");
 }
 
