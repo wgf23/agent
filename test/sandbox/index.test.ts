@@ -9,6 +9,7 @@ import {
 	ensureHelperFile,
 	helperFilePath,
 } from "../../src/sandbox/landlock.js";
+import { windowsHelperPath } from "../../src/sandbox/windows.js";
 
 function settings(overrides: Partial<SandboxSettings> = {}): SandboxSettings {
 	return { ...DEFAULT_SANDBOX, ...overrides };
@@ -96,5 +97,64 @@ describe("planSandboxedBash", () => {
 
 		if (!plan.run) throw new Error("expected a runnable plan");
 		expect(plan.argv).not.toContain("--unshare-net");
+	});
+
+	it("runs unsandboxed when mode is off even with a windows backend", () => {
+		const plan = planSandboxedBash({
+			command: "printf hi",
+			workspaceRoot: "C:/ws",
+			settings: settings({ mode: "off" }),
+			plan: { backend: "windows", pwsh: "C:/pwsh.exe" },
+		});
+
+		expect(plan).toEqual({
+			run: true,
+			argv: ["/bin/sh", "-c", "printf hi"],
+			env: {},
+		});
+	});
+
+	it("routes auto through the windows helper and warns about what is not isolated", () => {
+		const plan = planSandboxedBash({
+			command: "printf hi",
+			workspaceRoot: "C:/ws",
+			settings: settings(),
+			plan: { backend: "windows", pwsh: "C:/pwsh.exe" },
+		});
+
+		expect(plan).toEqual({
+			run: true,
+			argv: [
+				"C:/pwsh.exe",
+				"-NoProfile",
+				"-NonInteractive",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				windowsHelperPath(),
+				"-Command",
+				"printf hi",
+				"-Cwd",
+				"C:/ws",
+			],
+			env: {},
+			warning:
+				"Windows sandbox only manages the process lifecycle; the filesystem and network are not isolated",
+		});
+	});
+
+	it("refuses in require mode because windows does not isolate filesystem or network", () => {
+		const plan = planSandboxedBash({
+			command: "printf hi",
+			workspaceRoot: "C:/ws",
+			settings: settings({ mode: "require" }),
+			plan: { backend: "windows", pwsh: "C:/pwsh.exe" },
+		});
+
+		expect(plan).toEqual({
+			run: false,
+			reason:
+				'Sandboxing is required (sandbox.mode = "require") but the Windows backend only manages the process lifecycle, not filesystem or network isolation. Set sandbox.mode to "auto" or "off".',
+		});
 	});
 });

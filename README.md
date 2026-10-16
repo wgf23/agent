@@ -183,14 +183,26 @@ Backend priority:
 2. **Landlock** (Linux 5.13+) when `python3` is on `PATH` and its Landlock ABI probe succeeds. A helper script installs a ruleset that allows read and exec everywhere, write only in the writable roots, and denies TCP unless `network` is true. The helper is written once per process to `<tmp>/my-agent-sandbox-<uid>/landlock_helper.py` (directory `0700`, file `0600`).
 3. **none** when neither is available. `auto` runs unsandboxed with a warning; `require` refuses.
 
+On Windows the Linux probes are skipped. Detection looks for `pwsh` then `powershell.exe` on `PATH` and, if neither is found, reports `none`. See the Windows subsection below.
+
 The backend is detected once per process.
+
+### Windows
+
+On Windows the backend is a PowerShell helper that runs the command inside a Windows Job Object. This backend has never been run on a real Windows host; it is unverified, so test it before relying on it. The helper writes itself once per process to `<tmp>/my-agent-sandbox-<uid>/windows-helper.ps1` and is intended to:
+
+- Create a job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so every process in the tree is killed when the job handle closes.
+- Cap the job at 64 active processes.
+- Write the command to a temporary `.cmd` file and run it through `cmd.exe` from the workspace root via `pwsh` (or `powershell.exe`), exiting with the command's code and killing the job if the command does not exit within a bounded timeout.
+
+It is intended to enforce process-tree lifecycle and the process cap only. It does **not** isolate the filesystem and does **not** block the network, so `sandbox.mode = "require"` refuses to run on Windows rather than pretend otherwise, and `auto` attaches a warning to the tool output.
 
 ### Sandbox limits
 
 - Landlock mediates file access and TCP only. UDP and every other protocol are not covered; bubblewrap covers the whole network namespace.
 - Only the `bash` tool is sandboxed. `read_file`, `write_file`, and `edit_file` are not.
 - `opencode` and `pi` rob backends run their own agent and are not sandboxed by this layer.
-- macOS and Windows fall back to no sandbox until a seatbelt backend exists.
+- macOS falls back to no sandbox until a seatbelt backend exists.
 
 ## MCP
 
