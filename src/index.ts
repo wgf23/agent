@@ -25,6 +25,7 @@ const { version: VERSION } = JSON.parse(
 interface RunOptions {
 	model?: string;
 	maxSteps?: string;
+	maxCost?: string;
 	yes?: boolean;
 	continue?: boolean;
 	session?: string;
@@ -51,6 +52,12 @@ interface ForkOptions {
 
 function parseMaxSteps(value: string | undefined): number | undefined {
 	return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function parseMaxCost(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const cost = Number(value);
+	return Number.isFinite(cost) && cost >= 0 ? cost : undefined;
 }
 
 function parseInteger(value: string): number {
@@ -92,6 +99,7 @@ async function run(prompt: string, options: RunOptions): Promise<void> {
 		imagePaths: options.image,
 		model: options.model,
 		maxSteps: parseMaxSteps(options.maxSteps),
+		maxCost: parseMaxCost(options.maxCost),
 		yesAll: options.yes,
 		continueSession: options.continue,
 		sessionId: options.session,
@@ -109,6 +117,7 @@ program
 	.argument("[prompt]", "prompt to run")
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps")
+	.option("--max-cost <usd>", "stop when the accumulated cost exceeds this")
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
@@ -125,6 +134,7 @@ program
 				workspaceRoot: process.cwd(),
 				model: options.model,
 				maxSteps: parseMaxSteps(options.maxSteps),
+				maxCost: parseMaxCost(options.maxCost),
 				continueSession: options.continue,
 				sessionId: options.session,
 			});
@@ -139,6 +149,7 @@ program
 	.argument("<prompt>", "prompt to run")
 	.option("-m, --model <model>", "model to use")
 	.option("--max-steps <steps>", "maximum agent steps")
+	.option("--max-cost <usd>", "stop when the accumulated cost exceeds this")
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")

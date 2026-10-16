@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { runAgent } from "../agent/agent.js";
+import { estimateCost, formatCost } from "../agent/cost.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { createSubagentRunner } from "../agent/subagent.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
@@ -35,6 +36,7 @@ export interface RunHeadlessOptions {
 	imagePaths?: string[];
 	model?: string;
 	maxSteps?: number;
+	maxCost?: number;
 	yesAll?: boolean;
 	continueSession?: boolean;
 	sessionId?: string;
@@ -180,6 +182,7 @@ export async function runHeadless(
 			images: images.images,
 			history: session.messages,
 			maxSteps: settings.maxSteps,
+			maxCost: options.maxCost,
 			thinking,
 			reasoningEffort,
 			signal: controller.signal,
@@ -233,7 +236,7 @@ export async function runHeadless(
 			process.stderr.write(`[reasoning] ${reasoningChars} chars\n`);
 		}
 		process.stderr.write(
-			`[usage] input=${result.usage.inputTokens} output=${result.usage.outputTokens} cache_hit=${result.usage.cacheHitTokens} cache_miss=${result.usage.cacheMissTokens} reasoning=${result.usage.reasoningTokens}\n`,
+			`[usage] input=${result.usage.inputTokens} output=${result.usage.outputTokens} cache_hit=${result.usage.cacheHitTokens} cache_miss=${result.usage.cacheMissTokens} reasoning=${result.usage.reasoningTokens} cost=${formatCost(estimateCost(result.usage, settings.model))}\n`,
 		);
 		session.messages = withoutSystem(result.messages);
 		session.usage = {

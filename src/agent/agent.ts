@@ -33,6 +33,7 @@ import {
 	summarizeMessages,
 } from "./compact.js";
 import { trimForBudget } from "./context.js";
+import { estimateCost } from "./cost.js";
 import type { AgentDoneReason, AgentEvent, Usage } from "./events.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 
@@ -64,6 +65,7 @@ export interface RunAgentOptions {
 	compaction?: CompactionSettings;
 	forceCompact?: boolean;
 	lastInputTokens?: number;
+	maxCost?: number;
 	hooks?: HooksConfig;
 	runHook?: HookRunner;
 }
@@ -271,6 +273,14 @@ export async function runAgent(
 			if (step.kind === "error") {
 				emit({ type: "error", message: step.message });
 				reason = "error";
+				break;
+			}
+
+			if (
+				options.maxCost !== undefined &&
+				estimateCost(usage, options.model) > options.maxCost
+			) {
+				reason = "budget";
 				break;
 			}
 

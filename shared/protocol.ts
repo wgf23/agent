@@ -29,7 +29,7 @@ export type AgentEvent =
 	| { type: "error"; message: string }
 	| {
 			type: "done";
-			reason: "finished" | "max_steps" | "aborted" | "error";
+			reason: "finished" | "max_steps" | "aborted" | "error" | "budget";
 			steps: number;
 	  };
 

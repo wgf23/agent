@@ -2,6 +2,7 @@ import os from "node:os";
 import { Text } from "ink";
 import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
+import { estimateCost, formatCost } from "../../agent/cost.js";
 import type {
 	ImagePart,
 	ReasoningEffort,
@@ -57,6 +58,14 @@ export function StatusBar({
 	const streaming = status === "streaming";
 	const awaiting = status === "awaiting_permission";
 	const ratio = cacheHitRatio(usage);
+	const cost = estimateCost(
+		{
+			inputTokens: usage.input,
+			outputTokens: usage.output,
+			cacheHitTokens: usage.cacheHit,
+		},
+		model,
+	);
 	const now = useTicker(streaming);
 	const frame = useSpinner(streaming);
 	const elapsed =
@@ -79,6 +88,7 @@ export function StatusBar({
 			) : null}
 			<Text dimColor>{`  ${shortenCwd(cwd, os.homedir())}`}</Text>
 			<Text>{`  in ${usage.input} out ${usage.output}`}</Text>
+			<Text dimColor>{`  cost ${formatCost(cost)}`}</Text>
 			{ratio !== null ? (
 				<Text dimColor>{`  cache ${Math.round(ratio * 100)}%`}</Text>
 			) : null}
