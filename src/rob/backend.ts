@@ -37,6 +37,10 @@ export interface NativeBackendOptions {
 	drain: () => Inbound[];
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
+	// Called once per run, after the prompt is built, so memory committed since
+	// the last turn reaches the model. Returns the rendered memory block, or ""
+	// when the bot has none.
+	systemNote?: () => string;
 }
 
 export function createNativeBackend(options: NativeBackendOptions): RobBackend {
@@ -61,6 +65,14 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				return messages;
 			};
 
+			const preamble = renderTeamPreamble({
+				rob: options.name,
+				role: options.role,
+				roster: turn.bridge.roster(),
+				tools: turn.bridge.tools,
+			});
+			const note = options.systemNote?.() ?? "";
+
 			const result = await runAgent({
 				provider: options.provider,
 				model: options.model,
@@ -70,12 +82,7 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				history: [...turn.history],
 				signal: turn.signal,
 				authorize: options.authorize,
-				extraInstructions: renderTeamPreamble({
-					rob: options.name,
-					role: options.role,
-					roster: turn.bridge.roster(),
-					tools: turn.bridge.tools,
-				}),
+				extraInstructions: note === "" ? preamble : `${preamble}\n${note}`,
 				drainInput,
 				extraTools: [...turn.bridge.tools, ...(options.extraTools ?? [])],
 				hooks: options.hooks,

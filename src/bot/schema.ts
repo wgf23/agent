@@ -38,7 +38,9 @@ export const turnSchema = z
 		sessionId: z.string(),
 		workspaceRoot: z.string(),
 		at: z.number(),
-		wake: z.enum(["user", "dm", "subagent_result", "interval"]),
+		// "room" is this branch's fourth inbound kind on top of the source's
+		// three; a room turn is recorded like any other wake.
+		wake: z.enum(["user", "dm", "subagent_result", "interval", "room"]),
 		messages: z.array(messageSchema),
 	})
 	.strict();

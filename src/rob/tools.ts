@@ -20,10 +20,17 @@ export const DELEGATE_OUTPUT_MAX_CHARS = 4000;
 export const MAX_DELEGATE_DEPTH = 1;
 
 // Rob tools carry no file subject, so the authorizer needs a default rule.
-// send_message is read-only and auto-allowed; room_reply only writes the room
-// transcript; delegate can write and asks.
+// send_message is read-only and auto-replied; room_reply only writes the room
+// transcript; delegate can write and asks. remember and forget write only the
+// rob's own memory delta, never the filesystem, so they are allowed.
 export function robToolRules(): PermissionRules {
-	return { send_message: "allow", room_reply: "allow", delegate: "ask" };
+	return {
+		send_message: "allow",
+		room_reply: "allow",
+		delegate: "ask",
+		remember: "allow",
+		forget: "allow",
+	};
 }
 
 const sendMessageSchema = z
