@@ -11,7 +11,12 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyDelta } from "../../src/bot/record.js";
-import type { BotRecord, MemoryEntry, Turn } from "../../src/bot/schema.js";
+import {
+	type BotRecord,
+	DEFAULT_MEMORY_CONFIDENCE,
+	type MemoryEntry,
+	type Turn,
+} from "../../src/bot/schema.js";
 import {
 	type BotIdentity,
 	botsRoot,
@@ -58,6 +63,9 @@ function memoryEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
 		text: "likes mangoes",
 		source: { sessionId: "ses_a", turnSeq: 1 },
 		supersedes: [],
+		uses: 0,
+		lastUsedAt: 0,
+		confidence: DEFAULT_MEMORY_CONFIDENCE,
 		...overrides,
 	};
 }
@@ -97,7 +105,7 @@ describe("load", () => {
 		expect(result).toEqual({
 			ok: true,
 			record: {
-				version: 1,
+				version: 2,
 				bot: "atlas",
 				role: "helper",
 				model: "deepseek-flash",
@@ -107,6 +115,7 @@ describe("load", () => {
 				usage: { input: 0, output: 0 },
 				memory: [],
 				sessionTitles: {},
+				threads: {},
 				turns: [],
 			},
 		});
@@ -160,6 +169,114 @@ describe("load", () => {
 		expect(result.record.sessionTitles).toEqual({});
 		expect(result.record.turns).toEqual([makeTurn()]);
 		expect(result.record.memory).toEqual([memoryEntry()]);
+	});
+});
+
+describe("v1 to v2 migration", () => {
+	// A memory entry exactly as v1 wrote it: no learning fields. A whole file
+	// in that shape is what every existing ledger on disk looks like.
+	const v1Entry = {
+		id: "mem_00000000000000000000000000000001",
+		at: 1710000000000,
+		kind: "fact",
+		text: "likes mangoes",
+		source: { sessionId: "ses_a", turnSeq: 1 },
+		supersedes: [],
+	};
+	const v1File = {
+		version: 1,
+		bot: "atlas",
+		role: "helper",
+		model: "deepseek-flash",
+		createdAt: 1710000000000,
+		updatedAt: 1710000000000,
+		seq: 1,
+		usage: { input: 11, output: 22 },
+		memory: [v1Entry],
+		sessionTitles: { ses_a: "First chat" },
+		turns: [makeTurn()],
+	};
+
+	it("loads a literal v1 file as a v2 record with the defaults filled", async () => {
+		await writeFile(botFile("atlas"), JSON.stringify(v1File), "utf8");
+
+		const result = await createBotStore().load("atlas", identity);
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.record.version).toBe(2);
+		expect(result.record.threads).toEqual({});
+		expect(result.record.memory).toEqual([
+			{
+				...v1Entry,
+				uses: 0,
+				lastUsedAt: 0,
+				confidence: DEFAULT_MEMORY_CONFIDENCE,
+			},
+		]);
+	});
+
+	it("returns a v2 record unchanged", async () => {
+		const v2File = {
+			...v1File,
+			version: 2,
+			memory: [
+				{ ...v1Entry, uses: 4, lastUsedAt: 1710000000002, confidence: 0.8 },
+			],
+			threads: { ses_a: { summary: "talked about mangoes", summaryAt: 99 } },
+		};
+		await writeFile(botFile("atlas"), JSON.stringify(v2File), "utf8");
+
+		const result = await createBotStore().load("atlas", identity);
+
+		expect(result).toEqual({ ok: true, record: v2File });
+	});
+
+	it("rejects an invalid v2 record", async () => {
+		const invalid = {
+			...v1File,
+			version: 2,
+			memory: [{ ...v1Entry, confidence: 2 }],
+		};
+		await writeFile(botFile("atlas"), JSON.stringify(invalid), "utf8");
+
+		const result = await createBotStore().load("atlas", identity);
+
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain(botFile("atlas"));
+	});
+
+	it("migrates a v1 file for a memory-only edit", async () => {
+		await writeFile(botFile("atlas"), JSON.stringify(v1File), "utf8");
+		const store = createBotStore();
+
+		const saved = await store.saveMemory("atlas", {
+			upsert: [
+				memoryEntry({
+					id: "mem_00000000000000000000000000000002",
+					text: "likes kiwis",
+				}),
+			],
+			drop: [],
+		});
+
+		expect(saved.ok).toBe(true);
+		if (!saved.ok) return;
+		expect(saved.record.version).toBe(2);
+		expect(saved.record.threads).toEqual({});
+		expect(await store.memory("atlas")).toEqual([
+			{
+				...v1Entry,
+				uses: 0,
+				lastUsedAt: 0,
+				confidence: DEFAULT_MEMORY_CONFIDENCE,
+			},
+			memoryEntry({
+				id: "mem_00000000000000000000000000000002",
+				text: "likes kiwis",
+			}),
+		]);
 	});
 });
 

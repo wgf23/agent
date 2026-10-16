@@ -15,6 +15,8 @@ import {
 	type BotRecord,
 	botRecordSchema,
 	type MemoryEntry,
+	memoryEntrySchema,
+	migrateRecord,
 	type Turn,
 } from "./schema.js";
 
@@ -135,7 +137,7 @@ export function createBotStore(
 			};
 		}
 
-		const parsed = botRecordSchema.safeParse(raw);
+		const parsed = botRecordSchema.safeParse(migrateRecord(raw));
 		if (!parsed.success) {
 			return {
 				ok: false,
@@ -169,7 +171,9 @@ export function createBotStore(
 				createdAt: record.createdAt === 0 ? turn.at : record.createdAt,
 				updatedAt: turn.at,
 				seq: Math.max(record.seq, turn.seq),
-				memory: applied.memory,
+				memory: normalizeMemory(applied.memory),
+				// A record bootstrapped outside the store may predate threads.
+				threads: record.threads ?? {},
 				turns: ring.turns,
 			};
 
@@ -204,7 +208,7 @@ export function createBotStore(
 			const next: BotRecord = {
 				...existing.record,
 				updatedAt: clock(),
-				memory: applied.memory,
+				memory: normalizeMemory(applied.memory),
 			};
 			try {
 				await writeJsonAtomic(filePath, next);
@@ -310,7 +314,7 @@ export function createBotStore(
 		} catch {
 			return [];
 		}
-		const parsed = botRecordSchema.safeParse(raw);
+		const parsed = botRecordSchema.safeParse(migrateRecord(raw));
 		return parsed.success ? parsed.data.memory : [];
 	}
 
@@ -339,6 +343,7 @@ function emptyRecord(bot: string, identity: BotIdentity): BotRecord {
 		usage: { input: 0, output: 0 },
 		memory: [],
 		sessionTitles: {},
+		threads: {},
 		turns: [],
 	};
 }
@@ -372,7 +377,7 @@ async function readRecord(
 		};
 	}
 
-	const parsed = botRecordSchema.safeParse(raw);
+	const parsed = botRecordSchema.safeParse(migrateRecord(raw));
 	if (!parsed.success) {
 		return {
 			ok: false,
@@ -380,6 +385,12 @@ async function readRecord(
 		};
 	}
 	return { ok: true, record: parsed.data };
+}
+
+// Parses each entry at the persistence boundary so a v2 file on disk always
+// carries the learning fields, even when an entry was built without them.
+function normalizeMemory(memory: MemoryEntry[]): BotRecord["memory"] {
+	return memory.map((entry) => memoryEntrySchema.parse(entry));
 }
 
 function isEnoent(error: unknown): boolean {
