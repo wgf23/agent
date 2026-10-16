@@ -607,6 +607,8 @@ function summarizeArgs(name: string, args: unknown): string {
 				? pattern
 				: `${pattern} in ${path}`;
 		}
+		case "web_fetch":
+			return argString(args, "url") ?? "";
 		default:
 			return JSON.stringify(args ?? {}).slice(0, UNKNOWN_JSON_MAX_CHARS);
 	}

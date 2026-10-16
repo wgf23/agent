@@ -7,6 +7,7 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { readFileTool } from "./read_file.js";
 import type { Tool, ToolContext, ToolResult } from "./types.js";
+import { webFetchTool } from "./web_fetch.js";
 import { writeFileTool } from "./write_file.js";
 
 export const tools: Tool[] = [
@@ -17,6 +18,7 @@ export const tools: Tool[] = [
 	globTool,
 	grepTool,
 	loadSkillTool,
+	webFetchTool,
 ];
 
 export function getTool(name: string): Tool | undefined {
