@@ -1,6 +1,7 @@
 import os from "node:os";
 import { render } from "ink";
 import type { CompactionSettings } from "../agent/compact.js";
+import { createSubagentRunner } from "../agent/subagent.js";
 import {
 	createSetupIo,
 	missingKeyDecision,
@@ -32,6 +33,7 @@ import {
 	saveSession,
 	withoutSystem,
 } from "../session/store.js";
+import { createTaskTool } from "../tools/task.js";
 import { App } from "./App.js";
 import { createApprovalBridge } from "./approval.js";
 import type { TuiUsage } from "./state.js";
@@ -171,12 +173,16 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	// Sessions cover the single-agent TUI. Team mode keeps its own transcripts.
 	let session = await resolveSession(options, settings.model);
 
+	const subagentUsage = { input: 0, output: 0 };
+
 	const writeSession = (messages: Message[], usage: TuiUsage): void => {
 		session.messages = withoutSystem(messages);
 		session.usage = {
-			input: session.usage.input + usage.input,
-			output: session.usage.output + usage.output,
+			input: session.usage.input + usage.input + subagentUsage.input,
+			output: session.usage.output + usage.output + subagentUsage.output,
 		};
+		subagentUsage.input = 0;
+		subagentUsage.output = 0;
 		session.model = settings.model;
 		session.updatedAt = Date.now();
 		void saveSession(session).then((saved) => {
@@ -220,6 +226,25 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
 	// endpoints, so only forward them when the deepseek preset is active.
 	const deepseek = settings.preset === "deepseek";
+	const thinking = deepseek ? settings.thinking : undefined;
+	const reasoningEffort = deepseek ? settings.reasoningEffort : undefined;
+
+	const taskTool = createTaskTool({
+		depth: 0,
+		run: createSubagentRunner({
+			provider,
+			model: settings.model,
+			workspaceRoot: options.workspaceRoot,
+			authorize,
+			thinking,
+			reasoningEffort,
+			onEvent: (event) => {
+				if (event.type !== "usage") return;
+				subagentUsage.input += event.inputTokens;
+				subagentUsage.output += event.outputTokens;
+			},
+		}),
+	});
 
 	const instance = render(
 		<App
@@ -230,13 +255,13 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			model={settings.model}
 			workspaceRoot={options.workspaceRoot}
 			maxSteps={settings.maxSteps}
-			thinking={deepseek ? settings.thinking : undefined}
-			reasoningEffort={deepseek ? settings.reasoningEffort : undefined}
+			thinking={thinking}
+			reasoningEffort={reasoningEffort}
 			baseURL={settings.baseURL}
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
-			extraTools={mcp.tools}
+			extraTools={[...mcp.tools, taskTool]}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			onTurnEnd={writeSession}

@@ -24,6 +24,8 @@ export function summarizeArgs(name: string, args: unknown): string {
 			return argString(args, "url") ?? "";
 		case "web_search":
 			return argString(args, "query") ?? "";
+		case "task":
+			return argString(args, "task") ?? "";
 		default:
 			return JSON.stringify(args ?? {}).slice(0, UNKNOWN_JSON_MAX_CHARS);
 	}

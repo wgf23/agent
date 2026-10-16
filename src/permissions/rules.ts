@@ -24,6 +24,7 @@ const DEFAULTS: PermissionRules = {
 	bash: "ask",
 	web_fetch: "ask",
 	web_search: "ask",
+	task: "ask",
 };
 
 export function defaultRules(): PermissionRules {

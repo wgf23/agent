@@ -9,6 +9,7 @@ import type {
 import { runAgent } from "../agent/agent.js";
 import { COMPACTED_SUMMARY_PREFIX } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/events.js";
+import { createSubagentRunner } from "../agent/subagent.js";
 import type { AllowAll } from "../permissions/allow-all.js";
 import {
 	type ApprovalChoice,
@@ -27,6 +28,7 @@ import {
 	saveSession,
 	withoutSystem,
 } from "../session/store.js";
+import { createTaskTool } from "../tools/task.js";
 import { summarizeArgs } from "../tui/summarize.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
@@ -202,6 +204,28 @@ export class SoloHub extends EventBus implements Hub {
 				}),
 		});
 
+		const thinking = deepseek ? this.options.settings.thinking : undefined;
+		const reasoningEffort = deepseek
+			? this.options.settings.reasoningEffort
+			: undefined;
+		const subagentUsage = { input: 0, output: 0 };
+		const taskTool = createTaskTool({
+			depth: 0,
+			run: createSubagentRunner({
+				provider: this.options.provider,
+				model: this.options.settings.model,
+				workspaceRoot: this.options.workspaceRoot,
+				authorize,
+				thinking,
+				reasoningEffort,
+				onEvent: (event) => {
+					if (event.type !== "usage") return;
+					subagentUsage.input += event.inputTokens;
+					subagentUsage.output += event.outputTokens;
+				},
+			}),
+		});
+
 		try {
 			const result = await runAgent({
 				provider: this.options.provider,
@@ -210,14 +234,12 @@ export class SoloHub extends EventBus implements Hub {
 				prompt,
 				history: this.session.messages,
 				maxSteps: this.options.settings.maxSteps,
-				thinking: deepseek ? this.options.settings.thinking : undefined,
-				reasoningEffort: deepseek
-					? this.options.settings.reasoningEffort
-					: undefined,
+				thinking,
+				reasoningEffort,
 				signal: controller.signal,
 				authorize,
 				compaction: this.options.compaction,
-				extraTools: this.options.extraTools,
+				extraTools: [...this.options.extraTools, taskTool],
 				drainInput: () => {
 					const queued = this.queue.splice(0);
 					return queued.map((text) => ({ role: "user", content: text }));
@@ -229,8 +251,14 @@ export class SoloHub extends EventBus implements Hub {
 
 			this.session.messages = withoutSystem(result.messages);
 			this.session.usage = {
-				input: this.session.usage.input + result.usage.inputTokens,
-				output: this.session.usage.output + result.usage.outputTokens,
+				input:
+					this.session.usage.input +
+					subagentUsage.input +
+					result.usage.inputTokens,
+				output:
+					this.session.usage.output +
+					subagentUsage.output +
+					result.usage.outputTokens,
 			};
 			this.session.model = this.options.settings.model;
 			this.session.updatedAt = Date.now();

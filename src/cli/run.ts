@@ -1,6 +1,7 @@
 import os from "node:os";
 import { runAgent } from "../agent/agent.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
+import { createSubagentRunner } from "../agent/subagent.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
@@ -22,6 +23,7 @@ import {
 	saveSession,
 	withoutSystem,
 } from "../session/store.js";
+import { createTaskTool } from "../tools/task.js";
 
 export interface RunHeadlessOptions {
 	prompt: string;
@@ -111,6 +113,26 @@ export async function runHeadless(
 	// DeepSeek's thinking controls do not apply to other OpenAI-compatible
 	// endpoints, so only forward them when the deepseek preset is active.
 	const deepseek = settings.preset === "deepseek";
+	const thinking = deepseek ? settings.thinking : undefined;
+	const reasoningEffort = deepseek ? settings.reasoningEffort : undefined;
+
+	const subagentUsage = { input: 0, output: 0 };
+	const taskTool = createTaskTool({
+		depth: 0,
+		run: createSubagentRunner({
+			provider,
+			model: settings.model,
+			workspaceRoot,
+			authorize,
+			thinking,
+			reasoningEffort,
+			onEvent: (event) => {
+				if (event.type !== "usage") return;
+				subagentUsage.input += event.inputTokens;
+				subagentUsage.output += event.outputTokens;
+			},
+		}),
+	});
 
 	let reasoningChars = 0;
 	try {
@@ -121,12 +143,12 @@ export async function runHeadless(
 			prompt: options.prompt,
 			history: session.messages,
 			maxSteps: settings.maxSteps,
-			thinking: deepseek ? settings.thinking : undefined,
-			reasoningEffort: deepseek ? settings.reasoningEffort : undefined,
+			thinking,
+			reasoningEffort,
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: mcp.tools,
+			extraTools: [...mcp.tools, taskTool],
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
@@ -170,8 +192,10 @@ export async function runHeadless(
 		);
 		session.messages = withoutSystem(result.messages);
 		session.usage = {
-			input: session.usage.input + result.usage.inputTokens,
-			output: session.usage.output + result.usage.outputTokens,
+			input:
+				session.usage.input + subagentUsage.input + result.usage.inputTokens,
+			output:
+				session.usage.output + subagentUsage.output + result.usage.outputTokens,
 		};
 		session.model = settings.model;
 		session.updatedAt = Date.now();
