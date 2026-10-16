@@ -1,5 +1,6 @@
 import type {
 	ContentBlock,
+	ImagePart,
 	Message,
 	Provider,
 	ReasoningEffort,
@@ -40,6 +41,7 @@ export interface RunAgentOptions {
 	model: string;
 	workspaceRoot: string;
 	prompt: string;
+	images?: ImagePart[];
 	history?: Message[];
 	maxSteps?: number;
 	signal?: AbortSignal;
@@ -100,7 +102,13 @@ export async function runAgent(
 	let messages: Message[] = [
 		{ role: "system", content: systemPrompt },
 		...(options.history ?? []),
-		{ role: "user", content: options.prompt },
+		{
+			role: "user",
+			content: options.prompt,
+			...(options.images !== undefined && options.images.length > 0
+				? { images: options.images }
+				: {}),
+		},
 	];
 
 	const extraTools = options.extraTools ?? [];
