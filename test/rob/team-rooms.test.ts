@@ -11,6 +11,7 @@ import {
 	type StoredRoom,
 } from "../../src/rob/room-store.js";
 import { Team } from "../../src/rob/team.js";
+import type { TurnHost } from "../../src/rob/types.js";
 import {
 	createMockProvider,
 	type MockProvider,
@@ -605,6 +606,84 @@ describe("Team rooms", () => {
 				{ name: "Bad Name", members: ["planner", "builder"] },
 			]),
 		).toThrow('Invalid room "Bad Name" in TeamOptions: invalid_name.');
+	});
+
+	// DM-flow contract (P0-4). createBridge (src/rob/team.ts:775-782) appends
+	// roomTools only when beginTurn finds a pending room turn, so room_reply must
+	// never leak into a DM-only turn and must always be present in a room turn.
+	it("binds room_reply to the room turn only, never a DM-only turn", async () => {
+		const providers = {
+			planner: createMockProvider([roomReply("on it"), done("nothing to add")]),
+			builder: createMockProvider([done("quiet"), done("quiet")]),
+		};
+		const team = makeTeam(providers);
+		const host: TurnHost = {
+			signal: new AbortController().signal,
+			workspaceRoot: workspace,
+			authorize: async () => ({ allowed: true }),
+			runSubagent: async () => "answer",
+		};
+
+		// DM-only turn: no pending room turn, so the bridge carries the team
+		// tools and nothing else.
+		const dmBridge = await team.beginTurn("planner", host);
+		const dmTools = dmBridge.tools.map((tool) => tool.name);
+		expect(dmTools).toContain("send_message");
+		expect(dmTools).toContain("delegate");
+		expect(dmTools).not.toContain("room_reply");
+		dmBridge.close();
+
+		// Room turn: the same rob's provider now sees room_reply alongside the
+		// team tools, proving the binding is per-turn and not per-rob.
+		team.start();
+		team.createRoom({ name: "ship-it", members: ["planner", "builder"] });
+		team.sendToRoom("ship-it", "who takes it?");
+		await waitFor(
+			() => team.rooms()[0].run.phase === "idle",
+			"the room to settle",
+			5000,
+		);
+		const roomTools = providers.planner.requests[0].tools.map(
+			(tool) => tool.name,
+		);
+		expect(roomTools).toContain("room_reply");
+		expect(roomTools).toContain("send_message");
+		expect(roomTools).toContain("delegate");
+		await team.stop();
+	});
+
+	// DM-flow contract (P0-4): send_message queues into the target's inbox and the
+	// reverse direction does the same, so a DM and its ack both land in the log.
+	it("relays a DM and its ack in both directions", async () => {
+		const providers = {
+			planner: createMockProvider([]),
+			builder: createMockProvider([]),
+		};
+		const team = makeTeam(providers);
+		const host: TurnHost = {
+			signal: new AbortController().signal,
+			workspaceRoot: workspace,
+			authorize: async () => ({ allowed: true }),
+			runSubagent: async () => "answer",
+		};
+
+		const bridge = await team.beginTurn("planner", host);
+		const send = bridge.tools.find((tool) => tool.name === "send_message");
+		if (send === undefined) throw new Error("send_message tool missing");
+		const sent = await send.execute(
+			{ to: "builder", text: "ping" },
+			{ workspaceRoot: workspace, signal: host.signal },
+		);
+		expect(sent).toMatchObject({ ok: true });
+		bridge.close();
+
+		expect(team.postDm("builder", "planner", "ack")).toMatchObject({
+			status: "queued",
+		});
+		expect(
+			team.readDms().map((dm) => `${dm.from}->${dm.to}:${dm.text}`),
+		).toEqual(["planner->builder:ping", "builder->planner:ack"]);
+		await team.stop();
 	});
 });
 
