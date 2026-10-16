@@ -146,6 +146,8 @@ function headerFor(inbound: Inbound): string {
 			return `[from rob:${inbound.from}]`;
 		case "subagent_result":
 			return "[subagent result]";
+		case "interval":
+			return "[wake:interval]";
 		case "room":
 			return `[room:${inbound.from}]`;
 	}

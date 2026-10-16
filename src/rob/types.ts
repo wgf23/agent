@@ -44,6 +44,15 @@ export const robBackendSchema = z.discriminatedUnion("kind", [
 ]);
 export type RobBackendConfig = z.infer<typeof robBackendSchema>;
 
+// The schedule is configuration, not ledger state: the timer re-arms from this
+// on every start, while a turn only records that an interval woke it.
+const wakeConfigSchema = z
+	.object({
+		everyMs: z.number().int().min(1000),
+		prompt: z.string().min(1),
+	})
+	.strict();
+
 export const robConfigSchema = z
 	.object({
 		name: robNameSchema,
@@ -51,6 +60,7 @@ export const robConfigSchema = z
 		model: z.string().min(1).optional(),
 		permissions: permissionRulesSchema.optional(),
 		backend: robBackendSchema.optional(),
+		wake: wakeConfigSchema.optional(),
 	})
 	.superRefine((rob, ctx) => {
 		if (rob.name === WORKSPACE_BOT) {
@@ -84,7 +94,12 @@ export const robConfigSchema = z
 	});
 export type RobConfig = z.infer<typeof robConfigSchema>;
 
-export type InboundKind = "user" | "dm" | "subagent_result" | "room";
+export type InboundKind =
+	| "user"
+	| "dm"
+	| "subagent_result"
+	| "interval"
+	| "room";
 
 export interface Inbound {
 	kind: InboundKind;

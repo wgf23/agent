@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
+import { manualClock, manualTimer } from "../../src/bot/wake.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import {
 	type ApprovalRequest,
@@ -350,6 +351,46 @@ describe("Team sessions", () => {
 		expect(second.status).toBe("rejected");
 		if (first.status === "fulfilled") first.value.close();
 		await team.stop();
+	});
+
+	it("notices when a rob wakes on its interval", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "awake" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const manual = manualTimer();
+		const team = new Team({
+			robs: [
+				{
+					name: "planner",
+					role: "plan",
+					wake: { everyMs: 60000, prompt: "check the board" },
+				},
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+			clock: manualClock(0),
+			timer: manual.timer,
+		});
+		const notices: string[] = [];
+		team.subscribe((event) => {
+			if (event.kind === "notice") notices.push(event.text);
+		});
+
+		team.start();
+		manual.fire("planner");
+		await waitFor(
+			() =>
+				provider.requests.length === 1 && team.statuses()[0].status === "idle",
+			"the wake's turn",
+		);
+		await team.stop();
+
+		expect(notices).toContain("woke on interval");
 	});
 });
 

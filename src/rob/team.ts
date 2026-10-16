@@ -4,6 +4,13 @@ import type { AgentEvent } from "../agent/events.js";
 import { ChannelRegistry, type ChannelSession } from "../bot/channel.js";
 import { replay } from "../bot/record.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
+import {
+	type Clock,
+	systemClock,
+	systemTimer,
+	type Timer,
+	type Wake,
+} from "../bot/wake.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type {
 	ApprovalChoice,
@@ -117,7 +124,8 @@ export interface TeamOptions {
 	// Optional so existing callers keep compiling; a team without an injected
 	// store still gets the durable global ledger.
 	store?: BotStore;
-	clock?: () => number;
+	clock?: Clock;
+	timer?: Timer;
 }
 
 export type LoadChannelResult =
@@ -148,6 +156,12 @@ export class Team implements TeamPort {
 	// One registry for the whole team, so every rob shares the same channel
 	// bookkeeping and a bot can only ever be current in one place.
 	private readonly channels: ChannelRegistry;
+	private readonly clock: Clock;
+	private readonly timer: Timer;
+	// One cancel per armed interval, keyed by rob, so stop() can disarm them all.
+	private readonly wakeTimers = new Map<RobName, () => void>();
+	// The live wake per rob, seeded from the roster and replaced by setWake.
+	private readonly wakes = new Map<RobName, RobConfig["wake"] | null>();
 	private readonly approvals = new ApprovalQueue({
 		// A queued request has no window until it becomes the head, so re-emit
 		// it the moment it does: a client counting down needs the deadline, not
@@ -178,9 +192,12 @@ export class Team implements TeamPort {
 	constructor(options: TeamOptions) {
 		this.options = options;
 		this.store = options.store ?? createBotStore();
-		this.channels = new ChannelRegistry({ clock: options.clock });
+		this.clock = options.clock ?? systemClock;
+		this.timer = options.timer ?? systemTimer;
+		this.channels = new ChannelRegistry({ clock: () => this.clock.now() });
 		for (const config of options.robs) {
 			this.robs.set(config.name, this.createRob(config));
+			this.wakes.set(config.name, config.wake ?? null);
 		}
 		this.roomStore = createRoomStore({
 			workspaceRoot: options.workspaceRoot,
@@ -197,8 +214,10 @@ export class Team implements TeamPort {
 		}
 		const rob = this.createRob(config);
 		this.robs.set(config.name, rob);
+		this.wakes.set(config.name, config.wake ?? null);
 		if (this.started && !this.stopping) {
 			this.loops.set(config.name, rob.run());
+			this.armWake(config.name, config.wake ?? null);
 		}
 	}
 
@@ -223,7 +242,7 @@ export class Team implements TeamPort {
 			hooks: this.options.hooks,
 			store: this.store,
 			channels: this.channels,
-			clock: this.options.clock,
+			clock: () => this.clock.now(),
 		});
 	}
 
@@ -348,6 +367,54 @@ export class Team implements TeamPort {
 		for (const room of this.roomRegistry.values()) {
 			room.resume();
 		}
+		for (const [name, wake] of this.wakes) {
+			this.armWake(name, wake);
+		}
+	}
+
+	// The timer only knows a bot name and a prompt; the wake reaches the rob as
+	// an ordinary inbound, so the turn plumbing is untouched.
+	private armWake(name: RobName, wake: RobConfig["wake"] | null): void {
+		if (wake === undefined || wake === null) return;
+		const cancel = this.timer.schedule(
+			{ bot: name, everyMs: wake.everyMs, text: wake.prompt },
+			(interval) => this.onWake(interval),
+		);
+		this.wakeTimers.set(name, cancel);
+	}
+
+	private disarmWake(name: RobName): void {
+		const cancel = this.wakeTimers.get(name);
+		if (cancel === undefined) return;
+		cancel();
+		this.wakeTimers.delete(name);
+	}
+
+	// Replaces the live schedule in place: cancel whatever is armed, record the
+	// new config, then arm it (or nothing). start/stop/addRob are untouched.
+	setWake(name: RobName, wake: RobConfig["wake"] | null): void {
+		this.requireRob(name);
+		this.disarmWake(name);
+		this.wakes.set(name, wake ?? null);
+		if (wake !== undefined && wake !== null) this.armWake(name, wake);
+	}
+
+	// The wake the live timer was armed from; null when the rob has none.
+	robWake(name: RobName): RobConfig["wake"] | null {
+		this.requireRob(name);
+		return this.wakes.get(name) ?? null;
+	}
+
+	private onWake(wake: Wake): void {
+		const rob = this.robs.get(wake.bot);
+		if (rob === undefined) return;
+		this.emitNotice(wake.bot, "woke on interval");
+		rob.deliver({
+			kind: "interval",
+			from: "scheduler",
+			text: wake.text,
+			at: wake.at,
+		});
 	}
 
 	dispatch(name: string, text: string, images?: ImagePart[]): void {
@@ -497,6 +564,10 @@ export class Team implements TeamPort {
 
 	async stop(): Promise<void> {
 		this.stopping = true;
+		for (const cancel of this.wakeTimers.values()) {
+			cancel();
+		}
+		this.wakeTimers.clear();
 		this.approvals.denyAll(TEAM_STOPPED_REASON);
 		// Rooms first: a live room turn resolves only after its rob's turn ends,
 		// so stopping robs first would leave the room waiting on a dead rob.
