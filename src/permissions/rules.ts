@@ -25,6 +25,7 @@ const DEFAULTS: PermissionRules = {
 	bash: "ask",
 	web_fetch: "ask",
 	web_search: "ask",
+	semantic_search: "ask",
 	task: "ask",
 };
 
@@ -102,6 +103,8 @@ export function toolSubject(toolName: string, args: unknown): string {
 		case "web_fetch":
 			return stringValue(record.url);
 		case "web_search":
+			return stringValue(record.query);
+		case "semantic_search":
 			return stringValue(record.query);
 		default:
 			return "";

@@ -26,6 +26,7 @@ import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
 import type { Provider } from "../providers/types.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
+import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
 import { CompositeHub } from "./composite.js";
 import type { Hub, HubOptions } from "./hub.js";
@@ -115,6 +116,11 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
 
 	const allowAll = createAllowAll();
+	const semanticTool = buildSemanticSearchTool({
+		embeddings: resolved.config.embeddings,
+		workspaceRoot,
+		env,
+	});
 	// Getters, not values: SoloHub reads provider/settings at each turn, so a
 	// settings save is visible without rebuilding or restarting the server.
 	const hubOptions = {
@@ -126,7 +132,12 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			return runtime.current().settings;
 		},
 		permissions,
-		extraTools: [...mcp.tools, ...lsp.tools, ...plugins.tools],
+		extraTools: [
+			...mcp.tools,
+			...lsp.tools,
+			...plugins.tools,
+			...(semanticTool === undefined ? [] : [semanticTool]),
+		],
 		compaction: resolved.config.compaction,
 		hooks: resolved.config.hooks,
 		extraInstructions: plugins.extraInstructions || undefined,
@@ -140,7 +151,8 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const latest = await latestSession(workspaceRoot);
 	const session = latest ?? newSession(workspaceRoot, settings.model);
 	const workspace = new SoloHub(hubOptions, { session, sessions: summaries });
-	// Robs keep the MCP and plugin tools; diagnostics stays on the workspace chat.
+	// Robs keep the MCP and plugin tools; diagnostics and semantic search stay
+	// on the workspace chat.
 	const robHub = new TeamHub({
 		...hubOptions,
 		extraTools: [...mcp.tools, ...plugins.tools],
