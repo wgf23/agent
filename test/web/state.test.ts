@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
 	AgentEvent,
+	ApprovalRequestInfo,
 	RoomInfo,
 	SearchResponse,
 	ServerEvent,
@@ -194,6 +195,7 @@ describe("clientReducer", () => {
 			subject: "rm -rf /",
 			dangerous: true,
 			rule: null,
+			expiresAt: null,
 		};
 		const queued = apply([hello, { type: "approval_requested", request }]);
 		expect(queued.approvals).toEqual([request]);
@@ -202,6 +204,44 @@ describe("clientReducer", () => {
 			event: { type: "approval_resolved", id: "approval-0", decision: "deny" },
 		});
 		expect(cleared.approvals).toEqual([]);
+	});
+
+	// The countdown is only possible if the deadline survives the event, and a
+	// queued request is announced twice (no deadline, then the armed one).
+	it("keeps an approval's expiresAt through the event", () => {
+		const request: ApprovalRequestInfo = {
+			id: "approval-0",
+			bot: "planner",
+			toolName: "write_file",
+			subject: "a.txt",
+			dangerous: false,
+			rule: "a.txt",
+			expiresAt: 1_800_000_000_000,
+		};
+		const state = apply([hello, { type: "approval_requested", request }]);
+		expect(state.approvals).toEqual([request]);
+		expect(state.approvals[0].expiresAt).toBe(1_800_000_000_000);
+	});
+
+	it("replaces an approval in place when its deadline is armed", () => {
+		const queued: ApprovalRequestInfo = {
+			id: "approval-1",
+			bot: "worker",
+			toolName: "write_file",
+			subject: "b.txt",
+			dangerous: false,
+			rule: "b.txt",
+			expiresAt: null,
+		};
+		const armed = { ...queued, expiresAt: 1_800_000_000_000 };
+		const state = apply([
+			hello,
+			{ type: "approval_requested", request: queued },
+			{ type: "approval_requested", request: armed },
+		]);
+		// One entry, not two: the re-emit carries the deadline for the same id.
+		expect(state.approvals).toEqual([armed]);
+		expect(state.approvals[0].expiresAt).toBe(1_800_000_000_000);
 	});
 
 	it("appends DMs and notices to their feeds", () => {

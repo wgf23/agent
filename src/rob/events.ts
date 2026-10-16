@@ -10,7 +10,14 @@ export type TeamEvent =
 	| { kind: "notice"; rob: string; text: string }
 	| { kind: "dm"; entry: DmEntry }
 	| { kind: "subagent"; entry: SubagentEntry }
-	| { kind: "approval_requested"; request: ApprovalRequest }
+	// expiresAt is set when the request became the head of the approval queue
+	// and its window started; it is absent for a request enqueued behind
+	// another one, whose window has not begun.
+	| {
+			kind: "approval_requested";
+			request: ApprovalRequest;
+			expiresAt?: number;
+	  }
 	| { kind: "approval_resolved"; id: string; decision: ApprovalChoice }
 	| { kind: "room"; event: RoomEvent };
 

@@ -238,6 +238,7 @@ export class TeamHub extends EventBus implements Hub {
 						subject: event.request.subject,
 						dangerous: event.request.dangerous,
 						rule: event.request.rule,
+						expiresAt: event.expiresAt ?? null,
 					},
 				});
 				return;

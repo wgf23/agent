@@ -369,10 +369,17 @@ export class SoloHub extends EventBus implements Hub {
 		}
 	}
 
+	// The workspace chat arms no approval window, so its requests carry no
+	// deadline to count down.
 	private requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
 		const id = `ws-approval-${this.approvalSeq}`;
 		this.approvalSeq += 1;
-		const info: ApprovalRequestInfo = { id, bot: DEFAULT_BOT, ...request };
+		const info: ApprovalRequestInfo = {
+			id,
+			bot: DEFAULT_BOT,
+			...request,
+			expiresAt: null,
+		};
 		return new Promise<ApprovalDecision>((resolve) => {
 			this.pendingApprovals.set(id, { request: info, resolve });
 			this.setStatus("waiting_approval");

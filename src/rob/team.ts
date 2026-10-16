@@ -108,6 +108,9 @@ export interface TeamOptions {
 	extraTools?: Tool[];
 	hooks?: HooksConfig;
 	rooms?: readonly RoomConfig[];
+	// An unanswered approval expires and is denied after this long, so a rob
+	// cannot wait on an approval nobody answers. Defaults in ApprovalQueue.
+	approvalTimeoutMs?: number;
 }
 
 interface SessionRecord {
@@ -130,7 +133,14 @@ export class Team implements TeamPort {
 	private readonly sessions = new Map<RobName, SessionRecord>();
 	private readonly dms: DmEntry[] = [];
 	private readonly subagents: SubagentEntry[] = [];
-	private readonly approvals = new ApprovalQueue();
+	private readonly approvals = new ApprovalQueue({
+		// A queued request has no window until it becomes the head, so re-emit
+		// it the moment it does: a client counting down needs the deadline, not
+		// the fact that one exists.
+		onArm: (request, expiresAt) => {
+			this.emit({ kind: "approval_requested", request, expiresAt });
+		},
+	});
 	private readonly listeners = new Set<TeamListener>();
 	private readonly roomRegistry = new Map<RoomName, Room>();
 	private readonly roomTurns = new Map<RobName, PendingRoomTurn>();
@@ -508,11 +518,14 @@ export class Team implements TeamPort {
 		if (this.stopping) {
 			return Promise.resolve({ deny: TEAM_STOPPED_REASON });
 		}
-		const enqueued = this.approvals.request(rob, request);
+		const enqueued = this.approvals.request(rob, request, {
+			timeoutMs: this.options.approvalTimeoutMs,
+		});
 		target.markWaitingApproval();
 		this.emit({
 			kind: "approval_requested",
 			request: { ...enqueued.request },
+			expiresAt: this.approvals.deadline(enqueued.id) ?? undefined,
 		});
 		return enqueued.decision.then((decision) => {
 			this.emit({

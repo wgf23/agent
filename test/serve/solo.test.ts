@@ -275,6 +275,13 @@ describe("SoloHub", () => {
 		expect(requested).toMatchObject({
 			request: { bot: "assistant", toolName: "bash", subject: "echo hi" },
 		});
+		// The workspace chat arms no approval window, so there is no deadline
+		// to count down; the field is null rather than absent.
+		expect(
+			requested?.type === "approval_requested"
+				? requested.request.expiresAt
+				: undefined,
+		).toBeNull();
 		const id =
 			requested?.type === "approval_requested" ? requested.request.id : "";
 		hub.resolveApproval(id, "deny");

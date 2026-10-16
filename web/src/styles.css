@@ -2249,6 +2249,23 @@ input.switch:checked::before {
 	font-weight: 600;
 }
 
+.badge.countdown {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+.countdown-label {
+	margin-left: 4px;
+	font-family: var(--font-sans);
+}
+
+.badge.countdown.urgent {
+	background: var(--warn-soft);
+	border-color: var(--warn-border);
+	color: var(--yellow);
+	font-weight: 600;
+}
+
 .modal-body {
 	display: flex;
 	flex-direction: column;

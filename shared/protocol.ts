@@ -194,6 +194,11 @@ export interface ApprovalRequestInfo {
 	subject: string;
 	dangerous: boolean;
 	rule: string | null;
+	// When the server denies this request unanswered, in epoch milliseconds,
+	// or null when nothing is armed. A request still queued behind another one
+	// has no deadline yet: its window starts when it is promoted to the head,
+	// and the server re-emits it with the deadline then.
+	expiresAt: number | null;
 }
 
 export interface SessionSummaryInfo {

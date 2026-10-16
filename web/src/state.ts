@@ -381,8 +381,19 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			return next;
 		}
 
-		case "approval_requested":
-			return { ...state, approvals: [...state.approvals, event.request] };
+		// A queued request is announced twice: once with no deadline, then again when
+		// it becomes the head and the server arms its window. Replacing in place
+		// keeps one entry per id and, critically, keeps the FIFO order the modal
+		// renders from.
+		case "approval_requested": {
+			const index = state.approvals.findIndex((a) => a.id === event.request.id);
+			if (index === -1) {
+				return { ...state, approvals: [...state.approvals, event.request] };
+			}
+			const approvals = [...state.approvals];
+			approvals[index] = event.request;
+			return { ...state, approvals };
+		}
 
 		case "approval_resolved":
 			return {
