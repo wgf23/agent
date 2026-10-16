@@ -136,9 +136,15 @@ describe("bot ledger routes", () => {
 			bot: string;
 			sessionId: string;
 			messages: Array<{ role: string; text: string }>;
+			sessions: Array<{ id: string; messageCount: number }>;
 		};
 		expect(body.bot).toBe("alpha");
 		expect(typeof body.sessionId).toBe("string");
+		// One read fills the sidebar's list too, with the session the current
+		// transcript belongs to.
+		expect(body.sessions).toEqual([
+			expect.objectContaining({ id: body.sessionId, messageCount: 2 }),
+		]);
 		expect(
 			body.messages.some(
 				(message) => message.role === "user" && message.text.includes("ping"),
