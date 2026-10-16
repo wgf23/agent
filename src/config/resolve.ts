@@ -99,6 +99,21 @@ export const DEFAULT_SEARCH: SearchSettings = {
 	...SEARCH_PROVIDER_DEFAULTS.brave,
 };
 
+export const embeddingsOptionsSchema = z.object({
+	baseURL: z.string().min(1),
+	model: z.string().min(1),
+	apiKeyEnv: z.string().min(1),
+	dimensions: z.number().int().positive().optional(),
+});
+export type EmbeddingsOptions = z.infer<typeof embeddingsOptionsSchema>;
+
+export interface EmbeddingsSettings {
+	baseURL: string;
+	model: string;
+	apiKeyEnv: string;
+	dimensions: number | undefined;
+}
+
 export const mcpServerSchema = z.object({
 	command: z.array(z.string().min(1)).min(1),
 	env: z.record(z.string(), z.string()).optional(),
@@ -216,6 +231,7 @@ export interface ResolvedConfig {
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
 	search: SearchSettings;
+	embeddings: EmbeddingsSettings | undefined;
 	mcpServers: McpServers;
 	lspServers: LspServers;
 	plugins: string[];
@@ -368,6 +384,10 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 	);
 	const sandbox = resolveSandbox(project.layer.sandbox, global.layer.sandbox);
 	const search = resolveSearch(project.layer.search, global.layer.search);
+	const embeddings = resolveEmbeddings(
+		project.layer.embeddings,
+		global.layer.embeddings,
+	);
 	// Project servers win over global servers of the same name; other names from
 	// both layers stay.
 	const mcpServers: McpServers = {
@@ -425,6 +445,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			compaction,
 			sandbox,
 			search,
+			embeddings,
 			mcpServers,
 			lspServers,
 			plugins,
@@ -481,6 +502,7 @@ interface Layer {
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
 	search?: SearchOptions;
+	embeddings?: EmbeddingsOptions;
 	mcp?: McpServers;
 	lsp?: LspServers;
 	plugins?: string[];
@@ -632,6 +654,18 @@ function loadLayer(
 		search = parsed.data;
 	}
 
+	let embeddings: EmbeddingsOptions | undefined;
+	if (raw.embeddings !== undefined) {
+		const parsed = embeddingsOptionsSchema.safeParse(raw.embeddings);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid embeddings in ${filePath}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		embeddings = parsed.data;
+	}
+
 	let mcp: McpServers | undefined;
 	if (raw.mcp !== undefined) {
 		const parsed = parseMcpServers(raw.mcp, filePath);
@@ -664,6 +698,7 @@ function loadLayer(
 			compaction,
 			sandbox,
 			search,
+			embeddings,
 			mcp,
 			lsp,
 			plugins,
@@ -752,6 +787,27 @@ function resolveSearch(
 		provider,
 		apiKeyEnv: project?.apiKeyEnv ?? global?.apiKeyEnv ?? defaults.apiKeyEnv,
 		baseURL: project?.baseURL ?? global?.baseURL ?? defaults.baseURL,
+	};
+}
+
+// The schema requires baseURL, model, and apiKeyEnv in each block, so a block
+// is complete and the per-field merge simply lets the project layer override the
+// global one. Absent in both layers means no embeddings and no tool.
+function resolveEmbeddings(
+	project: EmbeddingsOptions | undefined,
+	global: EmbeddingsOptions | undefined,
+): EmbeddingsSettings | undefined {
+	const baseURL = project?.baseURL ?? global?.baseURL;
+	const model = project?.model ?? global?.model;
+	const apiKeyEnv = project?.apiKeyEnv ?? global?.apiKeyEnv;
+	if (baseURL === undefined || model === undefined || apiKeyEnv === undefined) {
+		return undefined;
+	}
+	return {
+		baseURL,
+		model,
+		apiKeyEnv,
+		dimensions: project?.dimensions ?? global?.dimensions,
 	};
 }
 
