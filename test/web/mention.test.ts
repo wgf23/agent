@@ -104,10 +104,11 @@ describe("mentionedNames (B rule: already-@ set, FR-2.7)", () => {
 	});
 
 	it("resists a polluted shared /g lastIndex (regression)", () => {
-		// `String.prototype.matchAll` copies the regex's `lastIndex` as its start
-		// offset. `mentionedNames` must not depend on any shared stateful regex, so
-		// a same-source /g instance left non-zero by an outside `.test()`/`.exec()`
-		// cannot make it skip the leading mention.
+		// The module exports the /g *source string*, not a stateful /g instance:
+		// `matchAll` copies the receiver's `lastIndex`, so a shared regex polluted
+		// by an outside `.test()`/`.exec()` would silently skip the leading
+		// mention. Pin the source-shape AND a same-source polluted scan together.
+		expect(MENTION_RE_SOURCE).not.toBeInstanceOf(RegExp);
 		const polluted = new RegExp(MENTION_RE_SOURCE, "g");
 		polluted.lastIndex = 5;
 		expect(mentionedNames("@dev @worker")).toEqual(["dev", "worker"]);
