@@ -18,7 +18,7 @@ import {
 	createAuthorizer,
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
-import type { Message } from "../providers/types.js";
+import type { ImagePart, Message } from "../providers/types.js";
 import {
 	listSessions,
 	loadSession,
@@ -31,10 +31,18 @@ import {
 import { createTaskTool } from "../tools/task.js";
 import { summarizeArgs } from "../tui/summarize.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
+import { parseImages } from "./images.js";
 import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
 
 export const DEFAULT_BOT = "assistant";
 const DEFAULT_BOT_ROLE = "Your coding agent. Reads, edits, and runs things.";
+
+// One dispatched message: its text and the attachments that go with it. The
+// queue holds the same shape, so an interjection keeps its images.
+interface QueuedMessage {
+	text: string;
+	images: ImagePart[];
+}
 
 // The plan's deferred-start rule: a reconnect replays the current transcript
 // through the hello snapshot, and the live tail through subscribe. Both read
@@ -45,7 +53,9 @@ export class SoloHub extends EventBus implements Hub {
 	private session: StoredSession;
 	private sessions: SessionSummaryInfo[];
 	private status: BotState["status"] = "idle";
-	private readonly queue: string[] = [];
+	// A queued interjection keeps its attachments, so an image sent mid-turn is
+	// never silently dropped by the queue.
+	private readonly queue: QueuedMessage[] = [];
 	private controller: AbortController | null = null;
 	private disposed = false;
 	private approvalSeq = 0;
@@ -87,7 +97,7 @@ export class SoloHub extends EventBus implements Hub {
 		};
 	}
 
-	dispatch(bot: string, text: string): void {
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
 		if (bot !== DEFAULT_BOT) {
 			this.emit({
 				type: "error",
@@ -101,11 +111,19 @@ export class SoloHub extends EventBus implements Hub {
 			this.emit({ type: "error", bot, message: UNCONFIGURED_MESSAGE });
 			return;
 		}
-		if (this.status === "working" || this.status === "waiting_approval") {
-			this.queue.push(text);
+		// A second gate behind the route's: dispatch is also called in-process,
+		// so the caps hold wherever a turn starts.
+		const attachments = parseImages(images);
+		if (!attachments.ok) {
+			this.emit({ type: "error", bot, message: attachments.error });
 			return;
 		}
-		void this.startRun(text);
+		const message = { text, images: attachments.images };
+		if (this.status === "working" || this.status === "waiting_approval") {
+			this.queue.push(message);
+			return;
+		}
+		void this.startRun(message);
 	}
 
 	interrupt(bot: string): void {
@@ -183,7 +201,8 @@ export class SoloHub extends EventBus implements Hub {
 		this.denyPending("my-agent stopped before the approval was answered.");
 	}
 
-	private async startRun(prompt: string): Promise<void> {
+	private async startRun(message: QueuedMessage): Promise<void> {
+		const { text: prompt, images } = message;
 		if (this.disposed) return;
 		const controller = new AbortController();
 		this.controller = controller;
@@ -232,6 +251,7 @@ export class SoloHub extends EventBus implements Hub {
 				model: this.options.settings.model,
 				workspaceRoot: this.options.workspaceRoot,
 				prompt,
+				images,
 				history: this.session.messages,
 				maxSteps: this.options.settings.maxSteps,
 				thinking,
@@ -242,7 +262,11 @@ export class SoloHub extends EventBus implements Hub {
 				extraTools: [...this.options.extraTools, taskTool],
 				drainInput: () => {
 					const queued = this.queue.splice(0);
-					return queued.map((text) => ({ role: "user", content: text }));
+					return queued.map((message) => ({
+						role: "user" as const,
+						content: message.text,
+						...(message.images.length > 0 ? { images: message.images } : {}),
+					}));
 				},
 				onEvent: (event: AgentEvent) => {
 					this.emit({ type: "agent_event", bot: DEFAULT_BOT, event });

@@ -118,6 +118,15 @@ export interface BotState {
 	usage: UsageTotals;
 }
 
+// One attachment on a message: the same part the provider expands into an
+// OpenAI image_url data URL, declared here so the wire has no runtime import
+// of the provider module.
+export interface ImagePart {
+	type: "image";
+	mediaType: string;
+	data: string;
+}
+
 export interface ApprovalRequestInfo {
 	id: string;
 	bot: string;
@@ -280,6 +289,9 @@ export type ServerEvent =
 export interface SendBody {
 	bot: string;
 	text: string;
+	// Optional attachments, already encoded by the client as base64. The route
+	// rejects a bad media type, an over-cap payload, or too many of them.
+	images?: ImagePart[];
 }
 
 export interface InterruptBody {

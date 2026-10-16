@@ -6,6 +6,7 @@ import {
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
 import { addRob } from "../config/project-file.js";
+import type { ImagePart } from "../providers/types.js";
 import type {
 	RoomConfig,
 	RoomCreateOutcome,
@@ -87,9 +88,9 @@ export class CompositeHub extends EventBus implements Hub {
 		return { ok: true };
 	}
 
-	dispatch(bot: string, text: string): void {
-		if (bot === WORKSPACE_BOT) this.workspace.dispatch(bot, text);
-		else this.robs.dispatch(bot, text);
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
+		if (bot === WORKSPACE_BOT) this.workspace.dispatch(bot, text, images);
+		else this.robs.dispatch(bot, text, images);
 	}
 
 	interrupt(bot: string): void {

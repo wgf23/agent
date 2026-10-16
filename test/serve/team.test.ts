@@ -8,6 +8,7 @@ import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
 import { buildServer } from "../../src/serve/server.js";
 import { TeamHub } from "../../src/serve/team.js";
+import { createMockProvider } from "../helpers/mock-provider.js";
 
 const settings: ProviderSettings = {
 	preset: "deepseek",
@@ -141,6 +142,29 @@ describe("TeamHub", () => {
 			bot: "ghost",
 			message: "Unknown bot: ghost",
 		});
+		await hub.dispose();
+	});
+
+	it("refuses a bad attachment with an error event, not a turn", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "ok" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const hub = createHub(provider);
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "hi", [
+			{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+		]);
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "alpha",
+			message: expect.stringContaining("image/bmp"),
+		});
+		// Nothing reached the provider: the cap is enforced before the turn.
+		expect(provider.requests).toEqual([]);
 		await hub.dispose();
 	});
 

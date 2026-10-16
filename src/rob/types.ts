@@ -7,6 +7,7 @@ import type {
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
 import { permissionRulesSchema } from "../permissions/rules.js";
+import type { ImagePart } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 
 const ROB_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -96,6 +97,10 @@ export interface Inbound {
 	from: string;
 	text: string;
 	at: number;
+	// Attachments on a user message. The native backend passes them to the
+	// provider with the text; a cli backend runs its own prompt surface and has
+	// nowhere to put them, so it reads the text alone.
+	images?: ImagePart[];
 }
 
 export type RobStatus = "idle" | "working" | "waiting_approval" | "stopped";

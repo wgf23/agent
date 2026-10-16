@@ -8,7 +8,7 @@ import type { CompactionSettings } from "../agent/compact.js";
 import type { ProviderSettings } from "../config/resolve.js";
 import type { AllowAll } from "../permissions/allow-all.js";
 import type { PermissionRules } from "../permissions/rules.js";
-import type { Provider } from "../providers/types.js";
+import type { ImagePart, Provider } from "../providers/types.js";
 import type {
 	RoomConfig,
 	RoomCreateOutcome,
@@ -44,7 +44,10 @@ export interface HubOptions {
 export interface Hub {
 	hello(): HelloEvent;
 	subscribe(listener: EventListener): () => void;
-	dispatch(bot: string, text: string): void;
+	// Images ride along on the turn a dispatch starts; a hub validates them
+	// against the same caps the CLI does and reports a refusal as an error
+	// event, so a bad attachment never reaches the provider.
+	dispatch(bot: string, text: string, images?: ImagePart[]): void;
 	interrupt(bot: string): void;
 	resolveApproval(id: string, decision: ApprovalChoice): void;
 	setAllowAll(on: boolean): void;

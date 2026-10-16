@@ -9,6 +9,7 @@ import type {
 	ServerEvent,
 } from "../../shared/protocol.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
+import type { ImagePart } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
 import type {
 	RoomConfig,
@@ -22,6 +23,7 @@ import type {
 import { Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
+import { parseImages } from "./images.js";
 import {
 	type ApplyRuntimeResult,
 	fallbackProviderView,
@@ -126,14 +128,21 @@ export class TeamHub extends EventBus implements Hub {
 		this.roster.push(config);
 	}
 
-	dispatch(bot: string, text: string): void {
+	dispatch(bot: string, text: string, images?: ImagePart[]): void {
 		if (text.trim() === "") return;
 		if (this.options.runtime?.isConfigured() === false) {
 			this.emit({ type: "error", bot, message: UNCONFIGURED_MESSAGE });
 			return;
 		}
+		// A second gate behind the route's: dispatch is also called in-process,
+		// so the caps hold wherever a rob's turn starts.
+		const attachments = parseImages(images);
+		if (!attachments.ok) {
+			this.emit({ type: "error", bot, message: attachments.error });
+			return;
+		}
 		try {
-			this.team.dispatch(bot, text);
+			this.team.dispatch(bot, text, attachments.images);
 		} catch (error) {
 			this.reportError(bot, error);
 		}

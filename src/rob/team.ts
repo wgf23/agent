@@ -7,7 +7,7 @@ import type {
 	ApprovalRequest,
 } from "../permissions/authorizer.js";
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
-import type { Provider } from "../providers/types.js";
+import type { ImagePart, Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import { ApprovalQueue } from "./approvals.js";
@@ -317,9 +317,9 @@ export class Team implements TeamPort {
 		}
 	}
 
-	dispatch(name: string, text: string): void {
+	dispatch(name: string, text: string, images?: ImagePart[]): void {
 		const rob = this.requireRob(name);
-		rob.deliver({ kind: "user", from: "user", text, at: Date.now() });
+		rob.deliver({ kind: "user", from: "user", text, at: Date.now(), images });
 	}
 
 	interject(name: string, text: string): void {

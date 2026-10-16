@@ -140,6 +140,73 @@ describe("SoloHub", () => {
 		expect(userTexts).toEqual(["one", "two"]);
 	});
 
+	it("keeps an attachment on the turn and on a queued interjection", async () => {
+		const provider = createMockProvider([
+			[{ type: "text_delta", text: "first" }],
+			[{ type: "text_delta", text: "second" }],
+		]);
+		const session = newSession(workspaceRoot, settings.model);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+		const events = collect(hub);
+
+		hub.dispatch("assistant", "one", [
+			{ type: "image", mediaType: "image/png", data: "QQ==" },
+		]);
+		// The second message lands mid-turn, so it is queued with its own
+		// image rather than losing it.
+		hub.dispatch("assistant", "two", [
+			{ type: "image", mediaType: "image/webp", data: "Qg==" },
+		]);
+		await waitFor(
+			() =>
+				events.some(
+					(event) =>
+						event.type === "bot_status" &&
+						event.state.status === "idle" &&
+						event.state.messageCount >= 3,
+				),
+			"both messages to be handled",
+			5000,
+		);
+
+		// Both reach the same request: the queued one is injected at the step
+		// boundary, and its image rides with it.
+		const users = provider.requests[0]?.messages.filter(
+			(message) => message.role === "user",
+		);
+		expect(users).toEqual([
+			{
+				role: "user",
+				content: "one",
+				images: [{ type: "image", mediaType: "image/png", data: "QQ==" }],
+			},
+			{
+				role: "user",
+				content: "two",
+				images: [{ type: "image", mediaType: "image/webp", data: "Qg==" }],
+			},
+		]);
+		await hub.dispose();
+	});
+
+	it("refuses a bad attachment with an error event, not a turn", async () => {
+		const provider = createMockProvider([[{ type: "text_delta", text: "ok" }]]);
+		const session = newSession(workspaceRoot, settings.model);
+		const hub = new SoloHub(hubOptions(provider), { session, sessions: [] });
+		const events = collect(hub);
+
+		hub.dispatch("assistant", "hi", [
+			{ type: "image", mediaType: "image/bmp", data: "QkE=" },
+		]);
+		expect(events).toContainEqual({
+			type: "error",
+			bot: "assistant",
+			message: expect.stringContaining("image/bmp"),
+		});
+		expect(provider.requests).toEqual([]);
+		await hub.dispose();
+	});
+
 	it("creates a new session and reopens a saved one", async () => {
 		const provider = createMockProvider([
 			[{ type: "text_delta", text: "hello" }],
