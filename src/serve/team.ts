@@ -1,5 +1,6 @@
 import type {
 	ApprovalChoice,
+	BotContextResponse,
 	BotInfo,
 	BotState,
 	BotTranscriptResponse,
@@ -14,6 +15,7 @@ import type {
 	ServerEvent,
 	SessionSummaryInfo,
 } from "../../shared/protocol.js";
+import { assembleContext, type ThreadView } from "../bot/context.js";
 import { replay } from "../bot/record.js";
 import type { MemoryEntry, Turn } from "../bot/schema.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
@@ -27,6 +29,7 @@ import { setRobWake } from "../config/project-file.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
 import type { ImagePart, Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
+import { DEFAULT_CONTEXT_BUDGET } from "../rob/rob.js";
 import type {
 	RoomConfig,
 	RoomCreateOutcome,
@@ -382,6 +385,39 @@ export class TeamHub extends EventBus implements Hub {
 		if (!this.hasBot(bot)) return null;
 		const entries = await this.store.memory(bot);
 		return { bot, entries: entries.map(toMemoryEntryView) };
+	}
+
+	// Recomputes the turn's assembled context for observability. It loads the
+	// ledger, reads the current thread's rolling summary, and runs the same pure
+	// assembleContext the turn does with an empty inbound and the default budget,
+	// so the same record always reads back the same layers. No provider call and
+	// no write. Null for an unknown bot (404).
+	async readContext(bot: string): Promise<BotContextResponse | null> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return null;
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const threadId = this.team.currentChannel(bot).id;
+		const thread: ThreadView = {
+			id: threadId,
+			summary: loaded.record.threads?.[threadId]?.summary ?? "",
+		};
+		const assembled = assembleContext({
+			record: loaded.record,
+			thread,
+			inbound: [],
+			workspaceRoot: this.options.workspaceRoot,
+			budget: DEFAULT_CONTEXT_BUDGET,
+		});
+		const { l1, l2, l3, l4 } = assembled.layers;
+		return {
+			layers: { ...assembled.layers, included: l1 + l2 + l3 + l4 },
+			dropped: assembled.dropped,
+			summary: thread.summary,
+		};
 	}
 
 	// Forgets one memory entry outside a turn. False when the bot is

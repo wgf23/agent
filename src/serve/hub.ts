@@ -1,5 +1,6 @@
 import type {
 	ApprovalChoice,
+	BotContextResponse,
 	BotDraft,
 	BotInfo,
 	BotTranscriptResponse,
@@ -87,6 +88,9 @@ export interface Hub {
 	// UnknownMemoryEntryError, which the route turns into a 404.
 	readTranscript?(bot: string): Promise<BotTranscriptResponse | null>;
 	readMemory?(bot: string): Promise<MemoryListResponse | null>;
+	// The assembled-context readout: the layer budget, what it dropped, and the
+	// current thread's rolling summary. Null for an unknown bot (404).
+	readContext?(bot: string): Promise<BotContextResponse | null>;
 	forgetMemory?(bot: string, id: string): Promise<boolean>;
 	setWake?(bot: string, wake: BotWake | null): Promise<boolean>;
 	// Only a hub with a rob roster manages rooms.

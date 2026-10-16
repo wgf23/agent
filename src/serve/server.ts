@@ -946,6 +946,31 @@ export async function buildServer(
 		}
 	});
 
+	// A read-only readout of the context the bot would assemble this turn: the
+	// layer budget, what it dropped, and the current thread's rolling summary.
+	// The hub recomputes it from the ledger, so it never calls the provider.
+	app.get("/api/bots/:bot/context", async (request, reply) => {
+		const readContext = hub.readContext?.bind(hub);
+		if (readContext === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot read bot context" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		try {
+			const context = await readContext(bot);
+			if (context === null) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send(context);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
 	app.post("/api/bots/:bot/memory/forget", async (request, reply) => {
 		const forgetMemory = hub.forgetMemory?.bind(hub);
 		if (forgetMemory === undefined) {
