@@ -2,13 +2,20 @@ import type {
 	ApprovalChoice,
 	BotInfo,
 	BotState,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryEntryView,
+	MemoryListResponse,
 	RoomEventInfo,
 	RoomInfo,
 	RoomMatches,
 	RoomMessageView,
 	RoomRunView,
 	ServerEvent,
+	SessionSummaryInfo,
 } from "../../shared/protocol.js";
+import { replay } from "../bot/record.js";
+import type { MemoryEntry, Turn } from "../bot/schema.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
 import {
 	type Clock,
@@ -16,8 +23,9 @@ import {
 	systemTimer,
 	type Timer,
 } from "../bot/wake.js";
+import { setRobWake } from "../config/project-file.js";
 import { createAuthorizer } from "../permissions/authorizer.js";
-import type { ImagePart } from "../providers/types.js";
+import type { ImagePart, Message } from "../providers/types.js";
 import type { TeamEvent } from "../rob/events.js";
 import type {
 	RoomConfig,
@@ -28,7 +36,7 @@ import type {
 	RoomSendOutcome,
 	RoomView,
 } from "../rob/room.js";
-import { Team, UnknownRobError } from "../rob/team.js";
+import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { parseImages } from "./images.js";
@@ -39,6 +47,19 @@ import {
 	UNCONFIGURED_MESSAGE,
 } from "./runtime.js";
 import { roomMatches } from "./search.js";
+import { toTranscript } from "./solo.js";
+
+// A memory id the bot's record does not carry. The route turns this into a 404
+// instead of reporting a no-op success.
+export class UnknownMemoryEntryError extends Error {
+	readonly id: string;
+
+	constructor(id: string) {
+		super(`Unknown memory entry: ${id}`);
+		this.name = "UnknownMemoryEntryError";
+		this.id = id;
+	}
+}
 
 export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
@@ -241,25 +262,188 @@ export class TeamHub extends EventBus implements Hub {
 	}
 
 	async newSession(bot: string): Promise<void> {
+		try {
+			const session = this.team.openChannel(bot);
+			this.emit({
+				type: "session_opened",
+				bot,
+				sessionId: session.id,
+				messages: [],
+			});
+			this.emitBotStatus(bot);
+			await this.emitSessions(bot);
+		} catch (error) {
+			this.reportError(bot, error);
+		}
+	}
+
+	async openSession(bot: string, id: string): Promise<void> {
+		let loaded: LoadChannelResult;
+		try {
+			loaded = await this.team.loadChannel(bot, id);
+		} catch (error) {
+			this.reportError(bot, error);
+			return;
+		}
+		if (!loaded.ok) {
+			this.emit({ type: "error", bot, message: loaded.error });
+			return;
+		}
 		this.emit({
-			type: "error",
+			type: "session_opened",
 			bot,
-			message: "Sessions are not saved in team mode yet.",
+			sessionId: id,
+			messages: toTranscript(loaded.messages),
 		});
+		this.emitBotStatus(bot);
+		await this.emitSessions(bot);
+	}
+
+	async closeSession(bot: string, id: string): Promise<void> {
+		try {
+			this.team.closeChannel(bot, id);
+		} catch (error) {
+			this.reportError(bot, error);
+			return;
+		}
+		this.emitBotStatus(bot);
+		await this.emitSessions(bot);
+	}
+
+	// Drops one session from the bot's ledger. Deleting the current channel
+	// opens a fresh one, so the bot always has somewhere to write. False when
+	// the bot is unknown or the ledger has no such session (the route's 404).
+	async deleteSession(bot: string, id: string): Promise<boolean> {
+		if (!this.hasBot(bot)) return false;
+		const result = await this.store.removeSession(bot, id);
+		if (!result.ok) return false;
+		if (this.team.currentChannel(bot).id === id) {
+			const session = this.team.openChannel(bot);
+			this.emit({
+				type: "session_opened",
+				bot,
+				sessionId: session.id,
+				messages: [],
+			});
+		}
+		await this.emitSessions(bot);
+		return true;
+	}
+
+	// Relabels one session. A label change never touches the turns, so the
+	// projection's updatedAt is unchanged. False like deleteSession.
+	async renameSession(
+		bot: string,
+		id: string,
+		title: string,
+	): Promise<boolean> {
+		if (!this.hasBot(bot)) return false;
+		const result = await this.store.renameSession(bot, id, title);
+		if (!result.ok) return false;
+		await this.emitSessions(bot);
+		return true;
+	}
+
+	// The current session's transcript, replayed from the ledger so the read
+	// never consumes the rob's live history. Unknown bot is null (404).
+	async readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return null;
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		const sessionId = this.team.currentChannel(bot).id;
+		const turns = loaded.record.turns.filter(
+			(turn) => turn.sessionId === sessionId,
+		);
+		return {
+			bot,
+			sessionId,
+			messages: toTranscript(
+				replay(turns, this.options.workspaceRoot, sessionId),
+			),
+			// The same summaries `bot_sessions` emits, so the read also fills the
+			// sidebar's list without a second request.
+			sessions: await this.sessionSummaries(bot),
+		};
+	}
+
+	async readMemory(bot: string): Promise<MemoryListResponse | null> {
+		if (!this.hasBot(bot)) return null;
+		const entries = await this.store.memory(bot);
+		return { bot, entries: entries.map(toMemoryEntryView) };
+	}
+
+	// Forgets one memory entry outside a turn. False when the bot is
+	// unknown. An id the bot's record has no entry for throws
+	// UnknownMemoryEntryError before anything is written, so the
+	// route answers 404 instead of reporting success for a no-op.
+	async forgetMemory(bot: string, id: string): Promise<boolean> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return false;
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		if (!loaded.ok) throw new Error(loaded.error);
+		if (loaded.record.memory.every((entry) => entry.id !== id)) {
+			throw new UnknownMemoryEntryError(id);
+		}
+		const result = await this.store.saveMemory(bot, {
+			upsert: [],
+			drop: [id],
+		});
+		if (!result.ok) throw new Error(result.error);
+		return true;
+	}
+
+	// Writes the schedule to the project file and re-arms the live timer. False
+	// when the bot is unknown.
+	async setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return false;
+		const saved = await setRobWake(this.options.workspaceRoot, bot, wake);
+		if (!saved.ok) throw new Error(saved.error);
+		if (wake === null) delete rob.wake;
+		else rob.wake = wake;
+		this.team.setWake(bot, wake);
+		this.emit({ type: "bots", bots: this.bots(), states: this.states() });
+		return true;
+	}
+
+	// The bot's session list is a read-side projection over its ledger, so it
+	// survives a restart with no extra store. It is its own event: the chat's
+	// `sessions` event belongs to the workspace and a bot must not clobber it.
+	private async emitSessions(bot: string): Promise<void> {
+		const sessions = await this.sessionSummaries(bot);
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		this.emit({
+			type: "bot_sessions",
+			bot,
+			sessions,
+			currentSessionId:
+				rob === undefined ? null : this.team.currentChannel(bot).id,
+		});
+	}
+
+	private async sessionSummaries(bot: string): Promise<SessionSummaryInfo[]> {
+		const rob = this.roster.find((candidate) => candidate.name === bot);
+		if (rob === undefined) return [];
+		const loaded = await this.store.load(bot, {
+			role: rob.role,
+			model: rob.model ?? this.options.settings.model,
+		});
+		return loaded.ok
+			? summarizeSessions(loaded.record.turns, loaded.record.sessionTitles)
+			: [];
 	}
 
 	// The room half of a search: every room's transcript for this workspace.
 	// Read-only, so it neither emits an event nor changes a status.
 	async search(query: string): Promise<RoomMatches[]> {
 		return roomMatches(this.team.rooms(), query);
-	}
-
-	async openSession(bot: string, _id: string): Promise<void> {
-		this.emit({
-			type: "error",
-			bot,
-			message: "Sessions are not saved in team mode yet.",
-		});
 	}
 
 	async dispose(): Promise<void> {
@@ -322,14 +506,19 @@ export class TeamHub extends EventBus implements Hub {
 	}
 
 	bots(): BotInfo[] {
-		return this.roster.map((rob) => ({
-			name: rob.name,
-			kind: "rob",
-			role: rob.role,
-			model: rob.model ?? this.options.settings.model,
-			backend:
-				rob.backend?.kind === "cli" ? ("cli" as const) : ("native" as const),
-		}));
+		return this.roster.map((rob) => {
+			const info: BotInfo = {
+				name: rob.name,
+				kind: "rob",
+				role: rob.role,
+				model: rob.model ?? this.options.settings.model,
+				backend:
+					rob.backend?.kind === "cli" ? ("cli" as const) : ("native" as const),
+			};
+			const wake = this.team.robWake(rob.name);
+			if (wake !== null) info.wake = wake;
+			return info;
+		});
 	}
 
 	states(): BotState[] {
@@ -353,6 +542,52 @@ function toBotState(entry: RobStatusEntry): BotState {
 		pending: entry.pending,
 		lastMessage: entry.lastMessage,
 		usage: { ...entry.usage },
+	};
+}
+
+// A bot's "sessions" are a read-side projection over its ledger turns: the
+// distinct session ids, newest first, with the same summary shape the workspace
+// chat uses.
+export function summarizeSessions(
+	turns: readonly Turn[],
+	titles: Readonly<Record<string, string>> = {},
+): SessionSummaryInfo[] {
+	const summaries = new Map<string, SessionSummaryInfo>();
+	for (const turn of [...turns].sort((a, b) => a.seq - b.seq)) {
+		const existing = summaries.get(turn.sessionId);
+		if (existing === undefined) {
+			summaries.set(turn.sessionId, {
+				id: turn.sessionId,
+				updatedAt: turn.at,
+				messageCount: turn.messages.length,
+				firstUserText: firstUserMessageText(turn.messages),
+				title: titles[turn.sessionId] ?? null,
+			});
+			continue;
+		}
+		existing.updatedAt = turn.at;
+		existing.messageCount += turn.messages.length;
+		if (existing.firstUserText === "") {
+			existing.firstUserText = firstUserMessageText(turn.messages);
+		}
+	}
+	return [...summaries.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function firstUserMessageText(messages: readonly Message[]): string {
+	for (const message of messages) {
+		if (message.role === "user") return message.content;
+	}
+	return "";
+}
+
+// The wire view drops the ledger-only provenance fields.
+function toMemoryEntryView(entry: MemoryEntry): MemoryEntryView {
+	return {
+		id: entry.id,
+		at: entry.at,
+		kind: entry.kind,
+		text: entry.text,
 	};
 }
 

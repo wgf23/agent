@@ -495,6 +495,13 @@ export class Team implements TeamPort {
 		return true;
 	}
 
+	// The rob's current session label; reading it lazily opens the first channel,
+	// exactly as a turn would, so a transcript read never disagrees with commit.
+	currentChannel(name: RobName): ChannelSession {
+		this.requireRob(name);
+		return this.channels.current(name);
+	}
+
 	listChannels(name: string): readonly ChannelSession[] {
 		this.requireRob(name);
 		return this.channels.list(name);

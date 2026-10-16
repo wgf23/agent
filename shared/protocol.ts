@@ -43,12 +43,21 @@ export type ApprovalChoice = "allow_once" | "allow_always" | "deny";
 
 export const WORKSPACE_BOT = "assistant";
 
+// The configured interval that wakes a bot; the schedule is config-owned, so
+// this rides on BotInfo rather than the ledger.
+export interface BotWake {
+	everyMs: number;
+	prompt: string;
+}
+
 export interface BotInfo {
 	name: string;
 	kind: BotKind;
 	role: string;
 	model: string;
 	backend: BackendKind;
+	// The configured interval that wakes the bot; absent when it has none.
+	wake?: BotWake | null;
 }
 
 export type BotBackendDraft =
@@ -360,6 +369,30 @@ export interface TranscriptMessage {
 	tools: ToolCallView[];
 }
 
+// The memory view omits supersedes/source: the browser edits entries by id and
+// never needs the ledger's provenance fields.
+export interface MemoryEntryView {
+	id: string;
+	at: number;
+	kind: "fact" | "preference" | "commitment" | "digest";
+	text: string;
+}
+
+export interface MemoryListResponse {
+	bot: string;
+	entries: MemoryEntryView[];
+}
+
+// One read answers both questions the sidebar asks when a bot is selected: the
+// current transcript and the bot's own session list, so no second request is
+// needed (the list is the same projection `bot_sessions` carries).
+export interface BotTranscriptResponse {
+	bot: string;
+	sessionId: string;
+	messages: TranscriptMessage[];
+	sessions: SessionSummaryInfo[];
+}
+
 export type ServerEvent =
 	| {
 			type: "hello";
@@ -384,6 +417,12 @@ export type ServerEvent =
 			messages: TranscriptMessage[];
 	  }
 	| { type: "sessions"; sessions: SessionSummaryInfo[] }
+	| {
+			type: "bot_sessions";
+			bot: string;
+			sessions: SessionSummaryInfo[];
+			currentSessionId: string | null;
+	  }
 	| { type: "bot_status"; state: BotState }
 	| { type: "agent_event"; bot: string; event: AgentEvent }
 	| { type: "subagent"; bot: string; entry: SubagentView }
@@ -431,6 +470,23 @@ export interface RenameSessionBody {
 	bot: string;
 	id: string;
 	title: string;
+}
+
+export interface SessionCloseBody {
+	bot: string;
+	id: string;
+}
+
+// A wake write either sets the interval or clears it; the route rejects a body
+// that is neither.
+export interface SetWakeBody {
+	everyMs?: number;
+	prompt?: string;
+	clear?: boolean;
+}
+
+export interface ForgetMemoryBody {
+	id: string;
 }
 
 export type CreateBotBody = BotDraft;

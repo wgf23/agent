@@ -2,6 +2,9 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	BotTranscriptResponse,
+	BotWake,
+	MemoryListResponse,
 	RoomMatches,
 	SearchResponse,
 	ServerEvent,
@@ -60,6 +63,7 @@ export interface Hub {
 	setAllowAll(on: boolean): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
+	closeSession?(bot: string, id: string): Promise<void>;
 	// A hub that owns durable sessions can drop or relabel one. False means the
 	// bot or the session is unknown, so the route answers 404.
 	deleteSession?(bot: string, id: string): Promise<boolean>;
@@ -74,6 +78,14 @@ export interface Hub {
 	createBot?(draft: BotDraft): Promise<BotInfo>;
 	updateBot?(name: string, draft: UpdateBotBody): Promise<BotInfo>;
 	removeBot?(name: string): Promise<boolean>;
+	// A hub that keeps bot ledgers can serve these. The reads return null for an
+	// unknown bot; the writes return false. A store error throws, and the route
+	// turns it into a 500; forgetting an id the record has no entry for throws
+	// UnknownMemoryEntryError, which the route turns into a 404.
+	readTranscript?(bot: string): Promise<BotTranscriptResponse | null>;
+	readMemory?(bot: string): Promise<MemoryListResponse | null>;
+	forgetMemory?(bot: string, id: string): Promise<boolean>;
+	setWake?(bot: string, wake: BotWake | null): Promise<boolean>;
 	// Only a hub with a rob roster manages rooms.
 	createRoom?(config: RoomConfig): RoomCreateOutcome;
 	sendToRoom?(room: string, text: string): RoomSendOutcome;

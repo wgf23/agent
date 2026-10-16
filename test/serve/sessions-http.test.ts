@@ -147,8 +147,9 @@ describe("POST /api/sessions/delete and /api/sessions/rename", () => {
 			).status,
 		).toBe(404);
 
-		// A rob has no durable session on this branch, so it is not a target:
-		// the same route answers 404 rather than touching another workspace.
+		// A rob's sessions live in its ledger, so a bot the roster does not
+		// know (or a session it does not carry) is the same 404 rather than a
+		// write into the chat's store.
 		expect(
 			(await post("/api/sessions/delete", { bot: "alpha", id: second.id }))
 				.status,
@@ -201,5 +202,81 @@ describe("POST /api/sessions/delete and /api/sessions/rename", () => {
 		).toBe(501);
 		app.server.closeAllConnections?.();
 		await app.close();
+	});
+});
+
+describe("POST /api/sessions for a bot", () => {
+	it("opens and closes a bot session while the workspace routes still work", async () => {
+		const options = {
+			workspaceRoot,
+			provider: createMockProvider([]),
+			settings,
+			permissions: {},
+			extraTools: [],
+			compaction: {
+				auto: false,
+				thresholdTokens: 100_000,
+				keepRecentTokens: 20_000,
+			},
+			allowAll: createAllowAll(),
+		};
+		const workspace = new SoloHub(options, {
+			session: newSession(workspaceRoot, settings.model),
+			sessions: [],
+		});
+		const robs = new TeamHub({
+			...options,
+			robs: [{ name: "writer", role: "drafts prose" }],
+			providerEnv: {},
+		});
+		const hub = new CompositeHub(workspace, robs, workspaceRoot);
+		const events: ServerEvent[] = [];
+		hub.subscribe((event) => events.push(event));
+		const { app, post } = await startServer(hub);
+
+		const opened = await post("/api/sessions/new", { bot: "writer" });
+		expect(opened.status).toBe(200);
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "session_opened",
+				bot: "writer",
+				messages: [],
+			}),
+		);
+
+		const unknown = await post("/api/sessions/open", {
+			bot: "writer",
+			id: "nope",
+		});
+		expect(unknown.status).toBe(200);
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "error",
+				bot: "writer",
+				message: expect.stringContaining("nope"),
+			}),
+		);
+
+		const session = events.find((event) => event.type === "session_opened");
+		const sessionId =
+			session?.type === "session_opened" ? session.sessionId : "";
+		const closed = await post("/api/sessions/close", {
+			bot: "writer",
+			id: sessionId,
+		});
+		expect(closed.status).toBe(200);
+
+		// The workspace chat route is unchanged.
+		const workspaceNew = await post("/api/sessions/new", {
+			bot: "assistant",
+		});
+		expect(workspaceNew.status).toBe(200);
+		expect(events).toContainEqual(
+			expect.objectContaining({ type: "session_opened", bot: "assistant" }),
+		);
+
+		app.server.closeAllConnections?.();
+		await app.close();
+		await hub.dispose();
 	});
 });

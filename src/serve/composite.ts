@@ -4,6 +4,9 @@ import {
 	type ApprovalChoice,
 	type BotDraft,
 	type BotInfo,
+	type BotTranscriptResponse,
+	type BotWake,
+	type MemoryListResponse,
 	type SearchResponse,
 	type UpdateBotBody,
 	WORKSPACE_BOT,
@@ -118,22 +121,52 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 
 	newSession(bot: string): Promise<void> {
-		return this.workspace.newSession(bot);
+		if (bot === WORKSPACE_BOT) return this.workspace.newSession(bot);
+		return this.robs.newSession(bot);
 	}
 
 	openSession(bot: string, id: string): Promise<void> {
-		return this.workspace.openSession(bot, id);
+		if (bot === WORKSPACE_BOT) return this.workspace.openSession(bot, id);
+		return this.robs.openSession(bot, id);
 	}
 
-	// The session store belongs to the workspace chat; a rob's history lives in
-	// its backend's own session, which this server cannot address, so a
-	// non-workspace bot resolves to false and the route answers 404.
+	closeSession(bot: string, id: string): Promise<void> {
+		// A workspace chat session is a file with its own lifecycle; only a rob
+		// keeps an in-memory channel to close.
+		if (bot === WORKSPACE_BOT) return Promise.resolve();
+		return this.robs.closeSession(bot, id);
+	}
+
+	// The ledger holds a rob's sessions; the workspace chat's live in the
+	// session store, so the branch is the bot kind rather than the caller.
 	deleteSession(bot: string, id: string): Promise<boolean> {
-		return this.workspace.deleteSession(bot, id);
+		if (bot === WORKSPACE_BOT) return this.workspace.deleteSession(bot, id);
+		return this.robs.deleteSession(bot, id);
 	}
 
 	renameSession(bot: string, id: string, title: string): Promise<boolean> {
-		return this.workspace.renameSession(bot, id, title);
+		if (bot === WORKSPACE_BOT) {
+			return this.workspace.renameSession(bot, id, title);
+		}
+		return this.robs.renameSession(bot, id, title);
+	}
+
+	// The workspace chat is not a ledger bot, so every ledger route resolves
+	// against the rob roster only.
+	readTranscript(bot: string): Promise<BotTranscriptResponse | null> {
+		return this.robs.readTranscript(bot);
+	}
+
+	readMemory(bot: string): Promise<MemoryListResponse | null> {
+		return this.robs.readMemory(bot);
+	}
+
+	forgetMemory(bot: string, id: string): Promise<boolean> {
+		return this.robs.forgetMemory(bot, id);
+	}
+
+	setWake(bot: string, wake: BotWake | null): Promise<boolean> {
+		return this.robs.setWake(bot, wake);
 	}
 
 	// One read-only search across both halves: the workspace chat's sessions and
@@ -183,18 +216,20 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 
 	// Replaces a bot's role, model, and backend in place. The same validation
-	// and install check the create path runs gate the draft; the ledger,
-	// memory, and wake are untouched, and the runtime restarts so the new
-	// config takes effect. UnknownRobError names a bot the roster never had.
+	// and install check the create path runs gate the draft; the ledger, memory,
+	// and wake are untouched, and the runtime restarts so the new config takes
+	// effect. UnknownRobError names a bot the roster never had (404).
 	async updateBot(name: string, draft: UpdateBotBody): Promise<BotInfo> {
 		const parsed = await this.validatedDraft({ ...draft, name });
 		const existing = this.robs.bots().find((bot) => bot.name === name);
 		if (existing === undefined) throw new UnknownRobError(name);
 		const saved = await updateRob(this.workspaceRoot, name, parsed);
 		if (!saved.ok) throw new BotDraftError(saved.error);
-		// The wake is config-owned; Team.updateRob keeps the live timer when the
-		// replacement carries none.
-		return this.robs.replaceBot(name, { ...parsed });
+		const runtime: RobConfig = { ...parsed };
+		if (existing.wake !== undefined && existing.wake !== null) {
+			runtime.wake = existing.wake;
+		}
+		return this.robs.replaceBot(name, runtime);
 	}
 
 	// The draft-to-config check both the create and the update path run, so a

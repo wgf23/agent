@@ -167,51 +167,16 @@ describe("CompositeHub.createBot", () => {
 });
 
 describe("CompositeHub.updateBot", () => {
-	it("replaces role and model in place and keeps the file's other keys", async () => {
+	it("replaces role and model in place and keeps the wake and other keys", async () => {
 		writeFileSync(
 			projectFilePath(workspaceRoot),
-			`${JSON.stringify(
-				{
-					permissions: { bash: "allow" },
-					custom: 1,
-					robs: [
-						{
-							name: "writer",
-							role: "drafts prose",
-							wake: { everyMs: 5000, prompt: "tick" },
-						},
-					],
-				},
-				null,
-				2,
-			)}\n`,
+			`${JSON.stringify({ permissions: { bash: "allow" }, custom: 1 }, null, 2)}\n`,
 		);
-		const allowAll = createAllowAll();
-		const options = {
-			workspaceRoot,
-			provider: createMockProvider([]),
-			settings,
-			permissions: {},
-			extraTools: [],
-			compaction: {
-				auto: false,
-				thresholdTokens: 100_000,
-				keepRecentTokens: 20_000,
-			},
-			allowAll,
-		};
-		const workspace = new SoloHub(options, {
-			session: newSession(workspaceRoot, settings.model),
-			sessions: [],
-		});
-		const robs = new TeamHub({
-			...options,
-			robs: [{ name: "writer", role: "drafts prose" }],
-			providerEnv: {},
-		});
-		const hub = new CompositeHub(workspace, robs, workspaceRoot);
+		const hub = createHub();
 		const events: ServerEvent[] = [];
 		hub.subscribe((event) => events.push(event));
+		await hub.createBot({ name: "writer", role: "drafts prose" });
+		await hub.setWake("writer", { everyMs: 5000, prompt: "tick" });
 
 		const updated = await hub.updateBot("writer", {
 			role: "edits prose",
@@ -224,6 +189,7 @@ describe("CompositeHub.updateBot", () => {
 			role: "edits prose",
 			model: "deepseek-chat",
 			backend: "native",
+			wake: { everyMs: 5000, prompt: "tick" },
 		});
 		expect(hub.hello().bots.find((bot) => bot.name === "writer")).toMatchObject(
 			{
