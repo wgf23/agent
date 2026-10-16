@@ -5,9 +5,10 @@ import type {
 	UsageTotals,
 } from "../protocol";
 import { sessionLabel } from "../sessions";
-import type { ClientRoom, ConnectionStatus } from "../state";
+import type { ClientRoom, ConnectionStatus, SearchState } from "../state";
 import { STATUS_LABEL } from "../status";
 import { GearIcon, PlusIcon } from "./icons";
+import SearchPanel from "./SearchPanel";
 import SessionRow from "./SessionRow";
 
 export type View = "chat" | "plaza" | "agents";
@@ -29,6 +30,10 @@ interface Props {
 	onOpenSession: (bot: string, id: string) => void;
 	onRenameSession: (bot: string, id: string, title: string) => Promise<void>;
 	onDeleteSession: (bot: string, id: string) => Promise<void>;
+	// The sidebar's session search: its client-only slice and the two verbs.
+	search: SearchState;
+	onSearch: (query: string) => void;
+	onClearSearch: () => void;
 	onCreateBot: () => void;
 	onCreateRoom: () => void;
 	onOpenSettings: () => void;
@@ -54,6 +59,9 @@ export default function Sidebar(props: Props) {
 		onOpenSession,
 		onRenameSession,
 		onDeleteSession,
+		search,
+		onSearch,
+		onClearSearch,
 		onCreateBot,
 		onCreateRoom,
 		onOpenSettings,
@@ -122,6 +130,23 @@ export default function Sidebar(props: Props) {
 			</nav>
 
 			<div className="sidebar-scroll">
+				<SearchPanel
+					search={search}
+					onSearch={onSearch}
+					onClear={onClearSearch}
+					// A chat hit opens the way the chat list already does, and a
+					// room hit selects that room so its transcript follows.
+					onOpenChat={(sessionId) => {
+						if (workspace === null) return;
+						onSelect(workspace.name);
+						onOpenSession(workspace.name, sessionId);
+						onViewChange("chat");
+					}}
+					onOpenRoom={(room) => {
+						onSelect(room);
+						onViewChange("chat");
+					}}
+				/>
 				<section className="sidebar-section">
 					<div className="sidebar-label">
 						<span>Bots</span>

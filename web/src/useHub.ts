@@ -8,6 +8,7 @@ import type {
 	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
+	SearchResponse,
 	SendBody,
 	ServerEvent,
 	SettingsResponse,
@@ -55,6 +56,11 @@ export interface Hub {
 	// Rejects with the server's message so the row can show it inline.
 	renameSession: (bot: string, id: string, title: string) => Promise<void>;
 	deleteSession: (bot: string, id: string) => Promise<void>;
+	// A read-only search over the chat's sessions and every room's transcript;
+	// a blank query is not sent, and the answer lands in state.search for the
+	// sidebar panel.
+	search: (query: string) => void;
+	clearSearch: () => void;
 	createBot: (draft: BotDraft) => Promise<void>;
 	createRoom: (
 		name: string,
@@ -159,6 +165,42 @@ export function useHub(): Hub {
 
 	const deleteSession = useCallback(async (bot: string, id: string) => {
 		await postJson("/api/sessions/delete", { bot, id });
+	}, []);
+
+	// A blank query is the server's 400; not sending it gets the same answer
+	// without the round trip. The result lands in the search slice, and a
+	// failure is both reported on the banner and kept for the panel.
+	const search = useCallback((query: string) => {
+		const trimmed = query.trim();
+		if (trimmed === "") return;
+		dispatch({ type: "search_started", query: trimmed });
+		void (async () => {
+			const response = await fetch(
+				`/api/search?q=${encodeURIComponent(trimmed)}`,
+			);
+			if (!response.ok) {
+				let message = `GET /api/search failed: ${response.status}`;
+				try {
+					const body = (await response.json()) as { error?: string };
+					if (typeof body.error === "string" && body.error !== "") {
+						message = body.error;
+					}
+				} catch {
+					// keep the fallback message
+				}
+				throw new Error(message);
+			}
+			const results = (await response.json()) as SearchResponse;
+			dispatch({ type: "search_results", results });
+		})().catch((error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			dispatch({ type: "request_error", error: message });
+			dispatch({ type: "search_failed", error: message });
+		});
+	}, []);
+
+	const clearSearch = useCallback(() => {
+		dispatch({ type: "search_cleared" });
 	}, []);
 
 	const createBot = useCallback(async (draft: BotDraft) => {
@@ -301,6 +343,8 @@ export function useHub(): Hub {
 		openSession,
 		renameSession,
 		deleteSession,
+		search,
+		clearSearch,
 		createBot,
 		createRoom,
 		sendToRoom,

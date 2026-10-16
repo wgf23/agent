@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { RoomInfo, ServerEvent } from "../../shared/protocol";
+import type {
+	RoomInfo,
+	SearchResponse,
+	ServerEvent,
+} from "../../shared/protocol";
 import {
 	applyAgentEvent,
 	clientReducer,
@@ -422,5 +426,107 @@ describe("request failures", () => {
 		expect(state.lastError).toBe(
 			'Unsupported image type "image/bmp": allowed types are ...',
 		);
+	});
+});
+
+// A search is read-only server data with its own client-only slice; these
+// tests pin the four transitions the sidebar panel reads.
+describe("search", () => {
+	const results: SearchResponse = {
+		query: "zed",
+		chat: [
+			{
+				sessionId: "ses_chat",
+				title: null,
+				firstUserText: "zed talk",
+				hits: [{ role: "user", text: "zed talk", at: 1 }],
+			},
+		],
+		rooms: [
+			{
+				room: "ship-it",
+				matches: [
+					{
+						sessionId: "ship-it",
+						title: "ship-it",
+						firstUserText: "zed",
+						hits: [{ role: "assistant", text: "zed here", at: 2 }],
+					},
+				],
+			},
+		],
+	};
+
+	it("keeps the prior results and clears the error on search_started", () => {
+		const withError = clientReducer(
+			clientReducer(initialState(), { type: "search_results", results }),
+			{ type: "search_failed", error: "boom" },
+		);
+		expect(withError.search.results).toEqual(results);
+		expect(withError.search.error).toBe("boom");
+
+		const loading = clientReducer(withError, {
+			type: "search_started",
+			query: "next",
+		});
+		expect(loading.search.results).toEqual(results);
+		expect(loading.search.query).toBe("next");
+		expect(loading.search.loading).toBe(true);
+		expect(loading.search.error).toBeNull();
+	});
+
+	it("stores the payload and drops loading on search_results", () => {
+		const started = clientReducer(initialState(), {
+			type: "search_started",
+			query: "zed",
+		});
+		expect(started.search.loading).toBe(true);
+
+		const done = clientReducer(started, { type: "search_results", results });
+		expect(done.search.results).toEqual(results);
+		expect(done.search.loading).toBe(false);
+	});
+
+	it("keeps the query, drops loading, and stores the message on search_failed", () => {
+		const started = clientReducer(initialState(), {
+			type: "search_started",
+			query: "zed",
+		});
+		const failed = clientReducer(started, {
+			type: "search_failed",
+			error: "boom",
+		});
+		expect(failed.search.query).toBe("zed");
+		expect(failed.search.loading).toBe(false);
+		expect(failed.search.error).toBe("boom");
+	});
+
+	it("resets to the default on search_cleared", () => {
+		const active = clientReducer(
+			clientReducer(initialState(), { type: "search_results", results }),
+			{ type: "search_started", query: "zed" },
+		);
+		const cleared = clientReducer(active, { type: "search_cleared" });
+		expect(cleared.search).toEqual({
+			query: "",
+			results: null,
+			loading: false,
+			error: null,
+		});
+	});
+
+	// The panel distinguishes "not searched" (null) from "nothing found" (an
+	// empty payload); the two must not collapse to the same value.
+	it("tells an empty payload apart from the not-searched default", () => {
+		const empty: SearchResponse = { query: "zed", chat: [], rooms: [] };
+		const found = clientReducer(initialState(), {
+			type: "search_results",
+			results: empty,
+		});
+
+		expect(initialState().search.results).toBeNull();
+		expect(found.search.results).not.toBeNull();
+		expect(found.search.results).not.toBe(initialState().search.results);
+		expect(found.search.results).toEqual({ query: "zed", chat: [], rooms: [] });
 	});
 });

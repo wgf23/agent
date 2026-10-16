@@ -107,6 +107,9 @@ export default function App() {
 				onOpenSession={hub.openSession}
 				onRenameSession={hub.renameSession}
 				onDeleteSession={hub.deleteSession}
+				search={state.search}
+				onSearch={hub.search}
+				onClearSearch={hub.clearSearch}
 				onCreateBot={openCreateBot}
 				onCreateRoom={() => setRoomDialogOpen(true)}
 				onOpenSettings={hub.openSettings}

@@ -15,6 +15,7 @@ import type {
 	RoomInfo,
 	RoomMessageView,
 	RoomRunView,
+	SearchResponse,
 	ServerEvent,
 	SessionSummaryInfo,
 	ToolCallView,
@@ -48,6 +49,17 @@ export interface NoticeView {
 	text: string;
 }
 
+// The sidebar search's client-only facts. A search is read-only server data,
+// so it gets its own small actions rather than riding the SSE channel; the
+// null results mean "not searched yet", which is distinct from an empty
+// payload that says "nothing found".
+export interface SearchState {
+	query: string;
+	results: SearchResponse | null;
+	loading: boolean;
+	error: string | null;
+}
+
 export interface ClientState {
 	workspaceRoot: string;
 	model: string;
@@ -69,6 +81,8 @@ export interface ClientState {
 	lastError: string | null;
 	settingsOpen: boolean;
 	settingsError: string | null;
+	// The sidebar's read-only session search; a small client-only slice.
+	search: SearchState;
 	agents: AgentStatusView[];
 	// Latest job per agent id, live or terminal.
 	agentJobs: Record<string, AgentJobView>;
@@ -86,6 +100,12 @@ export type ClientAction =
 	| { type: "settings_close" }
 	| { type: "settings_error"; error: string | null }
 	| { type: "agents_loaded"; agents: AgentStatusView[] }
+	// A search's four transitions: start keeps the prior results, results and
+	// failure drop `loading`, and clear resets the slice to its default.
+	| { type: "search_started"; query: string }
+	| { type: "search_results"; results: SearchResponse }
+	| { type: "search_failed"; error: string }
+	| { type: "search_cleared" }
 	// A request this client made was refused (not an SSE error): the server's
 	// reason goes to the same banner so it is never swallowed.
 	| { type: "request_error"; error: string };
@@ -111,6 +131,7 @@ export function initialState(): ClientState {
 		lastError: null,
 		settingsOpen: false,
 		settingsError: null,
+		search: { query: "", results: null, loading: false, error: null },
 		agents: [],
 		agentJobs: {},
 	};
@@ -204,6 +225,44 @@ export function clientReducer(
 
 		case "agents_loaded":
 			return { ...state, agents: action.agents };
+
+		// A new search keeps the previous results on screen while it loads and
+		// clears any prior error, so the panel never blanks mid-query.
+		case "search_started":
+			return {
+				...state,
+				search: {
+					...state.search,
+					query: action.query,
+					loading: true,
+					error: null,
+				},
+			};
+
+		case "search_results":
+			return {
+				...state,
+				search: {
+					...state.search,
+					results: action.results,
+					loading: false,
+					error: null,
+				},
+			};
+
+		// A failure keeps the query so the panel can still show what was asked,
+		// but drops `loading` and carries the server's message.
+		case "search_failed":
+			return {
+				...state,
+				search: { ...state.search, loading: false, error: action.error },
+			};
+
+		case "search_cleared":
+			return {
+				...state,
+				search: { query: "", results: null, loading: false, error: null },
+			};
 
 		case "request_error":
 			return { ...state, lastError: action.error };
