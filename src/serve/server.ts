@@ -98,6 +98,9 @@ export interface RunServeOptions {
 	provider?: Provider;
 	env?: Record<string, string | undefined>;
 	homeDir?: string;
+	// When true the rob hub runs each rob's consolidation sidecar. The CLI
+	// entrypoint sets it; a test that scripts a provider leaves it off.
+	consolidate?: boolean;
 }
 
 export async function runServe(options: RunServeOptions): Promise<void> {
@@ -187,6 +190,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		extraInstructions: plugins.extraInstructions || undefined,
 		allowAll,
 		runtime,
+		consolidate: options.consolidate === true,
 	} satisfies HubOptions;
 
 	const supervisor = new AgentSupervisor();
@@ -997,6 +1001,31 @@ export async function buildServer(
 				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
 			}
 			return reply.send(memory);
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	// A read-only readout of the context the bot would assemble this turn: the
+	// layer budget, what it dropped, and the current thread's rolling summary.
+	// The hub recomputes it from the ledger, so it never calls the provider.
+	app.get("/api/bots/:bot/context", async (request, reply) => {
+		const readContext = hub.readContext?.bind(hub);
+		if (readContext === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot read bot context" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		try {
+			const context = await readContext(bot);
+			if (context === null) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send(context);
 		} catch (error) {
 			return reply.code(500).send({ error: errorText(error) });
 		}

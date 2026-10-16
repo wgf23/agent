@@ -476,6 +476,31 @@ export interface BotTranscriptResponse {
 	sessions: SessionSummaryInfo[];
 }
 
+// The assembled-context readout for one bot. `l0` is the ceiling left for the
+// system prompt and memory; `l1`..`l4` are the token costs of the message
+// layers the budget actually admitted. `included` is their sum. `dropped` names
+// the layers the budget had to cut. Read-only: the route recomputes the whole
+// view from the ledger and never calls the provider.
+export interface BotContextLayers {
+	l0: number;
+	l1: number;
+	l2: number;
+	l3: number;
+	l4: number;
+	included: number;
+}
+
+export interface BotContextDrop {
+	layer: string;
+	reason: string;
+}
+
+export interface BotContextResponse {
+	layers: BotContextLayers;
+	dropped: BotContextDrop[];
+	summary: string;
+}
+
 export type ServerEvent =
 	| {
 			type: "hello";

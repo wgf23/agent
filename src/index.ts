@@ -222,6 +222,7 @@ program
 			host: options.host,
 			open: options.open,
 			webDist: fileURLToPath(new URL("../web/dist", import.meta.url)),
+			consolidate: true,
 		});
 	});
 

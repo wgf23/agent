@@ -15,6 +15,9 @@ import {
 	type BotRecord,
 	botRecordSchema,
 	type MemoryEntry,
+	memoryEntrySchema,
+	migrateRecord,
+	type ThreadSummary,
 	type Turn,
 } from "./schema.js";
 
@@ -52,8 +55,14 @@ export interface BotStore {
 		delta?: MemoryDelta,
 	): Promise<CommitBotResult>;
 	// A memory-only edit outside a turn. Unlike commit, an absent record is an
-	// error: there is nothing to edit and no turn to lend it identity.
-	saveMemory(bot: string, delta: MemoryDelta): Promise<SaveMemoryResult>;
+	// error: there is nothing to edit and no turn to lend it identity. An
+	// optional thread summary rides the same atomic write, so the consolidation
+	// sidecar's memory and thread products land together.
+	saveMemory(
+		bot: string,
+		delta: MemoryDelta,
+		thread?: { id: string; summary: ThreadSummary },
+	): Promise<SaveMemoryResult>;
 	memory(bot: string): Promise<MemoryEntry[]>;
 	// Deletes the bot's durable record. A missing file is a no-op.
 	remove(bot: string): Promise<void>;
@@ -135,7 +144,7 @@ export function createBotStore(
 			};
 		}
 
-		const parsed = botRecordSchema.safeParse(raw);
+		const parsed = botRecordSchema.safeParse(migrateRecord(raw));
 		if (!parsed.success) {
 			return {
 				ok: false,
@@ -169,7 +178,9 @@ export function createBotStore(
 				createdAt: record.createdAt === 0 ? turn.at : record.createdAt,
 				updatedAt: turn.at,
 				seq: Math.max(record.seq, turn.seq),
-				memory: applied.memory,
+				memory: normalizeMemory(applied.memory),
+				// A record bootstrapped outside the store may predate threads.
+				threads: record.threads ?? {},
 				turns: ring.turns,
 			};
 
@@ -192,6 +203,7 @@ export function createBotStore(
 	async function saveMemory(
 		bot: string,
 		delta: MemoryDelta,
+		thread?: { id: string; summary: ThreadSummary },
 	): Promise<SaveMemoryResult> {
 		return enqueue(bot, async () => {
 			const filePath = botPath(bot);
@@ -204,7 +216,15 @@ export function createBotStore(
 			const next: BotRecord = {
 				...existing.record,
 				updatedAt: clock(),
-				memory: applied.memory,
+				memory: normalizeMemory(applied.memory),
+				...(thread === undefined
+					? {}
+					: {
+							threads: {
+								...existing.record.threads,
+								[thread.id]: thread.summary,
+							},
+						}),
 			};
 			try {
 				await writeJsonAtomic(filePath, next);
@@ -310,7 +330,7 @@ export function createBotStore(
 		} catch {
 			return [];
 		}
-		const parsed = botRecordSchema.safeParse(raw);
+		const parsed = botRecordSchema.safeParse(migrateRecord(raw));
 		return parsed.success ? parsed.data.memory : [];
 	}
 
@@ -339,6 +359,7 @@ function emptyRecord(bot: string, identity: BotIdentity): BotRecord {
 		usage: { input: 0, output: 0 },
 		memory: [],
 		sessionTitles: {},
+		threads: {},
 		turns: [],
 	};
 }
@@ -372,7 +393,7 @@ async function readRecord(
 		};
 	}
 
-	const parsed = botRecordSchema.safeParse(raw);
+	const parsed = botRecordSchema.safeParse(migrateRecord(raw));
 	if (!parsed.success) {
 		return {
 			ok: false,
@@ -380,6 +401,12 @@ async function readRecord(
 		};
 	}
 	return { ok: true, record: parsed.data };
+}
+
+// Parses each entry at the persistence boundary so a v2 file on disk always
+// carries the learning fields, even when an entry was built without them.
+function normalizeMemory(memory: MemoryEntry[]): BotRecord["memory"] {
+	return memory.map((entry) => memoryEntrySchema.parse(entry));
 }
 
 function isEnoent(error: unknown): boolean {

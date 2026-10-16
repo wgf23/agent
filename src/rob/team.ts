@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { WORKSPACE_BOT } from "../../shared/protocol.js";
 import type { AgentEvent } from "../agent/events.js";
 import { ChannelRegistry, type ChannelSession } from "../bot/channel.js";
+import { consolidate } from "../bot/consolidate.js";
 import { replay } from "../bot/record.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
 import {
@@ -129,6 +130,9 @@ export interface TeamOptions {
 	store?: BotStore;
 	clock?: Clock;
 	timer?: Timer;
+	// When true, each rob runs its post-turn consolidation sidecar. Off by
+	// default so a test that scripts a provider is not shifted by the extra call.
+	consolidate?: boolean;
 }
 
 export type LoadChannelResult =
@@ -262,12 +266,15 @@ export class Team implements TeamPort {
 			secret: randomBytes(24).toString("hex"),
 			active: null,
 		});
+		const provider = this.options.providerFactory(config);
+		const model = config.model ?? this.options.defaultModel;
+		const clock = () => this.clock.now();
 		return new Rob({
 			name: config.name,
 			role: config.role,
 			rules: resolveRobRules(this.options.permissions ?? {}, config),
-			model: config.model ?? this.options.defaultModel,
-			provider: this.options.providerFactory(config),
+			model,
+			provider,
 			workspaceRoot: this.options.workspaceRoot,
 			authorizerFactory: this.options.authorizerFactory,
 			team: this,
@@ -277,7 +284,11 @@ export class Team implements TeamPort {
 			hooks: this.options.hooks,
 			store: this.store,
 			channels: this.channels,
-			clock: () => this.clock.now(),
+			clock,
+			consolidate:
+				this.options.consolidate === true
+					? consolidate({ provider, model, clock })
+					: undefined,
 		});
 	}
 

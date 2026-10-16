@@ -1,6 +1,7 @@
 import type {
 	AllowAllMode,
 	ApprovalChoice,
+	BotContextResponse,
 	BotDraft,
 	BotInfo,
 	BotTranscriptResponse,
@@ -43,6 +44,9 @@ export interface HubOptions {
 	hooks?: HooksConfig;
 	extraInstructions?: string;
 	allowAll: AllowAll;
+	// When true the rob hub runs each rob's post-turn consolidation sidecar.
+	// Off by default so a serve test that scripts a provider is not shifted.
+	consolidate?: boolean;
 	// Optional so existing test literals keep compiling. When present the hubs
 	// use it to gate dispatch and to report the live provider in hello/view.
 	runtime?: ProviderRuntime;
@@ -85,6 +89,9 @@ export interface Hub {
 	// UnknownMemoryEntryError, which the route turns into a 404.
 	readTranscript?(bot: string): Promise<BotTranscriptResponse | null>;
 	readMemory?(bot: string): Promise<MemoryListResponse | null>;
+	// The assembled-context readout: the layer budget, what it dropped, and the
+	// current thread's rolling summary. Null for an unknown bot (404).
+	readContext?(bot: string): Promise<BotContextResponse | null>;
 	forgetMemory?(bot: string, id: string): Promise<boolean>;
 	setWake?(bot: string, wake: BotWake | null): Promise<boolean>;
 	// Only a hub with a rob roster manages rooms.

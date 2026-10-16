@@ -3,6 +3,7 @@ import { agentByCommand, missingCommandMessage } from "../../shared/agents.js";
 import {
 	type AllowAllMode,
 	type ApprovalChoice,
+	type BotContextResponse,
 	type BotDraft,
 	type BotInfo,
 	type BotTranscriptResponse,
@@ -160,6 +161,10 @@ export class CompositeHub extends EventBus implements Hub {
 
 	readMemory(bot: string): Promise<MemoryListResponse | null> {
 		return this.robs.readMemory(bot);
+	}
+
+	readContext(bot: string): Promise<BotContextResponse | null> {
+		return this.robs.readContext(bot);
 	}
 
 	forgetMemory(bot: string, id: string): Promise<boolean> {
