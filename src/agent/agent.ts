@@ -1,3 +1,11 @@
+import {
+	type HookRunner,
+	type HooksConfig,
+	matchingHooks,
+	preToolAllowed,
+	preToolBlockReason,
+	runHook,
+} from "../hooks/hooks.js";
 import type {
 	ContentBlock,
 	ImagePart,
@@ -56,6 +64,8 @@ export interface RunAgentOptions {
 	compaction?: CompactionSettings;
 	forceCompact?: boolean;
 	lastInputTokens?: number;
+	hooks?: HooksConfig;
+	runHook?: HookRunner;
 }
 
 export interface RunAgentResult {
@@ -91,6 +101,7 @@ export async function runAgent(
 	const authorize = options.authorize ?? readOnlyAuthorize;
 	const signal = options.signal;
 	const emit = options.onEvent;
+	const hookRunner = options.runHook ?? runHook;
 
 	const systemPrompt = await buildSystemPrompt({
 		workspaceRoot: options.workspaceRoot,
@@ -294,6 +305,29 @@ export async function runAgent(
 					continue;
 				}
 				slot.tool = tool;
+
+				// Pre-tool hooks gate the call before authorization, so a hook's
+				// denial is reported even for a call that also needs approval.
+				for (const entry of matchingHooks(
+					options.hooks?.preToolUse,
+					slot.call.name,
+				)) {
+					const outcome = await hookRunner(
+						entry.command,
+						{ hook: "preToolUse", tool: slot.call.name, args: slot.call.args },
+						options.workspaceRoot,
+					);
+					if (!preToolAllowed(outcome)) {
+						slot.result = {
+							ok: false,
+							error: preToolBlockReason(outcome, slot.call.name),
+						};
+						slot.blocked = true;
+						break;
+					}
+				}
+				if (slot.blocked === true) continue;
+
 				const decision = await authorize(slot.call, tool);
 				if (!decision.allowed) {
 					slot.result = { ok: false, error: decision.reason };
@@ -317,6 +351,22 @@ export async function runAgent(
 			for (const slot of slots) {
 				if (slot.result !== undefined || slot.tool === undefined) continue;
 				slot.result = await executeTool(slot.tool, slot.call.args, ctx);
+			}
+
+			// Post-tool hooks run after the tool finishes. Their output is ignored
+			// and never changes the result, and a blocked or unknown tool never ran.
+			for (const slot of slots) {
+				if (slot.tool === undefined || slot.blocked === true) continue;
+				for (const entry of matchingHooks(
+					options.hooks?.postToolUse,
+					slot.call.name,
+				)) {
+					await hookRunner(
+						entry.command,
+						{ hook: "postToolUse", tool: slot.call.name, args: slot.call.args },
+						options.workspaceRoot,
+					);
+				}
 			}
 
 			for (const slot of slots) {

@@ -11,6 +11,7 @@ import {
 	splitForCompaction,
 	summarizeMessages,
 } from "../agent/compact.js";
+import type { HooksConfig } from "../hooks/hooks.js";
 import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
 import { friendlyProviderError } from "../providers/errors.js";
 import type {
@@ -57,6 +58,7 @@ export interface AppProps {
 	extraTools?: Tool[];
 	startupLines?: string[];
 	compaction?: CompactionSettings;
+	hooks?: HooksConfig;
 	onTurnEnd?: (messages: Message[], usage: TuiUsage) => void;
 	onClearSession?: () => string;
 	onExit?: () => void;
@@ -89,6 +91,7 @@ export function App({
 	extraTools,
 	startupLines,
 	compaction,
+	hooks,
 	onTurnEnd,
 	onClearSession,
 	onExit,
@@ -204,6 +207,7 @@ export function App({
 					authorize,
 					compaction,
 					extraTools,
+					hooks,
 					// No lastInputTokens: state.usage.input is cumulative across
 					// turns, so auto compaction trusts the character estimate instead.
 					onEvent: (event) => dispatch({ type: "agent", event }),
@@ -245,6 +249,7 @@ export function App({
 			authorize,
 			compaction,
 			extraTools,
+			hooks,
 			onTurnEnd,
 			state.pendingImage,
 		],

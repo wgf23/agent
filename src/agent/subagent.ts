@@ -1,3 +1,4 @@
+import type { HooksConfig } from "../hooks/hooks.js";
 import type {
 	Message,
 	Provider,
@@ -20,6 +21,7 @@ export interface SubagentOptions {
 	authorize: Authorize;
 	thinking?: ThinkingSetting;
 	reasoningEffort?: ReasoningEffort;
+	hooks?: HooksConfig;
 	// Every sub-agent event is offered to the caller, so its usage can be
 	// counted into the parent's totals the way Rob.runSubagent does.
 	onEvent?: (event: AgentEvent) => void;
@@ -40,6 +42,7 @@ export function createSubagentRunner(options: SubagentOptions): SubagentRunner {
 			authorize: options.authorize,
 			thinking: options.thinking,
 			reasoningEffort: options.reasoningEffort,
+			hooks: options.hooks,
 			onEvent: (event) => {
 				if (event.type === "text_delta") parts.push(event.text);
 				options.onEvent?.(event);

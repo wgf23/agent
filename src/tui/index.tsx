@@ -141,6 +141,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			permissions,
 			providerEnv: childProviderEnv(settings, apiKey),
 			extraTools: mcp.tools,
+			hooks: resolved.config.hooks,
 			authorizerFactory: (rob) =>
 				createAuthorizer({
 					workspaceRoot: options.workspaceRoot,
@@ -238,6 +239,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			authorize,
 			thinking,
 			reasoningEffort,
+			hooks: resolved.config.hooks,
 			onEvent: (event) => {
 				if (event.type !== "usage") return;
 				subagentUsage.input += event.inputTokens;
@@ -264,6 +266,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			extraTools={[...mcp.tools, taskTool]}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
+			hooks={resolved.config.hooks}
 			onTurnEnd={writeSession}
 			onClearSession={startNewSession}
 		/>,

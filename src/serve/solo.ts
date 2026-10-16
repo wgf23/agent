@@ -237,6 +237,7 @@ export class SoloHub extends EventBus implements Hub {
 				authorize,
 				thinking,
 				reasoningEffort,
+				hooks: this.options.hooks,
 				onEvent: (event) => {
 					if (event.type !== "usage") return;
 					subagentUsage.input += event.inputTokens;
@@ -260,6 +261,7 @@ export class SoloHub extends EventBus implements Hub {
 				authorize,
 				compaction: this.options.compaction,
 				extraTools: [...this.options.extraTools, taskTool],
+				hooks: this.options.hooks,
 				drainInput: () => {
 					const queued = this.queue.splice(0);
 					return queued.map((message) => ({

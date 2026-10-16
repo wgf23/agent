@@ -1,6 +1,7 @@
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
+import type { HooksConfig } from "../hooks/hooks.js";
 import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider } from "../providers/types.js";
@@ -47,6 +48,7 @@ export interface RobOptions {
 	providerEnv?: Record<string, string>;
 	// MCP tools are native-only; a cli backend runs its own tool registry.
 	extraTools?: Tool[];
+	hooks?: HooksConfig;
 }
 
 export class Rob {
@@ -62,6 +64,7 @@ export class Rob {
 	private readonly backend: RobBackend;
 	private readonly inbox = new AsyncQueue<Inbound>();
 	private readonly events: AgentEvent[] = [];
+	private readonly hooks?: HooksConfig;
 
 	private history: Message[] = [];
 	private status: RobStatus = "idle";
@@ -78,6 +81,7 @@ export class Rob {
 		this.provider = options.provider;
 		this.workspaceRoot = options.workspaceRoot;
 		this.team = options.team;
+		this.hooks = options.hooks;
 		this.authorize = options.authorizerFactory({
 			name: options.name,
 			rules: options.rules,
@@ -122,6 +126,7 @@ export class Rob {
 						authorize: this.authorize,
 						drain: () => this.inbox.drain(),
 						extraTools: options.extraTools,
+						hooks: options.hooks,
 					});
 	}
 
@@ -258,6 +263,7 @@ export class Rob {
 				history: [],
 				signal,
 				authorize: this.authorize,
+				hooks: this.hooks,
 				onEvent: (event) => {
 					if (event.type === "text_delta") parts.push(event.text);
 					this.countUsage(event);

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { WORKSPACE_BOT } from "../../shared/protocol.js";
 import type { AgentEvent } from "../agent/events.js";
+import type { HooksConfig } from "../hooks/hooks.js";
 import type {
 	ApprovalChoice,
 	ApprovalDecision,
@@ -105,6 +106,7 @@ export interface TeamOptions {
 	providerEnv?: Record<string, string>;
 	// Native robs receive these; cli backends run their own tool registry.
 	extraTools?: Tool[];
+	hooks?: HooksConfig;
 	rooms?: readonly RoomConfig[];
 }
 
@@ -191,6 +193,7 @@ export class Team implements TeamPort {
 			backend: config.backend,
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
+			hooks: this.options.hooks,
 		});
 	}
 

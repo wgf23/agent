@@ -118,6 +118,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		permissions,
 		extraTools: mcp.tools,
 		compaction: resolved.config.compaction,
+		hooks: resolved.config.hooks,
 		allowAll,
 		runtime,
 	} satisfies HubOptions;

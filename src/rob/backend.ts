@@ -1,6 +1,7 @@
 import { runAgent, type UsageTotals } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
 import type { AgentEvent } from "../agent/events.js";
+import type { HooksConfig } from "../hooks/hooks.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
@@ -35,6 +36,7 @@ export interface NativeBackendOptions {
 	authorize: Authorize;
 	drain: () => Inbound[];
 	extraTools?: Tool[];
+	hooks?: HooksConfig;
 }
 
 export function createNativeBackend(options: NativeBackendOptions): RobBackend {
@@ -76,6 +78,7 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				}),
 				drainInput,
 				extraTools: [...turn.bridge.tools, ...(options.extraTools ?? [])],
+				hooks: options.hooks,
 				onEvent: turn.onEvent,
 			});
 

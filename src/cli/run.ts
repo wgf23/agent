@@ -142,6 +142,7 @@ export async function runHeadless(
 			authorize,
 			thinking,
 			reasoningEffort,
+			hooks: resolved.config.hooks,
 			onEvent: (event) => {
 				if (event.type !== "usage") return;
 				subagentUsage.input += event.inputTokens;
@@ -166,6 +167,7 @@ export async function runHeadless(
 			authorize,
 			compaction: resolved.config.compaction,
 			extraTools: [...mcp.tools, taskTool],
+			hooks: resolved.config.hooks,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
