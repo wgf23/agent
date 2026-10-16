@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- An `opencode` rob now reaches the team tools. The backend had pinned the team MCP server to `codemode: false`, which in opencode v2.0.24 connects the server and lists its tools but leaves them uncallable, so `send_message` and `delegate` were silently missing. The server now uses Code Mode and the permission rules keep its `execute` entry tool reachable, while each call stays gated by the gateway authorizer.
 - A `cli` rob now receives the resolved provider key in its environment, so `pi` authenticates from a key stored with `my-agent setup` or the web Settings dialog instead of reporting "No API key found".
 - A `cli` rob whose command is not on `PATH` is rejected at creation, and an already-saved one reports an actionable "command not found on PATH" message instead of the raw `spawn <cmd> ENOENT`.
 
