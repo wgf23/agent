@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 import { DEFAULT_PORT } from "../shared/protocol.js";
 import { runConfigCommand } from "./cli/config.js";
-import { runHeadless } from "./cli/run.js";
+import { type OutputFormat, runHeadless } from "./cli/run.js";
 import {
 	runSessionsForkCommand,
 	runSessionsListCommand,
@@ -29,6 +29,7 @@ interface RunOptions {
 	yes?: boolean;
 	continue?: boolean;
 	session?: string;
+	outputFormat?: string;
 	image?: string[];
 }
 
@@ -58,6 +59,10 @@ function parseMaxCost(value: string | undefined): number | undefined {
 	if (value === undefined) return undefined;
 	const cost = Number(value);
 	return Number.isFinite(cost) && cost >= 0 ? cost : undefined;
+}
+
+function parseOutputFormat(value: string | undefined): OutputFormat {
+	return value === "json" ? "json" : "text";
 }
 
 function parseInteger(value: string): number {
@@ -103,6 +108,7 @@ async function run(prompt: string, options: RunOptions): Promise<void> {
 		yesAll: options.yes,
 		continueSession: options.continue,
 		sessionId: options.session,
+		outputFormat: parseOutputFormat(options.outputFormat),
 	});
 }
 
@@ -121,6 +127,7 @@ program
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
+	.option("--output-format <format>", "output format: text or json", "text")
 	.option(
 		"--image <path>",
 		"attach an image to the prompt (repeatable)",
@@ -153,6 +160,7 @@ program
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
+	.option("--output-format <format>", "output format: text or json", "text")
 	.option(
 		"--image <path>",
 		"attach an image to the prompt (repeatable)",

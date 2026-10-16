@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { runAgent } from "../agent/agent.js";
+import { runAgent, type UsageTotals } from "../agent/agent.js";
 import { estimateCost, formatCost } from "../agent/cost.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { createSubagentRunner } from "../agent/subagent.js";
@@ -31,6 +31,8 @@ import {
 import { createTaskTool } from "../tools/task.js";
 import { readImages } from "../util/image.js";
 
+export type OutputFormat = "text" | "json";
+
 export interface RunHeadlessOptions {
 	prompt: string;
 	imagePaths?: string[];
@@ -40,6 +42,7 @@ export interface RunHeadlessOptions {
 	yesAll?: boolean;
 	continueSession?: boolean;
 	sessionId?: string;
+	outputFormat?: OutputFormat;
 	onEvent?: (event: AgentEvent) => void;
 	// Test seams: a double replaces the network provider and the workspace/env
 	// are injected so a run never reads the real home directory.
@@ -53,12 +56,30 @@ export function exitCodeForReason(reason: AgentDoneReason): number {
 	return reason === "finished" ? 0 : 1;
 }
 
+export function eventJsonLine(event: AgentEvent): string {
+	return JSON.stringify(event);
+}
+
+export function summaryJsonLine(result: {
+	reason: AgentDoneReason;
+	steps: number;
+	usage: UsageTotals;
+}): string {
+	return JSON.stringify({
+		type: "summary",
+		reason: result.reason,
+		steps: result.steps,
+		usage: result.usage,
+	});
+}
+
 export async function runHeadless(
 	options: RunHeadlessOptions,
 ): Promise<number> {
 	const workspaceRoot = options.workspaceRoot ?? process.cwd();
 	const env = options.env ?? process.env;
 	const homeDir = options.homeDir ?? os.homedir();
+	const outputFormat = options.outputFormat ?? "text";
 
 	// Attachments are read before any config resolution or provider work so a
 	// bad path fails fast and never reaches the network.
@@ -201,6 +222,10 @@ export async function runHeadless(
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
 				options.onEvent?.(event);
+				if (outputFormat === "json") {
+					process.stdout.write(`${eventJsonLine(event)}\n`);
+					return;
+				}
 				switch (event.type) {
 					case "text_delta":
 						process.stdout.write(event.text);
@@ -232,12 +257,16 @@ export async function runHeadless(
 			},
 		});
 
-		if (reasoningChars > 0) {
-			process.stderr.write(`[reasoning] ${reasoningChars} chars\n`);
+		if (outputFormat === "json") {
+			process.stdout.write(`${summaryJsonLine(result)}\n`);
+		} else {
+			if (reasoningChars > 0) {
+				process.stderr.write(`[reasoning] ${reasoningChars} chars\n`);
+			}
+			process.stderr.write(
+				`[usage] input=${result.usage.inputTokens} output=${result.usage.outputTokens} cache_hit=${result.usage.cacheHitTokens} cache_miss=${result.usage.cacheMissTokens} reasoning=${result.usage.reasoningTokens} cost=${formatCost(estimateCost(result.usage, settings.model))}\n`,
+			);
 		}
-		process.stderr.write(
-			`[usage] input=${result.usage.inputTokens} output=${result.usage.outputTokens} cache_hit=${result.usage.cacheHitTokens} cache_miss=${result.usage.cacheMissTokens} reasoning=${result.usage.reasoningTokens} cost=${formatCost(estimateCost(result.usage, settings.model))}\n`,
-		);
 		session.messages = withoutSystem(result.messages);
 		session.usage = {
 			input:
