@@ -110,7 +110,7 @@ export class TeamHub extends EventBus implements Hub {
 			store: this.store,
 			clock: this.options.clock ?? systemClock,
 			timer: this.options.timer ?? systemTimer,
-			consolidate: true,
+			consolidate: this.options.consolidate === true,
 			authorizerFactory: ({ name, rules, approval }) =>
 				createAuthorizer({
 					workspaceRoot: this.options.workspaceRoot,

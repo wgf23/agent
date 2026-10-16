@@ -96,6 +96,9 @@ export interface RunServeOptions {
 	provider?: Provider;
 	env?: Record<string, string | undefined>;
 	homeDir?: string;
+	// When true the rob hub runs each rob's consolidation sidecar. The CLI
+	// entrypoint sets it; a test that scripts a provider leaves it off.
+	consolidate?: boolean;
 }
 
 export async function runServe(options: RunServeOptions): Promise<void> {
@@ -185,6 +188,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		extraInstructions: plugins.extraInstructions || undefined,
 		allowAll,
 		runtime,
+		consolidate: options.consolidate === true,
 	} satisfies HubOptions;
 
 	const supervisor = new AgentSupervisor();
