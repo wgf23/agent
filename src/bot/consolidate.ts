@@ -73,7 +73,7 @@ export function consolidate(deps: ConsolidateDeps): Consolidate {
 			if (text === undefined) return emptyResult();
 			const output = parseOutput(text);
 			if (output === undefined) return emptyResult();
-			return toResult(output, turn, thread, deps.clock());
+			return toResult(output, turn, thread, turn.at);
 		} catch {
 			// Reflection is best effort; a failed side channel never blocks the turn.
 			return emptyResult();

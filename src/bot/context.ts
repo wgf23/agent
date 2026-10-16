@@ -3,7 +3,8 @@ import type { Message } from "../providers/types.js";
 import { toUserMessage } from "../rob/backend.js";
 import type { Inbound } from "../rob/types.js";
 import { replay } from "./record.js";
-import type { BotRecord, MemoryEntry } from "./schema.js";
+import type { Retrieve } from "./retrieve.js";
+import type { BotRecord } from "./schema.js";
 
 export interface ContextBudget {
 	// The model window minus the output reserve. Every assembled turn stays at
@@ -40,15 +41,8 @@ export interface AssembledContext {
 }
 
 // The retrieval layer is a pure lookup over the ledger. T3 owns the real
-// implementation; absent one, the caller injects nothing and L3 is empty.
-export interface RetrieveInput {
-	record: BotRecord;
-	thread: ThreadView;
-	inbound: readonly Inbound[];
-	workspaceRoot: string;
-}
-
-export type Retrieve = (input: RetrieveInput) => MemoryEntry[];
+// implementation (src/bot/retrieve.ts); absent one, L3 is empty.
+export type { Retrieve, RetrieveInput } from "./retrieve.js";
 
 export interface AssembleContextInput {
 	record: BotRecord;
@@ -56,9 +50,13 @@ export interface AssembleContextInput {
 	inbound: readonly Inbound[];
 	workspaceRoot: string;
 	budget: ContextBudget;
-	// Wired by the backend once T3 lands. Omitted means no retrieval.
+	// Wired by the backend. Omitted means no retrieval.
 	retrieve?: Retrieve;
 }
+
+// The retriever ranks the whole ledger; the l3 quota, not this, bounds how much
+// is admitted, so a small top-k is enough.
+const L3_LIMIT = 8;
 
 const EMPTY_RETRIEVAL: Retrieve = () => [];
 
@@ -103,7 +101,11 @@ export function assembleContext(input: AssembleContextInput): AssembledContext {
 	const l3: Message[] = [];
 	let l3Tokens = 0;
 	let l3Omitted = false;
-	for (const entry of retrieve({ record, thread, inbound, workspaceRoot })) {
+	for (const entry of retrieve({
+		record,
+		query: inbound.map((segment) => segment.text),
+		limit: L3_LIMIT,
+	})) {
 		const message: Message = {
 			role: "system",
 			content: `${entry.kind}: ${entry.text}`,

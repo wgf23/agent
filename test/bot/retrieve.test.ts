@@ -4,11 +4,12 @@ import { retrieve } from "../../src/bot/retrieve.js";
 import {
 	BOT_RECORD_VERSION,
 	type BotRecord,
-	type MemoryEntry,
 	type Turn,
 } from "../../src/bot/schema.js";
 
-function memoryEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
+type StoredMemory = BotRecord["memory"][number];
+
+function memoryEntry(overrides: Partial<StoredMemory> = {}): StoredMemory {
 	return {
 		id: "mem_00000000000000000000000000000001",
 		at: 1000,
@@ -16,6 +17,9 @@ function memoryEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
 		text: "a fact",
 		source: { sessionId: null, turnSeq: 0 },
 		supersedes: [],
+		uses: 0,
+		lastUsedAt: 0,
+		confidence: 0.5,
 		...overrides,
 	};
 }
@@ -55,10 +59,12 @@ function record(overrides: Partial<BotRecord> = {}): BotRecord {
 }
 
 // Writes one entry the way an explicit remember does.
-function withEntry(base: BotRecord, entry: MemoryEntry): BotRecord {
+function withEntry(base: BotRecord, entry: StoredMemory): BotRecord {
 	const applied = applyMemoryDelta(base.memory, { upsert: [entry], drop: [] });
 	if (!applied.ok) throw new Error(applied.error);
-	return { ...base, memory: applied.memory };
+	// applyMemoryDelta returns the input entry shape; a loaded record's memory is
+	// the strict parsed shape. Fixtures normalize by hand (T4 split the types).
+	return { ...base, memory: applied.memory as BotRecord["memory"] };
 }
 
 // Appends one turn the way the store does: the ring keeps the newest turns and
@@ -71,7 +77,11 @@ function append(base: BotRecord, next: Turn): BotRecord {
 		drop: [],
 	});
 	if (!applied.ok) throw new Error(applied.error);
-	return { ...base, turns: ring.turns, memory: applied.memory };
+	return {
+		...base,
+		turns: ring.turns,
+		memory: applied.memory as BotRecord["memory"],
+	};
 }
 
 describe("retrieve", () => {

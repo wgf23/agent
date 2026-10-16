@@ -11,6 +11,8 @@ export interface RetrieveInput {
 	limit: number;
 }
 
+export type Retrieve = (input: RetrieveInput) => MemoryEntry[];
+
 // A path is kept whole instead of shredded into words, so a shared file name is
 // a stronger signal than a shared ".ts" any file would match.
 const PATH_LIKE = /(?:[\w.@-]+\/)+[\w.@-]+|[\w-]+\.[\w]+/g;

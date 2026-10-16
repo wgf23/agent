@@ -71,7 +71,7 @@ describe("consolidate", () => {
 		]);
 		expect(result.delta.upsert[0]).toEqual({
 			id: "mem_0000000000000000000000000000000a00",
-			at: 9_999,
+			at: TURN.at,
 			kind: "fact",
 			text: "The repo uses pnpm.",
 			source: { sessionId: "chs_0000000000000001", turnSeq: 7 },
