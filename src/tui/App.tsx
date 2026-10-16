@@ -13,6 +13,8 @@ import {
 } from "../agent/compact.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
+import { expandPluginCommand } from "../plugins/load.js";
+import type { PluginCommand } from "../plugins/types.js";
 import { friendlyProviderError } from "../providers/errors.js";
 import type {
 	Message,
@@ -38,7 +40,7 @@ import {
 	type TuiUsage,
 	tuiReducer,
 } from "./state.js";
-import { COMMANDS } from "./suggestions.js";
+import { COMMANDS, setCustomCommands } from "./suggestions.js";
 import { useAllowAllState } from "./use-allow-all.js";
 
 export interface AppProps {
@@ -56,6 +58,8 @@ export interface AppProps {
 	initialHistory?: Message[];
 	initialSessionId?: string;
 	extraTools?: Tool[];
+	extraInstructions?: string;
+	pluginCommands?: PluginCommand[];
 	startupLines?: string[];
 	compaction?: CompactionSettings;
 	hooks?: HooksConfig;
@@ -89,6 +93,8 @@ export function App({
 	initialHistory,
 	initialSessionId,
 	extraTools,
+	extraInstructions,
+	pluginCommands,
 	startupLines,
 	compaction,
 	hooks,
@@ -154,6 +160,15 @@ export function App({
 		};
 	}, [workspaceRoot]);
 
+	useEffect(() => {
+		setCustomCommands(
+			(pluginCommands ?? []).map((command) => ({
+				name: `/${command.name}`,
+				hint: command.description,
+			})),
+		);
+	}, [pluginCommands]);
+
 	const setAllowAll = useCallback(
 		(arg: string) => {
 			const next = parseAllowAllArg(allowAll, arg);
@@ -207,6 +222,7 @@ export function App({
 					authorize,
 					compaction,
 					extraTools,
+					extraInstructions,
 					hooks,
 					// No lastInputTokens: state.usage.input is cumulative across
 					// turns, so auto compaction trusts the character estimate instead.
@@ -249,6 +265,7 @@ export function App({
 			authorize,
 			compaction,
 			extraTools,
+			extraInstructions,
 			hooks,
 			onTurnEnd,
 			state.pendingImage,
@@ -327,6 +344,12 @@ export function App({
 			const text = raw.trim();
 			if (text === "") return;
 			if (text.startsWith("/")) {
+				const expanded = expandPluginCommand(text, pluginCommands ?? []);
+				if (expanded !== null) {
+					if (controllerRef.current !== null) return;
+					void send(expanded);
+					return;
+				}
 				runCommand(text, {
 					model,
 					exit,
@@ -342,7 +365,16 @@ export function App({
 			if (controllerRef.current !== null) return;
 			void send(text);
 		},
-		[model, exit, clear, compact, send, setAllowAll, attachImage],
+		[
+			model,
+			exit,
+			clear,
+			compact,
+			send,
+			setAllowAll,
+			attachImage,
+			pluginCommands,
+		],
 	);
 
 	const cancel = useCallback(() => {

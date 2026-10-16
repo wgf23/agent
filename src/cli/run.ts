@@ -12,6 +12,7 @@ import {
 	headlessApproval,
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
+import { loadPlugins } from "../plugins/load.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Provider } from "../providers/types.js";
 import { chooseSession } from "../session/chooser.js";
@@ -122,6 +123,9 @@ export async function runHeadless(
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const plugins = await loadPlugins(resolved.config.plugins, workspaceRoot);
+	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
+
 	const controller = new AbortController();
 	const onSigint = (): void => controller.abort();
 	process.on("SIGINT", onSigint);
@@ -166,8 +170,9 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: [...mcp.tools, taskTool],
+			extraTools: [...mcp.tools, ...plugins.tools, taskTool],
 			hooks: resolved.config.hooks,
+			extraInstructions: plugins.extraInstructions || undefined,
 			// No lastInputTokens: the stored session usage is cumulative across
 			// turns, so auto compaction trusts the character estimate instead.
 			onEvent: (event: AgentEvent) => {
@@ -224,6 +229,7 @@ export async function runHeadless(
 	} finally {
 		process.off("SIGINT", onSigint);
 		await mcp.dispose();
+		await plugins.dispose();
 	}
 }
 

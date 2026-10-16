@@ -20,6 +20,7 @@ import {
 	createAuthorizer,
 } from "../permissions/authorizer.js";
 import { defaultRules } from "../permissions/rules.js";
+import { loadPlugins } from "../plugins/load.js";
 import { createOpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { Message } from "../providers/types.js";
 import { Team } from "../rob/team.js";
@@ -120,6 +121,12 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		apiKeyEnv: settings.apiKeyEnv,
 	});
 
+	const plugins = await loadPlugins(
+		resolved.config.plugins,
+		options.workspaceRoot,
+	);
+	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
+
 	if (robs.length > 0) {
 		// Connect before Ink mounts so the tool list is ready for the first turn
 		// and the notices land above the UI, like the session line.
@@ -140,7 +147,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			workspaceRoot: options.workspaceRoot,
 			permissions,
 			providerEnv: childProviderEnv(settings, apiKey),
-			extraTools: mcp.tools,
+			extraTools: [...mcp.tools, ...plugins.tools],
 			hooks: resolved.config.hooks,
 			authorizerFactory: (rob) =>
 				createAuthorizer({
@@ -167,6 +174,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			await instance.waitUntilExit();
 		} finally {
 			await mcp.dispose();
+			await plugins.dispose();
 		}
 		return;
 	}
@@ -263,7 +271,9 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 			apiKeyEnv={settings.apiKeyEnv}
 			initialHistory={session.messages}
 			initialSessionId={session.id}
-			extraTools={[...mcp.tools, taskTool]}
+			extraTools={[...mcp.tools, ...plugins.tools, taskTool]}
+			extraInstructions={plugins.extraInstructions || undefined}
+			pluginCommands={plugins.commands}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			hooks={resolved.config.hooks}
@@ -275,6 +285,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 		await instance.waitUntilExit();
 	} finally {
 		await mcp.dispose();
+		await plugins.dispose();
 	}
 }
 

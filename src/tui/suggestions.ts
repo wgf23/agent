@@ -35,6 +35,15 @@ export const TEAM_COMMANDS: readonly CommandSpec[] = [
 	{ name: "/allow-all", hint: "auto-approve every tool call" },
 ];
 
+// Plugin commands, appended after the built-ins. commandSuggestions reads this
+// through its default parameter so the reducer's menu accept/navigation and the
+// input's live menu share one list.
+let customCommandSpecs: readonly CommandSpec[] = [];
+
+export function setCustomCommands(commands: readonly CommandSpec[]): void {
+	customCommandSpecs = commands;
+}
+
 export interface MenuState {
 	dismissed: boolean;
 	index: number;
@@ -56,7 +65,7 @@ function leadingQuery(input: string, prefix: string): string | null {
 
 export function commandSuggestions(
 	input: string,
-	commands: readonly CommandSpec[] = COMMANDS,
+	commands: readonly CommandSpec[] = [...COMMANDS, ...customCommandSpecs],
 ): Suggestion[] {
 	const query = leadingQuery(input, "/");
 	if (query === null) return [];

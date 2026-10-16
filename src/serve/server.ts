@@ -22,6 +22,7 @@ import { verifyApiKey } from "../cli/setup.js";
 import { childProviderEnv, resolveConfig } from "../config/resolve.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
+import { loadPlugins } from "../plugins/load.js";
 import type { Provider } from "../providers/types.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
@@ -104,6 +105,9 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const plugins = await loadPlugins(resolved.config.plugins, workspaceRoot);
+	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
+
 	const allowAll = createAllowAll();
 	// Getters, not values: SoloHub reads provider/settings at each turn, so a
 	// settings save is visible without rebuilding or restarting the server.
@@ -116,9 +120,10 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			return runtime.current().settings;
 		},
 		permissions,
-		extraTools: mcp.tools,
+		extraTools: [...mcp.tools, ...plugins.tools],
 		compaction: resolved.config.compaction,
 		hooks: resolved.config.hooks,
+		extraInstructions: plugins.extraInstructions || undefined,
 		allowAll,
 		runtime,
 	} satisfies HubOptions;
@@ -167,6 +172,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		);
 		await hub.dispose();
 		await mcp.dispose();
+		await plugins.dispose();
 		process.exitCode = 1;
 		return;
 	}
@@ -182,6 +188,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		void (async () => {
 			await hub.dispose().catch(() => undefined);
 			await mcp.dispose().catch(() => undefined);
+			await plugins.dispose().catch(() => undefined);
 			app.server.closeAllConnections?.();
 			await app.close().catch(() => undefined);
 			process.exit(0);
