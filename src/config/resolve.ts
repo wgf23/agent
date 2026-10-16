@@ -154,6 +154,32 @@ export function parseMcpServers(
 	return { ok: true, servers };
 }
 
+// A plugin spec is a module specifier string: a path starting with "." or "/",
+// or a bare package name resolved from node_modules.
+export function parsePlugins(
+	value: unknown,
+	filePath: string,
+): { ok: true; plugins: string[] } | { ok: false; error: string } {
+	if (value === undefined) return { ok: true, plugins: [] };
+	if (!Array.isArray(value)) {
+		return {
+			ok: false,
+			error: `Invalid plugins in ${filePath}: expected an array of strings.`,
+		};
+	}
+	const plugins: string[] = [];
+	for (const [index, entry] of value.entries()) {
+		if (typeof entry !== "string" || entry.trim() === "") {
+			return {
+				ok: false,
+				error: `Invalid plugins in ${filePath}: entry at index ${index} must be a non-empty string.`,
+			};
+		}
+		plugins.push(entry);
+	}
+	return { ok: true, plugins };
+}
+
 export interface ProviderSettings {
 	preset: BuiltinPresetName;
 	model: string;
@@ -190,6 +216,7 @@ export interface ResolvedConfig {
 	sandbox: SandboxSettings;
 	search: SearchSettings;
 	mcpServers: McpServers;
+	plugins: string[];
 }
 
 export type ResolveConfigResult =
@@ -345,6 +372,14 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 		...(global.layer.mcp ?? {}),
 		...(project.layer.mcp ?? {}),
 	};
+	// Global specs load first, then project-only ones; a spec present in both
+	// layers loads once.
+	const plugins = [
+		...new Set([
+			...(global.layer.plugins ?? []),
+			...(project.layer.plugins ?? []),
+		]),
+	];
 
 	return {
 		ok: true,
@@ -381,6 +416,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 			sandbox,
 			search,
 			mcpServers,
+			plugins,
 		},
 	};
 }
@@ -435,6 +471,7 @@ interface Layer {
 	sandbox?: SandboxOptions;
 	search?: SearchOptions;
 	mcp?: McpServers;
+	plugins?: string[];
 }
 
 function loadLayer(
@@ -590,6 +627,13 @@ function loadLayer(
 		mcp = parsed.servers;
 	}
 
+	let plugins: string[] | undefined;
+	if (raw.plugins !== undefined) {
+		const parsed = parsePlugins(raw.plugins, filePath);
+		if (!parsed.ok) return parsed;
+		plugins = parsed.plugins;
+	}
+
 	return {
 		ok: true,
 		layer: {
@@ -602,6 +646,7 @@ function loadLayer(
 			sandbox,
 			search,
 			mcp,
+			plugins,
 		},
 	};
 }
