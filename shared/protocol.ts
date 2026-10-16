@@ -244,6 +244,15 @@ export interface SearchResponse {
 	rooms: RoomMatches[];
 }
 
+// One sub-agent event, mirrored from src/rob/types.ts's SubagentEntry so the
+// web feed can render the same lines the TUI's SubagentView does.
+export interface SubagentView {
+	parent: string;
+	id: string;
+	at: number;
+	event: AgentEvent;
+}
+
 // Room wire types mirror src/rob/room.ts: the server maps domain events at the
 // hub boundary, exactly as AgentEvent is mapped, and the client only renders.
 
@@ -372,6 +381,7 @@ export type ServerEvent =
 	| { type: "sessions"; sessions: SessionSummaryInfo[] }
 	| { type: "bot_status"; state: BotState }
 	| { type: "agent_event"; bot: string; event: AgentEvent }
+	| { type: "subagent"; bot: string; entry: SubagentView }
 	| { type: "approval_requested"; request: ApprovalRequestInfo }
 	| { type: "approval_resolved"; id: string; decision: ApprovalChoice }
 	| { type: "notice"; bot: string; text: string }

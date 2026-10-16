@@ -18,10 +18,15 @@ import type {
 	SearchResponse,
 	ServerEvent,
 	SessionSummaryInfo,
+	SubagentView,
 	ToolCallView,
 	TranscriptMessage,
 	UsageTotals,
 } from "./protocol";
+
+// A bot's retained sub-agent activity is capped so a long run cannot grow the
+// client without bound; the oldest entries drop first.
+export const SUBAGENT_FEED_MAX = 200;
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
 
@@ -76,6 +81,8 @@ export interface ClientState {
 	dms: DmInfo[];
 	rooms: Record<string, ClientRoom>;
 	notices: NoticeView[];
+	// A bot's sub-agent activity, appended per event and capped oldest-first.
+	subagents: Record<string, SubagentView[]>;
 	connection: ConnectionStatus;
 	usage: UsageTotals;
 	lastError: string | null;
@@ -126,6 +133,7 @@ export function initialState(): ClientState {
 		dms: [],
 		rooms: {},
 		notices: [],
+		subagents: {},
 		connection: "connecting",
 		usage: { input: 0, output: 0 },
 		lastError: null,
@@ -401,6 +409,20 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 
 		case "dm":
 			return { ...state, dms: [...state.dms, event.entry].slice(-100) };
+
+		// A sub-agent's activity belongs to its parent bot's feed. Only the line
+		// with text is rendered; the cap drops the oldest so a long run cannot
+		// grow the client without bound.
+		case "subagent": {
+			const existing = state.subagents[event.bot] ?? [];
+			return {
+				...state,
+				subagents: {
+					...state.subagents,
+					[event.bot]: [...existing, event.entry].slice(-SUBAGENT_FEED_MAX),
+				},
+			};
+		}
 
 		case "room":
 			return applyRoomEvent(state, event.event);

@@ -249,6 +249,13 @@ export class TeamHub extends EventBus implements Hub {
 				});
 				return;
 			case "subagent":
+				// Addressed to the bot that delegated, so the web keys its feed
+				// by the parent name.
+				this.emit({
+					type: "subagent",
+					bot: event.entry.parent,
+					entry: event.entry,
+				});
 				return;
 			case "room":
 				this.emit({ type: "room", event: toRoomEventInfo(event.event) });
