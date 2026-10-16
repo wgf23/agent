@@ -12,9 +12,14 @@ export function escapeHtml(value: string): string {
 		.replace(/"/g, "&quot;");
 }
 
+// A body past this length falls back to escaped text; highlighting a megabyte
+// on the main thread freezes the tab for seconds.
+const MAX_HIGHLIGHT_CHARS = 200_000;
+
 // highlight.js escapes its input, so its output is safe to inject; unknown or
 // absent languages fall back to auto-detection, then to plain escaped text.
 export function highlight(text: string, lang: string): string {
+	if (text.length > MAX_HIGHLIGHT_CHARS) return escapeHtml(text);
 	try {
 		if (lang !== "" && hljs.getLanguage(lang) !== undefined) {
 			return hljs.highlight(text, { language: lang, ignoreIllegals: true })

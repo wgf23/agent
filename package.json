@@ -19,9 +19,9 @@
 	},
 	"scripts": {
 		"dev": "tsx src/index.ts",
-		"build": "tsup && node scripts/postbuild.mjs && pnpm -C web build",
+		"build": "tsup && node scripts/postbuild.mjs && pnpm --filter my-agent-web build",
 		"web:dev": "pnpm --filter my-agent-web dev",
-		"web:build": "pnpm -C web build",
+		"web:build": "pnpm --filter my-agent-web build",
 		"serve": "tsx src/index.ts serve",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit",

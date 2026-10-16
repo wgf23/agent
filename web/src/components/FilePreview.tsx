@@ -7,6 +7,7 @@ import {
 	decodeText,
 	formatJson,
 	isProbablyBinary,
+	MAX_IMAGE_PREVIEW_BYTES,
 	type PreviewKind,
 	parseDelimited,
 	previewByteLimit,
@@ -174,6 +175,13 @@ interface BodyProps {
 
 function PreviewBody({ entry, kind, load, fileDownloadUrl }: BodyProps) {
 	if (kind === "image") {
+		if (entry.size > MAX_IMAGE_PREVIEW_BYTES) {
+			return (
+				<p className="preview-note">
+					图片较大（{formatSize(entry.size)}），超过预览上限，请下载后查看。
+				</p>
+			);
+		}
 		return (
 			<img
 				className="preview-image"

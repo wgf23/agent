@@ -217,7 +217,7 @@ function parseParagraph(xml: string): {
 }
 
 function blockStyle(name: string): DocBlock["style"] {
-	const heading = /^Heading([1-6])$/.exec(name);
+	const heading = /^(?:Heading|标题)\s*([1-6])$/.exec(name);
 	if (heading !== null) return `h${heading[1]}` as DocBlock["style"];
 	if (name === "Title") return "h1";
 	if (name === "ListParagraph") return "li";
