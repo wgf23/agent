@@ -219,6 +219,8 @@ h3 {
 .app {
 	display: flex;
 	height: 100vh;
+	/* biome-ignore lint/suspicious/noDuplicateProperties: 100dvh overrides the 100vh fallback where supported */
+	height: 100dvh;
 	overflow: hidden;
 }
 
@@ -3356,12 +3358,39 @@ button.browser-crumb:hover {
 }
 
 @media (max-width: 640px) {
+	/* The sidebar becomes an off-canvas drawer: the same component, slid in
+	   over the main area, opened by the hamburger and closed by backdrop/Esc or
+	   a navigation choice. */
 	.sidebar {
-		display: none;
+		position: fixed;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 40;
+		width: min(82vw, 300px);
+		padding-top: env(safe-area-inset-top);
+		padding-bottom: env(safe-area-inset-bottom);
+		padding-left: env(safe-area-inset-left);
+		transform: translateX(-100%);
+		transition: transform 0.18s ease;
+		box-shadow: var(--shadow-md);
 	}
 
+	.sidebar.drawer-open {
+		transform: none;
+	}
+
+	/* The file panel is the same overlay pattern on the right; open/closed is
+	   still the existing `open`/`.closed` state. */
 	.file-panel {
-		display: none;
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 40;
+		width: min(86vw, 340px);
+		padding-bottom: env(safe-area-inset-bottom);
+		box-shadow: var(--shadow-md);
 	}
 
 	.bot-header,
@@ -3369,6 +3398,12 @@ button.browser-crumb:hover {
 	.composer-wrap {
 		padding-left: 14px;
 		padding-right: 14px;
+	}
+
+	.composer-wrap {
+		padding-bottom: calc(14px + env(safe-area-inset-bottom));
+		padding-left: calc(14px + env(safe-area-inset-left));
+		padding-right: calc(14px + env(safe-area-inset-right));
 	}
 
 	.plaza {
@@ -3768,4 +3803,68 @@ button.browser-crumb:hover {
 	margin: 0;
 	font-size: 12.5px;
 	color: var(--text-3);
+}
+
+/* ---------- Mobile chrome: top bar, drawer, overlays (≤640px) ---------- */
+/* Everything new here is `display:none` by default and only the max-width
+   640px block below shows it, so desktop (≥881) and narrow desktop (641–880)
+   keep their exact tree and computed styles. */
+
+.mobile-bar,
+.drawer-backdrop,
+.panel-backdrop,
+.file-panel-close {
+	display: none;
+}
+
+@media (max-width: 640px) {
+	.mobile-bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex: none;
+		padding: 6px 12px;
+		padding-top: max(6px, env(safe-area-inset-top));
+		border-bottom: 1px solid var(--border);
+		background: var(--bg);
+	}
+
+	.mobile-bar-title {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--text);
+	}
+
+	/* Tapping the backdrop (or Esc) closes whatever overlay is open. */
+	.drawer-backdrop,
+	.panel-backdrop {
+		display: block;
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 30;
+		background: rgb(0 0 0 / 0.4);
+	}
+
+	.file-panel-close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	/* Nothing may scroll sideways on a phone. */
+	.app,
+	.main,
+	.region-tabs,
+	.composer {
+		max-width: 100%;
+		overflow-x: hidden;
+	}
 }
