@@ -20,6 +20,7 @@ import type {
 	ServerEvent,
 	SessionNewBody,
 	SessionOpenBody,
+	UpdateBotBody,
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import {
@@ -35,6 +36,7 @@ import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
 import type { Provider } from "../providers/types.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
+import { UnknownRobError } from "../rob/team.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
 import { CompositeHub } from "./composite.js";
@@ -468,6 +470,57 @@ export async function buildServer(
 		}
 	});
 
+	app.delete("/api/bots/:bot", async (request, reply) => {
+		const removeBot = hub.removeBot?.bind(hub);
+		if (removeBot === undefined) {
+			return reply.code(501).send({ error: "this server cannot delete bots" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const removedBot = hub.hello().bots.find((entry) => entry.name === bot);
+		try {
+			const removed = await removeBot(bot);
+			if (!removed || removedBot === undefined) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.send({ ok: true, bot: removedBot });
+		} catch (error) {
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	app.patch("/api/bots/:bot", async (request, reply) => {
+		const updateBot = hub.updateBot?.bind(hub);
+		if (updateBot === undefined) {
+			return reply.code(501).send({ error: "this server cannot edit bots" });
+		}
+		const bot = botParam(request);
+		if (bot === undefined) {
+			return reply.code(400).send({ error: "expected a bot name" });
+		}
+		const body = request.body as Partial<UpdateBotBody> | undefined;
+		if (typeof body?.role !== "string") {
+			return reply.code(400).send({ error: "expected {role}" });
+		}
+		try {
+			const updated = await updateBot(bot, {
+				role: body.role,
+				model: typeof body.model === "string" ? body.model : undefined,
+				backend: body.backend as BotDraft["backend"],
+			});
+			return reply.send({ ok: true, bot: updated });
+		} catch (error) {
+			// An unknown name is the same 404 the other bot routes answer;
+			// any other failure is the draft or the config (400).
+			if (error instanceof UnknownRobError) {
+				return reply.code(404).send({ error: `Unknown bot: ${bot}` });
+			}
+			return reply.code(400).send({ ok: false, error: errorText(error) });
+		}
+	});
+
 	app.post("/api/rooms", (request, reply) => {
 		const createRoom = hub.createRoom?.bind(hub);
 		if (createRoom === undefined) {
@@ -707,6 +760,13 @@ function readSearchQuery(request: FastifyRequest): string | undefined {
 	const query = request.query as { q?: unknown } | undefined;
 	return typeof query?.q === "string" && query.q.trim() !== ""
 		? query.q
+		: undefined;
+}
+
+function botParam(request: FastifyRequest): string | undefined {
+	const params = request.params as { bot?: unknown } | undefined;
+	return typeof params?.bot === "string" && params.bot !== ""
+		? params.bot
 		: undefined;
 }
 

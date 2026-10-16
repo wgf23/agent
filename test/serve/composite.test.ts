@@ -29,6 +29,9 @@ beforeEach(() => {
 	process.env.MY_AGENT_SESSIONS_DIR = mkdtempSync(
 		path.join(tmpdir(), "my-agent-web-composite-sessions-"),
 	);
+	process.env.MY_AGENT_BOTS_DIR = mkdtempSync(
+		path.join(tmpdir(), "my-agent-web-composite-bots-"),
+	);
 	workspaceRoot = mkdtempSync(
 		path.join(tmpdir(), "my-agent-web-composite-ws-"),
 	);
@@ -159,6 +162,135 @@ describe("CompositeHub.createBot", () => {
 		} finally {
 			process.env.PATH = previous;
 		}
+		await hub.dispose();
+	});
+});
+
+describe("CompositeHub.updateBot", () => {
+	it("replaces role and model in place and keeps the file's other keys", async () => {
+		writeFileSync(
+			projectFilePath(workspaceRoot),
+			`${JSON.stringify(
+				{
+					permissions: { bash: "allow" },
+					custom: 1,
+					robs: [
+						{
+							name: "writer",
+							role: "drafts prose",
+							wake: { everyMs: 5000, prompt: "tick" },
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		const allowAll = createAllowAll();
+		const options = {
+			workspaceRoot,
+			provider: createMockProvider([]),
+			settings,
+			permissions: {},
+			extraTools: [],
+			compaction: {
+				auto: false,
+				thresholdTokens: 100_000,
+				keepRecentTokens: 20_000,
+			},
+			allowAll,
+		};
+		const workspace = new SoloHub(options, {
+			session: newSession(workspaceRoot, settings.model),
+			sessions: [],
+		});
+		const robs = new TeamHub({
+			...options,
+			robs: [{ name: "writer", role: "drafts prose" }],
+			providerEnv: {},
+		});
+		const hub = new CompositeHub(workspace, robs, workspaceRoot);
+		const events: ServerEvent[] = [];
+		hub.subscribe((event) => events.push(event));
+
+		const updated = await hub.updateBot("writer", {
+			role: "edits prose",
+			model: "deepseek-chat",
+		});
+
+		expect(updated).toEqual({
+			name: "writer",
+			kind: "rob",
+			role: "edits prose",
+			model: "deepseek-chat",
+			backend: "native",
+		});
+		expect(hub.hello().bots.find((bot) => bot.name === "writer")).toMatchObject(
+			{
+				name: "writer",
+				role: "edits prose",
+				model: "deepseek-chat",
+			},
+		);
+		expect(events.some((event) => event.type === "bots")).toBe(true);
+
+		const raw = JSON.parse(
+			readFileSync(projectFilePath(workspaceRoot), "utf8"),
+		);
+		expect(raw.permissions).toEqual({ bash: "allow" });
+		expect(raw.custom).toBe(1);
+		// The wake is config-owned; an edit that does not carry one keeps it.
+		expect(raw.robs).toEqual([
+			{
+				name: "writer",
+				role: "edits prose",
+				model: "deepseek-chat",
+				wake: { everyMs: 5000, prompt: "tick" },
+			},
+		]);
+		await hub.dispose();
+	});
+
+	it("rejects an unknown bot and a cli backend not on PATH", async () => {
+		const hub = createHub();
+		await expect(hub.updateBot("ghost", { role: "x" })).rejects.toThrow(
+			"Unknown rob: ghost",
+		);
+
+		const emptyDir = mkdtempSync(path.join(tmpdir(), "my-agent-empty-path-"));
+		const previous = process.env.PATH;
+		process.env.PATH = emptyDir;
+		try {
+			await expect(
+				hub.updateBot("ghost", {
+					role: "x",
+					backend: {
+						kind: "cli",
+						command: "pi",
+						provider: "deepseek",
+						model: "deepseek-chat",
+					},
+				}),
+			).rejects.toThrow(/PATH/);
+		} finally {
+			process.env.PATH = previous;
+		}
+		await hub.dispose();
+	});
+});
+
+describe("CompositeHub.removeBot", () => {
+	it("drops the config entry and the roster, and reports an unknown name", async () => {
+		const hub = createHub();
+		await hub.createBot({ name: "writer", role: "drafts" });
+		const events: ServerEvent[] = [];
+		hub.subscribe((event) => events.push(event));
+
+		expect(await hub.removeBot("ghost")).toBe(false);
+		expect(await hub.removeBot("writer")).toBe(true);
+		expect(hub.hello().bots.map((bot) => bot.name)).toEqual(["assistant"]);
+		expect(events.some((event) => event.type === "bots")).toBe(true);
+		expect(readRobs()).toEqual([]);
 		await hub.dispose();
 	});
 });

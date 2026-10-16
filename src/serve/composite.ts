@@ -5,16 +5,18 @@ import {
 	type BotDraft,
 	type BotInfo,
 	type SearchResponse,
+	type UpdateBotBody,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
-import { addRob } from "../config/project-file.js";
+import { addRob, removeRob, updateRob } from "../config/project-file.js";
 import type { ImagePart } from "../providers/types.js";
 import type {
 	RoomConfig,
 	RoomCreateOutcome,
 	RoomSendOutcome,
 } from "../rob/room.js";
+import { UnknownRobError } from "../rob/team.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
@@ -155,6 +157,49 @@ export class CompositeHub extends EventBus implements Hub {
 	}
 
 	async createBot(draft: BotDraft): Promise<BotInfo> {
+		const parsed = await this.validatedDraft(draft);
+		if (this.robs.bots().some((bot) => bot.name === parsed.name)) {
+			throw new BotDraftError(`A bot named "${parsed.name}" already exists.`);
+		}
+		const saved = await addRob(this.workspaceRoot, parsed);
+		if (!saved.ok) throw new BotDraftError(saved.error);
+		this.robs.addBot(parsed);
+		const hello = this.hello();
+		this.emit({ type: "bots", bots: hello.bots, states: hello.states });
+		const created = hello.bots.find((bot) => bot.name === parsed.name);
+		if (created === undefined) {
+			throw new BotDraftError(`Bot "${parsed.name}" was not registered.`);
+		}
+		return created;
+	}
+
+	// Deletes a bot end to end: the config entry, the runtime, and the ledger.
+	// False when the name is not on the roster, so the route answers 404.
+	async removeBot(name: string): Promise<boolean> {
+		if (!this.robs.bots().some((bot) => bot.name === name)) return false;
+		const saved = await removeRob(this.workspaceRoot, name);
+		if (!saved.ok) throw new BotDraftError(saved.error);
+		return this.robs.removeBot(name);
+	}
+
+	// Replaces a bot's role, model, and backend in place. The same validation
+	// and install check the create path runs gate the draft; the ledger,
+	// memory, and wake are untouched, and the runtime restarts so the new
+	// config takes effect. UnknownRobError names a bot the roster never had.
+	async updateBot(name: string, draft: UpdateBotBody): Promise<BotInfo> {
+		const parsed = await this.validatedDraft({ ...draft, name });
+		const existing = this.robs.bots().find((bot) => bot.name === name);
+		if (existing === undefined) throw new UnknownRobError(name);
+		const saved = await updateRob(this.workspaceRoot, name, parsed);
+		if (!saved.ok) throw new BotDraftError(saved.error);
+		// The wake is config-owned; Team.updateRob keeps the live timer when the
+		// replacement carries none.
+		return this.robs.replaceBot(name, { ...parsed });
+	}
+
+	// The draft-to-config check both the create and the update path run, so a
+	// cli backend is refused with the same wording wherever it is entered.
+	private async validatedDraft(draft: BotDraft): Promise<RobConfig> {
 		const parsed = robConfigSchema.safeParse(toRobConfig(draft));
 		if (!parsed.success) {
 			throw new BotDraftError(z.prettifyError(parsed.error));
@@ -167,21 +212,7 @@ export class CompositeHub extends EventBus implements Hub {
 				missingCommandMessage(parsed.data.backend.command),
 			);
 		}
-		if (this.robs.bots().some((bot) => bot.name === parsed.data.name)) {
-			throw new BotDraftError(
-				`A bot named "${parsed.data.name}" already exists.`,
-			);
-		}
-		const saved = await addRob(this.workspaceRoot, parsed.data);
-		if (!saved.ok) throw new BotDraftError(saved.error);
-		this.robs.addBot(parsed.data);
-		const hello = this.hello();
-		this.emit({ type: "bots", bots: hello.bots, states: hello.states });
-		const created = hello.bots.find((bot) => bot.name === parsed.data.name);
-		if (created === undefined) {
-			throw new BotDraftError(`Bot "${parsed.data.name}" was not registered.`);
-		}
-		return created;
+		return parsed.data;
 	}
 
 	// Detection and creation must agree: ask the supervisor (which also sees a

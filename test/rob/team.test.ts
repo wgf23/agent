@@ -392,6 +392,94 @@ describe("Team sessions", () => {
 
 		expect(notices).toContain("woke on interval");
 	});
+
+	it("removes a rob, disarms its wake, and denies further work", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "awake" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const manual = manualTimer();
+		const team = new Team({
+			robs: [
+				{
+					name: "planner",
+					role: "plan",
+					wake: { everyMs: 60000, prompt: "check the board" },
+				},
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+			timer: manual.timer,
+		});
+		team.start();
+		expect(manual.pending()).toHaveLength(1);
+
+		expect(() => team.removeRob("ghost")).toThrow(UnknownRobError);
+		team.removeRob("planner");
+
+		expect(team.hasRob("planner")).toBe(false);
+		expect(team.statuses()).toEqual([]);
+		expect(manual.pending()).toEqual([]);
+		expect(() => team.dispatch("planner", "go")).toThrow(
+			"Unknown rob: planner",
+		);
+
+		// The disarmed timer can no longer deliver a turn.
+		manual.fire("planner");
+		expect(provider.requests).toEqual([]);
+		await team.stop();
+	});
+
+	it("replaces a rob's config in place and keeps its wake", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "ok" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const team = new Team({
+			robs: [
+				{
+					name: "planner",
+					role: "old role",
+					wake: { everyMs: 60000, prompt: "check" },
+				},
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+		});
+		team.start();
+
+		expect(() => team.updateRob({ name: "ghost", role: "x" })).toThrow(
+			UnknownRobError,
+		);
+		team.updateRob({
+			name: "planner",
+			role: "new role",
+			model: "deepseek-chat",
+		});
+
+		expect(team.hasRob("planner")).toBe(true);
+		expect(team.robWake("planner")).toEqual({
+			everyMs: 60000,
+			prompt: "check",
+		});
+
+		team.dispatch("planner", "go");
+		await waitFor(
+			() =>
+				provider.requests.length === 1 && team.statuses()[0].status === "idle",
+			"the edited rob's turn",
+		);
+		await team.stop();
+		expect(provider.requests[0].model).toBe("deepseek-chat");
+	});
 });
 
 function mcpTool(): Tool {

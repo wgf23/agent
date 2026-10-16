@@ -319,6 +319,186 @@ async function writeRob(
 	return { ok: true };
 }
 
+export function updateRob(
+	workspaceRoot: string,
+	name: string,
+	next: RobConfig,
+): Promise<WriteResult> {
+	const run = writeChain.then(() => writeRobUpdate(workspaceRoot, name, next));
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+// Replaces the named rob's role, model, and backend in place and leaves every
+// key it does not own byte-for-byte intact: permissions, unknown fields, and the
+// wake the schedule owns (unless the replacement carries its own). A name the
+// file does not carry is an error, mirroring writeRobWake.
+async function writeRobUpdate(
+	workspaceRoot: string,
+	name: string,
+	next: RobConfig,
+): Promise<WriteResult> {
+	const parsedNext = robConfigSchema.safeParse(next);
+	if (!parsedNext.success) {
+		return { ok: false, error: z.prettifyError(parsedNext.error) };
+	}
+	const incoming = parsedNext.data;
+
+	const filePath = projectFilePath(workspaceRoot);
+
+	let text: string;
+	try {
+		text = await readFile(filePath, "utf8");
+	} catch (error) {
+		if (isEnoent(error)) return { ok: false, error: `Unknown rob: ${name}` };
+		return {
+			ok: false,
+			error: `Failed to read ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(text);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Invalid JSON in ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	const parsed = projectFileSchema.safeParse(parsedJson);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(parsed.error)}`,
+		};
+	}
+	const raw = parsedJson as Record<string, unknown>;
+	const robs = Array.isArray(raw.robs) ? raw.robs : [];
+
+	let found = false;
+	const nextRobs = robs.map((entry) => {
+		if (typeof entry !== "object" || entry === null) return entry;
+		const rob = entry as Record<string, unknown>;
+		if (rob.name !== name) return rob;
+		found = true;
+		const merged: Record<string, unknown> = { ...rob, role: incoming.role };
+		if (incoming.model === undefined) delete merged.model;
+		else merged.model = incoming.model;
+		if (incoming.backend === undefined) delete merged.backend;
+		else merged.backend = incoming.backend;
+		if (incoming.permissions !== undefined) {
+			merged.permissions = incoming.permissions;
+		}
+		if (incoming.wake !== undefined) {
+			merged.wake = {
+				everyMs: incoming.wake.everyMs,
+				prompt: incoming.wake.prompt,
+			};
+		}
+		return merged;
+	});
+	if (!found) return { ok: false, error: `Unknown rob: ${name}` };
+
+	const nextRaw = { ...raw, robs: nextRobs };
+	const validated = projectFileSchema.safeParse(nextRaw);
+	if (!validated.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(validated.error)}`,
+		};
+	}
+
+	try {
+		await writeFile(filePath, `${JSON.stringify(nextRaw, null, 2)}\n`, "utf8");
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to write ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true };
+}
+
+export function removeRob(
+	workspaceRoot: string,
+	name: string,
+): Promise<WriteResult> {
+	const run = writeChain.then(() => writeRobRemoval(workspaceRoot, name));
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+// Drops exactly the named rob and leaves every other key and every other rob
+// byte-for-byte intact. A name the file does not carry is an error: re-adding
+// the same name is the only way to get it back.
+async function writeRobRemoval(
+	workspaceRoot: string,
+	name: string,
+): Promise<WriteResult> {
+	const filePath = projectFilePath(workspaceRoot);
+
+	let text: string;
+	try {
+		text = await readFile(filePath, "utf8");
+	} catch (error) {
+		if (isEnoent(error)) return { ok: false, error: `Unknown rob: ${name}` };
+		return {
+			ok: false,
+			error: `Failed to read ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(text);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Invalid JSON in ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	const parsed = projectFileSchema.safeParse(parsedJson);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(parsed.error)}`,
+		};
+	}
+	const raw = parsedJson as Record<string, unknown>;
+	const robs = Array.isArray(raw.robs) ? raw.robs : [];
+
+	let found = false;
+	const nextRobs = robs.filter((entry) => {
+		if (typeof entry !== "object" || entry === null) return true;
+		const rob = entry as Record<string, unknown>;
+		if (rob.name !== name) return true;
+		found = true;
+		return false;
+	});
+	if (!found) return { ok: false, error: `Unknown rob: ${name}` };
+
+	try {
+		await writeFile(
+			filePath,
+			`${JSON.stringify({ ...raw, robs: nextRobs }, null, 2)}\n`,
+			"utf8",
+		);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to write ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true };
+}
+
 function isEnoent(error: unknown): boolean {
 	return (
 		typeof error === "object" &&

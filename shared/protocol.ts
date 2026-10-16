@@ -434,3 +434,7 @@ export interface RenameSessionBody {
 }
 
 export type CreateBotBody = BotDraft;
+
+// The edit route takes the name from the path, so its body is the draft without
+// one.
+export type UpdateBotBody = Omit<BotDraft, "name">;

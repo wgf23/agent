@@ -6,6 +6,7 @@ import type {
 	SearchResponse,
 	ServerEvent,
 	SessionMatch,
+	UpdateBotBody,
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
 import type { ProviderSettings } from "../config/resolve.js";
@@ -69,8 +70,10 @@ export interface Hub {
 	search?(
 		query: string,
 	): Promise<SearchResponse | RoomMatches[] | SessionMatch[]>;
-	// Only a hub that manages a rob roster can create one.
+	// Only a hub that manages a rob roster can create, edit, or delete one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
+	updateBot?(name: string, draft: UpdateBotBody): Promise<BotInfo>;
+	removeBot?(name: string): Promise<boolean>;
 	// Only a hub with a rob roster manages rooms.
 	createRoom?(config: RoomConfig): RoomCreateOutcome;
 	sendToRoom?(room: string, text: string): RoomSendOutcome;
