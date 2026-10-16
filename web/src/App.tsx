@@ -170,7 +170,7 @@ export default function App() {
 							model={currentBot.model || state.model}
 							status={botState?.status ?? "idle"}
 							configured={configured}
-							onSend={(text) => hub.send(currentBot.name, text)}
+							onSend={(text, images) => hub.send(currentBot.name, text, images)}
 							onInterrupt={() => hub.interrupt(currentBot.name)}
 						/>
 					</section>

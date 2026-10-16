@@ -78,7 +78,10 @@ export type ClientAction =
 	| { type: "settings_provider"; provider: ProviderView }
 	| { type: "settings_open" }
 	| { type: "settings_close" }
-	| { type: "settings_error"; error: string | null };
+	| { type: "settings_error"; error: string | null }
+	// A request this client made was refused (not an SSE error): the server's
+	// reason goes to the same banner so it is never swallowed.
+	| { type: "request_error"; error: string };
 
 export function initialState(): ClientState {
 	return {
@@ -183,6 +186,9 @@ export function clientReducer(
 
 		case "settings_error":
 			return { ...state, settingsError: action.error };
+
+		case "request_error":
+			return { ...state, lastError: action.error };
 
 		case "server":
 			return applyServerEvent(state, action.event);

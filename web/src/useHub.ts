@@ -2,9 +2,11 @@ import { useCallback, useEffect, useReducer } from "react";
 import type {
 	ApprovalChoice,
 	BotDraft,
+	ImagePart,
 	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
+	SendBody,
 	ServerEvent,
 	SettingsResponse,
 } from "./protocol";
@@ -40,7 +42,9 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
 
 export interface Hub {
 	state: ClientState;
-	send: (bot: string, text: string) => void;
+	// Images are optional and already validated by the composer; the route
+	// validates them again and a refusal lands on the error banner.
+	send: (bot: string, text: string, images?: ImagePart[]) => void;
 	interrupt: (bot: string) => void;
 	respondApproval: (id: string, decision: ApprovalChoice) => void;
 	setAllowAll: (on: boolean) => void;
@@ -85,10 +89,27 @@ export function useHub(): Hub {
 		return () => source.close();
 	}, []);
 
-	const send = useCallback((bot: string, text: string) => {
-		dispatch({ type: "submit", bot, text });
-		post("/api/send", { bot, text }).catch(() => {});
-	}, []);
+	const send = useCallback(
+		(bot: string, text: string, images?: ImagePart[]) => {
+			dispatch({ type: "submit", bot, text });
+			const body: SendBody = {
+				bot,
+				text,
+				// Omitted rather than sent empty, so a text-only send is byte for
+				// byte the request it was before images existed.
+				...(images !== undefined && images.length > 0 ? { images } : {}),
+			};
+			// A refused attachment (a cap the server enforces more strictly, a
+			// media type it rejects) is a real answer the user must see.
+			post("/api/send", body).catch((error: unknown) => {
+				dispatch({
+					type: "request_error",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
+		},
+		[],
+	);
 
 	const interrupt = useCallback((bot: string) => {
 		post("/api/interrupt", { bot }).catch(() => {});

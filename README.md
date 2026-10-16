@@ -80,6 +80,8 @@ The **Bot 广场** view lists the robs with their status, and shows rob-to-rob D
 
 The server also starts with **no API key at all**. Open Settings (the gear in the top bar) to choose a provider preset, model, an optional custom base URL and API key environment, and the key itself. The key is saved to `~/.config/my-agent/credentials.json` (`0600`) and the non-secret settings to `config.json`, and the next turn uses the new provider immediately with no restart. Until a key is configured the composer is disabled and a send is refused with a clear message, so you can install and open the UI before you have a key.
 
+Click `图片` beside the send button to attach an image to the next message, the same way `--image` does on the command line: each chosen file becomes a removable chip above the input and travels with the message as a base64 `image_url` part, for the workspace chat and for a rob alike. `png`, `jpg`, `jpeg`, and `webp` are accepted, a file over 8 MiB or an unsupported format is refused on the input with a message naming the file, and a message carries at most 8 images. The server validates the attachment again on `POST /api/send` and answers `400` naming the reason, which the client shows.
+
 Build both the CLI and the web client with `pnpm build`. For hot-reload development, run `pnpm dev serve` in one terminal and `pnpm web:dev` in another, then open the Vite URL (`http://localhost:5173`), which proxies `/api` to the server on 4317.
 
 ## Configuration

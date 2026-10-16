@@ -412,3 +412,15 @@ describe("applyAgentEvent", () => {
 		});
 	});
 });
+
+describe("request failures", () => {
+	it("puts a refused send's reason on the error banner", () => {
+		const state = clientReducer(initialState(), {
+			type: "request_error",
+			error: 'Unsupported image type "image/bmp": allowed types are ...',
+		});
+		expect(state.lastError).toBe(
+			'Unsupported image type "image/bmp": allowed types are ...',
+		);
+	});
+});

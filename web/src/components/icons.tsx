@@ -75,6 +75,43 @@ export function ArrowUpIcon({ size = 16 }: IconProps) {
 	);
 }
 
+export function ImageIcon({ size = 14 }: IconProps) {
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={2}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="4" width="18" height="16" rx="2" />
+			<circle cx="9" cy="10" r="1.6" />
+			<path d="m4 17 5-4 4 3 3-2 4 3" />
+		</svg>
+	);
+}
+
+export function XIcon({ size = 12 }: IconProps) {
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={2.5}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M6 6l12 12M18 6L6 18" />
+		</svg>
+	);
+}
+
 export function StopIcon({ size = 14 }: IconProps) {
 	return (
 		<svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
