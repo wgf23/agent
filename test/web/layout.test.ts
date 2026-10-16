@@ -2,11 +2,7 @@
 // Contract: docs/design/webui-mobile-adaptation.md §7.1.
 // No jsdom: layout/interaction stays manual (FR-8).
 import { describe, expect, it } from "vitest";
-import {
-	type DrawerAction,
-	drawerReducer,
-	MOBILE_MAX_PX,
-} from "../../web/src/layout";
+import { type DrawerAction, drawerReducer } from "../../web/src/layout";
 
 describe("drawerReducer", () => {
 	it("toggle flips the drawer either way", () => {
@@ -35,11 +31,5 @@ describe("drawerReducer", () => {
 			expect(typeof drawerReducer(false, action)).toBe("boolean");
 			expect(typeof drawerReducer(true, action)).toBe("boolean");
 		}
-	});
-});
-
-describe("MOBILE_MAX_PX", () => {
-	it("matches the max-width: 640px queries it documents", () => {
-		expect(MOBILE_MAX_PX).toBe(640);
 	});
 });

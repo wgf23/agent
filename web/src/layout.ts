@@ -1,9 +1,5 @@
-// Pure layout constants and the mobile drawer state machine.
-// No React, no DOM: App binds these to state and CSS owns the breakpoint.
-// Contract: docs/design/webui-mobile-adaptation.md §7.1.
-
-/** The mobile breakpoint, kept in step with the `max-width: 640px` queries. */
-export const MOBILE_MAX_PX = 640;
+// The mobile drawer's state machine. No React, no DOM: App binds it to state
+// and CSS owns the breakpoint. Contract: docs/design/webui-mobile-adaptation.md §7.1.
 
 /** What a drawer gesture means: a hamburger tap, a backdrop/Esc close, or a
  *  navigation choice that should return the reader to the main area. */
