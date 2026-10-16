@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +74,31 @@ describe("web_fetch", () => {
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error).toContain("web_fetch failed");
 	});
+
+	it("is not read-only because saveTo writes into the workspace", () => {
+		const webFetch = tool(
+			"web_fetch",
+			stubFetch(() => new Response("", { status: 200 })),
+		);
+		expect(webFetch.readOnly).toBe(false);
+	});
+
+	it("refuses a saveTo that escapes the workspace", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "webtool-"));
+		try {
+			const fetchImpl = stubFetch(() => new Response("# Raw", { status: 200 }));
+			const result = await tool("web_fetch", fetchImpl).execute(
+				{ url: "https://x.ai", saveTo: "../escape.md" },
+				ctx(dir),
+			);
+
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toContain("escapes the workspace");
+			expect(existsSync(join(dir, "..", "escape.md"))).toBe(false);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("web_search", () => {
@@ -115,6 +141,52 @@ describe("web_search", () => {
 			expect(result.output).toContain("News");
 			expect(result.output).toContain("https://x.ai/news");
 		}
+	});
+
+	it("unwraps the DuckDuckGo redirect href to the real destination", async () => {
+		const html =
+			'<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fx.ai%2Fnews&rut=abc">News</a>';
+		const fetchImpl = stubFetch((url) =>
+			url.includes("searxng.invalid")
+				? new Response("down", { status: 500 })
+				: new Response(html, { status: 200 }),
+		);
+
+		const result = await tool("web_search", fetchImpl).execute(
+			{ query: "xai news" },
+			ctx("/tmp"),
+		);
+
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.output).toContain("https://x.ai/news");
+			expect(result.output).not.toContain("uddg=");
+		}
+	});
+});
+
+describe("egress probe caching", () => {
+	it("retries after a transient failure instead of caching it forever", async () => {
+		let probes = 0;
+		const fetchImpl = stubFetch((url) => {
+			if (url.includes("example.com")) {
+				probes += 1;
+				if (probes === 1) throw new Error("ENETUNREACH");
+				return new Response("ok", { status: 200 });
+			}
+			return new Response("# Docs", { status: 200 });
+		});
+		const webFetch = webTools({
+			fetchImpl,
+			jinaUrl: "https://jina.test",
+		}).find((candidate) => candidate.name === "web_fetch");
+		if (webFetch === undefined) throw new Error("missing tool web_fetch");
+
+		const first = await webFetch.execute({ url: "https://x.ai" }, ctx("/tmp"));
+		expect(first.ok).toBe(false);
+		const second = await webFetch.execute({ url: "https://x.ai" }, ctx("/tmp"));
+		expect(second.ok).toBe(true);
+		expect(probes).toBe(2);
 	});
 });
 

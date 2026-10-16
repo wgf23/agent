@@ -2,12 +2,17 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { buildTeamTool, type TeamTool } from "../rob/tools.js";
+import { withFileLock } from "../util/file-lock.js";
+import { resolveInWorkspace } from "../util/paths.js";
 
 const FETCH_MAX_CHARS = 20_000;
 const SEARCH_MAX_RESULTS = 8;
 const SEARCH_SNIPPET_MAX_CHARS = 200;
 const TIMEOUT_MS = 20_000;
 const DEFAULT_SEARXNG_URL = "http://localhost:8080";
+// r.jina.ai renders any page to clean markdown and needs no API key. It is only
+// a default: tests and self-hosted setups override it via `WebToolDeps`.
+const DEFAULT_JINA_URL = "https://r.jina.ai";
 
 // Everything below is untrusted third-party text. It is wrapped so the model
 // treats it as data, never as instructions (prompt-injection guard).
@@ -36,6 +41,8 @@ interface WebToolDeps {
 	fetchImpl?: typeof fetch;
 	/** SearXNG base URL; defaults to $SEARXNG_URL or http://localhost:8080. */
 	searxngUrl?: string;
+	/** Markdown-rendering proxy; defaults to $JINA_URL or https://r.jina.ai. */
+	jinaUrl?: string;
 	/** Skip the one-time host egress probe (used by offline tests). */
 	skipEgressProbe?: boolean;
 }
@@ -61,14 +68,15 @@ async function httpGet(
 	}
 }
 
-// r.jina.ai/<url> renders any page to clean markdown and needs no API key.
+// <base>/<url> renders any page to clean markdown and needs no API key.
 async function fetchAsMarkdown(
 	fetchImpl: typeof fetch,
+	base: string,
 	url: string,
 ): Promise<string> {
 	const response = await httpGet(
 		fetchImpl,
-		`https://r.jina.ai/${url}`,
+		`${base.replace(/\/$/, "")}/${url}`,
 		"text/plain",
 	);
 	if (!response.ok) {
@@ -79,6 +87,18 @@ async function fetchAsMarkdown(
 	return response.body.slice(0, FETCH_MAX_CHARS);
 }
 
+/** DDG wraps result links as `//duckduckgo.com/l/?uddg=<encoded>`. Unwrap to the
+ *  real destination so the model (and the user) sees a usable URL. */
+function unwrapDdgHref(href: string): string {
+	const match = /[?&]uddg=([^&]+)/.exec(href);
+	if (match === null) return href;
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		return href;
+	}
+}
+
 function parseDdgHtml(html: string): string {
 	const lines: string[] = [];
 	const anchor =
@@ -86,7 +106,7 @@ function parseDdgHtml(html: string): string {
 	let match = anchor.exec(html);
 	while (match !== null && lines.length < SEARCH_MAX_RESULTS) {
 		const title = match[2].replace(/<[^>]+>/g, "").trim();
-		lines.push(`${lines.length + 1}. ${title}\n   ${match[1]}`);
+		lines.push(`${lines.length + 1}. ${title}\n   ${unwrapDdgHref(match[1])}`);
 		match = anchor.exec(html);
 	}
 	return lines.join("\n");
@@ -146,17 +166,16 @@ async function searchDuckDuckGo(
 		: { ok: true, text: parsed };
 }
 
-let egress: Promise<{ ok: boolean; detail: string }> | undefined;
-
 /** One-time check that the host process itself can reach the internet. The
  *  rob sandboxes are network-isolated, so the web tools only work when the
  *  socket is opened from here. */
 export function netEgressProbe(
 	fetchImpl: typeof fetch = fetch,
+	base = DEFAULT_JINA_URL,
 ): Promise<{ ok: boolean; detail: string }> {
 	return httpGet(
 		fetchImpl,
-		"https://r.jina.ai/https://example.com",
+		`${base.replace(/\/$/, "")}/https://example.com`,
 		"text/plain",
 	).then((response) =>
 		response.ok
@@ -168,14 +187,26 @@ export function netEgressProbe(
 	);
 }
 
+/** Per-webTools() memo of the egress probe. Kept off module scope so tests and
+ *  self-hosted setups with different `fetchImpl`s never share a result. */
+interface EgressCache {
+	promise?: Promise<{ ok: boolean; detail: string }>;
+}
+
 async function assertEgress(
 	fetchImpl: typeof fetch,
+	base: string,
 	skip: boolean,
+	cache: EgressCache,
 ): Promise<void> {
 	if (skip) return;
-	egress ??= netEgressProbe(fetchImpl);
-	const result = await egress;
-	if (!result.ok) throw new Error(result.detail);
+	cache.promise ??= netEgressProbe(fetchImpl, base);
+	const result = await cache.promise;
+	if (!result.ok) {
+		// A transient outage must not be remembered: the next call retries.
+		cache.promise = undefined;
+		throw new Error(result.detail);
+	}
 }
 
 function failure(error: unknown) {
@@ -193,23 +224,29 @@ export function webTools(deps: WebToolDeps = {}): readonly TeamTool[] {
 	const fetchImpl = deps.fetchImpl ?? fetch;
 	const searxngUrl =
 		deps.searxngUrl ?? process.env.SEARXNG_URL ?? DEFAULT_SEARXNG_URL;
+	const jinaUrl = deps.jinaUrl ?? process.env.JINA_URL ?? DEFAULT_JINA_URL;
 	const skipProbe = deps.skipEgressProbe ?? false;
+	const egressCache: EgressCache = {};
 
 	return [
 		buildTeamTool({
 			name: "web_fetch",
 			description:
 				"Fetch a URL and return its main content as markdown. Use for reading official docs and articles.",
-			readOnly: true,
+			// `saveTo` writes into the workspace, so this tool is NOT read-only:
+			// it must go through the approval rules rather than auto-allow.
+			readOnly: false,
 			schema: webFetchSchema,
 			async serve(args, ctx) {
 				try {
-					await assertEgress(fetchImpl, skipProbe);
-					const markdown = await fetchAsMarkdown(fetchImpl, args.url);
+					await assertEgress(fetchImpl, jinaUrl, skipProbe, egressCache);
+					const markdown = await fetchAsMarkdown(fetchImpl, jinaUrl, args.url);
 					if (args.saveTo !== undefined) {
-						const target = path.resolve(ctx.workspaceRoot, args.saveTo);
-						await mkdir(path.dirname(target), { recursive: true });
-						await writeFile(target, markdown, "utf8");
+						const target = resolveInWorkspace(ctx.workspaceRoot, args.saveTo);
+						await withFileLock(target, async () => {
+							await mkdir(path.dirname(target), { recursive: true });
+							await writeFile(target, markdown, "utf8");
+						});
 					}
 					return { ok: true, text: `${EXTERNAL_NOTE}\n\n${markdown}` };
 				} catch (error) {
@@ -225,7 +262,7 @@ export function webTools(deps: WebToolDeps = {}): readonly TeamTool[] {
 			schema: webSearchSchema,
 			async serve(args) {
 				try {
-					await assertEgress(fetchImpl, skipProbe);
+					await assertEgress(fetchImpl, jinaUrl, skipProbe, egressCache);
 					const searx = await searchSearxng(fetchImpl, searxngUrl, args.query);
 					if (searx !== undefined) {
 						return { ok: true, text: `${EXTERNAL_NOTE}\n\n${searx}` };
