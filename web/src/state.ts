@@ -177,6 +177,16 @@ export function isLivePhase(phase: InstallPhase): boolean {
 	return phase === "queued" || phase === "installing" || phase === "verifying";
 }
 
+// A Think block opens while its turn streams and collapses once the turn ends.
+// A manual toggle (true = opened, false = closed) overrides that until the next
+// streaming state changes it back.
+export function reasoningOpen(
+	streaming: boolean,
+	toggled: boolean | null,
+): boolean {
+	return toggled ?? streaming;
+}
+
 export function clientReducer(
 	state: ClientState,
 	action: ClientAction,

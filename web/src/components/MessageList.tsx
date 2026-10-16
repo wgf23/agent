@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { copyText } from "../clipboard";
 import type { TranscriptMessage } from "../protocol";
+import { reasoningOpen } from "../state";
 import { ArrowDownIcon } from "./icons";
 import Markdown from "./Markdown";
 import ToolCard from "./ToolCard";
@@ -129,10 +130,7 @@ function MessageItem({
 			<div className="assistant-body">
 				<div className="assistant-name">{botName}</div>
 				{reasoning !== "" && (
-					<details className="reasoning">
-						<summary>思考过程</summary>
-						<div className="reasoning-body">{reasoning}</div>
-					</details>
+					<ReasoningBlock text={reasoning} streaming={streaming} />
 				)}
 				{message.tools.length > 0 && (
 					<div className="tools">
@@ -161,5 +159,31 @@ function MessageItem({
 				)}
 			</div>
 		</div>
+	);
+}
+
+// A folding "Think" block. It follows the turn: open while streaming, collapsed
+// once the turn ends, and a manual toggle overrides that until the streaming
+// state next changes.
+function ReasoningBlock({
+	text,
+	streaming,
+}: {
+	text: string;
+	streaming: boolean;
+}) {
+	const [toggled, setToggled] = useState<boolean | null>(null);
+	return (
+		<details
+			className="reasoning"
+			open={reasoningOpen(streaming, toggled)}
+			onToggle={(event) => {
+				const open = event.currentTarget.open;
+				setToggled(open === streaming ? null : open);
+			}}
+		>
+			<summary>{streaming ? "思考中…" : "思考过程"}</summary>
+			<div className="reasoning-body">{text}</div>
+		</details>
 	);
 }
