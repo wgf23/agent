@@ -3,6 +3,7 @@ import type {
 	BotInfo,
 	BotState,
 	ServerEvent,
+	SessionMatch,
 	SessionSummaryInfo,
 	TranscriptMessage,
 } from "../../shared/protocol.js";
@@ -36,6 +37,7 @@ import { summarizeArgs } from "../tui/summarize.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { parseImages } from "./images.js";
 import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
+import { MAX_SESSION_MATCHES, sessionMatch } from "./search.js";
 
 export const DEFAULT_BOT = "assistant";
 const DEFAULT_BOT_ROLE = "Your coding agent. Reads, edits, and runs things.";
@@ -240,6 +242,22 @@ export class SoloHub extends EventBus implements Hub {
 		if (this.session.id === id) this.session.title = title;
 		await this.refreshSessions();
 		return true;
+	}
+
+	// The chat half of a search: every stored session for this workspace, newest
+	// first, capped. Read-only, so it never writes and emits no event.
+	async search(query: string): Promise<SessionMatch[]> {
+		const summaries = await listSessions(this.options.workspaceRoot);
+		const matches: SessionMatch[] = [];
+		for (const summary of summaries) {
+			const loaded = await loadSession(this.options.workspaceRoot, summary.id);
+			if (!loaded.ok) continue;
+			const match = sessionMatch(loaded.session, query);
+			if (match === null) continue;
+			matches.push(match);
+			if (matches.length >= MAX_SESSION_MATCHES) break;
+		}
+		return matches;
 	}
 
 	async dispose(): Promise<void> {

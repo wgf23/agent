@@ -4,6 +4,7 @@ import {
 	type ApprovalChoice,
 	type BotDraft,
 	type BotInfo,
+	type SearchResponse,
 	WORKSPACE_BOT,
 } from "../../shared/protocol.js";
 import type { AgentSupervisor } from "../agents/supervisor.js";
@@ -131,6 +132,14 @@ export class CompositeHub extends EventBus implements Hub {
 
 	renameSession(bot: string, id: string, title: string): Promise<boolean> {
 		return this.workspace.renameSession(bot, id, title);
+	}
+
+	// One read-only search across both halves: the workspace chat's sessions and
+	// every room's transcript. It emits nothing and changes no status.
+	async search(query: string): Promise<SearchResponse> {
+		const chat = await this.workspace.search(query);
+		const rooms = await this.robs.search(query);
+		return { query, chat, rooms };
 	}
 
 	createRoom(config: RoomConfig): RoomCreateOutcome {

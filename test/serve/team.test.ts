@@ -6,6 +6,7 @@ import type { ServerEvent } from "../../shared/protocol.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
+import { createRoomStore, newRoomState } from "../../src/rob/room-store.js";
 import { buildServer } from "../../src/serve/server.js";
 import { TeamHub } from "../../src/serve/team.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
@@ -307,6 +308,66 @@ describe("TeamHub", () => {
 		);
 
 		await app.close();
+		await hub.dispose();
+	});
+
+	it("searches every room's transcript, newest matching room first", async () => {
+		const store = createRoomStore({ workspaceRoot });
+		await store.save({
+			...newRoomState("ship-it", 1, ["alpha", "beta"], null),
+			transcript: [
+				{ id: 1, at: 10, kind: "user", text: "the NEEDLE is here" },
+				{
+					id: 2,
+					at: 11,
+					kind: "member",
+					from: "alpha",
+					text: "a needle answer",
+				},
+			],
+		});
+		await store.save({
+			...newRoomState("later", 2, ["alpha", "beta"], null),
+			transcript: [{ id: 1, at: 50, kind: "user", text: "needle again" }],
+		});
+		await store.save({
+			...newRoomState("quiet", 3, ["alpha", "beta"], null),
+			transcript: [{ id: 1, at: 99, kind: "user", text: "nothing to see" }],
+		});
+
+		const hub = createRoomHub(slowProvider());
+		const results = await hub.search("NEEDLE");
+
+		// A room folds to one session-shaped match: its name is the id and the
+		// label, and only rooms carrying the query appear.
+		expect(results).toEqual([
+			{
+				room: "later",
+				matches: [
+					{
+						sessionId: "later",
+						title: "later",
+						firstUserText: "needle again",
+						hits: [{ role: "user", text: "needle again", at: 50 }],
+					},
+				],
+			},
+			{
+				room: "ship-it",
+				matches: [
+					{
+						sessionId: "ship-it",
+						title: "ship-it",
+						firstUserText: "the NEEDLE is here",
+						hits: [
+							{ role: "user", text: "the NEEDLE is here", at: 10 },
+							{ role: "assistant", text: "a needle answer", at: 11 },
+						],
+					},
+				],
+			},
+		]);
+		await expect(hub.search("absent")).resolves.toEqual([]);
 		await hub.dispose();
 	});
 });

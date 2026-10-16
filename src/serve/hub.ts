@@ -2,7 +2,10 @@ import type {
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
+	RoomMatches,
+	SearchResponse,
 	ServerEvent,
+	SessionMatch,
 } from "../../shared/protocol.js";
 import type { CompactionSettings } from "../agent/compact.js";
 import type { ProviderSettings } from "../config/resolve.js";
@@ -60,6 +63,12 @@ export interface Hub {
 	// bot or the session is unknown, so the route answers 404.
 	deleteSession?(bot: string, id: string): Promise<boolean>;
 	renameSession?(bot: string, id: string, title: string): Promise<boolean>;
+	// A read-only search. The composite hub answers the whole SearchResponse;
+	// the chat and team halves each expose their own slice, so the one optional
+	// member admits every return shape. It writes nothing and emits no event.
+	search?(
+		query: string,
+	): Promise<SearchResponse | RoomMatches[] | SessionMatch[]>;
 	// Only a hub that manages a rob roster can create one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
 	// Only a hub with a rob roster manages rooms.

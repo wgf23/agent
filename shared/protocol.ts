@@ -212,6 +212,38 @@ export interface DmInfo {
 	at: number;
 }
 
+// One message that carries the query: its role, a bounded snippet with the
+// match intact, and the time it belongs to.
+export interface SearchHit {
+	role: "user" | "assistant" | "system" | "tool";
+	text: string;
+	at: number;
+}
+
+// Every hit for one conversation, with the same summary fields the sidebar
+// lists, so a search result can be opened like any other session. A room's
+// conversation carries its name as both the id and the title.
+export interface SessionMatch {
+	sessionId: string;
+	title: string | null;
+	firstUserText: string;
+	hits: SearchHit[];
+}
+
+// One room's matches, present only when the room has at least one.
+export interface RoomMatches {
+	room: string;
+	matches: SessionMatch[];
+}
+
+// The whole answer to one read-only search: the query echoed back, the chat's
+// matches, and each room's matches.
+export interface SearchResponse {
+	query: string;
+	chat: SessionMatch[];
+	rooms: RoomMatches[];
+}
+
 // Room wire types mirror src/rob/room.ts: the server maps domain events at the
 // hub boundary, exactly as AgentEvent is mapped, and the client only renders.
 

@@ -4,6 +4,7 @@ import type {
 	BotState,
 	RoomEventInfo,
 	RoomInfo,
+	RoomMatches,
 	RoomMessageView,
 	RoomRunView,
 	ServerEvent,
@@ -30,6 +31,7 @@ import {
 	type RuntimeSnapshot,
 	UNCONFIGURED_MESSAGE,
 } from "./runtime.js";
+import { roomMatches } from "./search.js";
 
 export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
@@ -192,6 +194,12 @@ export class TeamHub extends EventBus implements Hub {
 			bot,
 			message: "Sessions are not saved in team mode yet.",
 		});
+	}
+
+	// The room half of a search: every room's transcript for this workspace.
+	// Read-only, so it neither emits an event nor changes a status.
+	async search(query: string): Promise<RoomMatches[]> {
+		return roomMatches(this.team.rooms(), query);
 	}
 
 	async openSession(bot: string, _id: string): Promise<void> {
