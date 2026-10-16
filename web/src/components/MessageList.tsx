@@ -124,9 +124,6 @@ function MessageItem({
 	const reasoning = message.reasoning ?? "";
 	return (
 		<div className="message assistant">
-			<div className="assistant-avatar" aria-hidden="true">
-				{botName[0]?.toUpperCase() ?? "✦"}
-			</div>
 			<div className="assistant-body">
 				<div className="assistant-name">{botName}</div>
 				{reasoning !== "" && (
