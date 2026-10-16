@@ -5,6 +5,7 @@ import {
 	type CompactionSettings,
 	DEFAULT_COMPACTION,
 } from "../agent/compact.js";
+import { type HooksConfig, hooksSchema } from "../hooks/hooks.js";
 import {
 	type PermissionRules,
 	permissionRulesSchema,
@@ -184,6 +185,7 @@ export interface ResolvedConfig {
 	permissions: PermissionRules;
 	robs: RobConfig[];
 	rooms: RoomConfig[];
+	hooks: HooksConfig;
 	compaction: CompactionSettings;
 	sandbox: SandboxSettings;
 	search: SearchSettings;
@@ -374,6 +376,7 @@ export function resolveConfig(input: ResolveConfigInput): ResolveConfigResult {
 				model: rob.model ?? model,
 			})),
 			rooms: project.layer.rooms ?? [],
+			hooks: project.layer.hooks ?? {},
 			compaction,
 			sandbox,
 			search,
@@ -427,6 +430,7 @@ interface Layer {
 	permissions?: PermissionRules;
 	robs?: RobConfig[];
 	rooms?: RoomConfig[];
+	hooks?: HooksConfig;
 	compaction?: CompactionOptions;
 	sandbox?: SandboxOptions;
 	search?: SearchOptions;
@@ -531,6 +535,18 @@ function loadLayer(
 		rooms = parsed.rooms;
 	}
 
+	let hooks: HooksConfig | undefined;
+	if (role === "project" && raw.hooks !== undefined) {
+		const parsed = hooksSchema.safeParse(raw.hooks);
+		if (!parsed.success) {
+			return {
+				ok: false,
+				error: `Invalid hooks in ${filePath}: ${z.prettifyError(parsed.error)}`,
+			};
+		}
+		hooks = parsed.data;
+	}
+
 	let compaction: CompactionOptions | undefined;
 	if (raw.compaction !== undefined) {
 		const parsed = compactionOptionsSchema.safeParse(raw.compaction);
@@ -581,6 +597,7 @@ function loadLayer(
 			permissions,
 			robs,
 			rooms,
+			hooks,
 			compaction,
 			sandbox,
 			search,
