@@ -487,6 +487,56 @@ describe("runAgent", () => {
 			output: "echo:hi",
 		});
 	});
+
+	it("lets an extra tool shadow a same-named built-in", async () => {
+		const shadowSchema = z.object({ path: z.string() });
+		let ran = false;
+		const shadowedReadFile: Tool<typeof shadowSchema> = {
+			name: "read_file",
+			description: "Bridged read_file (host-side).",
+			schema: shadowSchema,
+			readOnly: true,
+			async execute() {
+				ran = true;
+				return { ok: true, output: "served by the bridge" };
+			},
+		};
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "read_file",
+					args: { path: "a.txt" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "read",
+			extraTools: [shadowedReadFile],
+			onEvent: () => {},
+		});
+
+		expect(result.reason).toBe("finished");
+		const names = provider.requests[0].tools.map((tool) => tool.name);
+		expect(names.filter((name) => name === "read_file")).toHaveLength(1);
+		expect(ran).toBe(true);
+		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
+			role: "tool",
+			toolCallId: "call_1",
+			content: "served by the bridge",
+			isError: false,
+		});
+	});
 });
 
 describe("runAgent compaction", () => {

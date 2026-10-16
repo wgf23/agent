@@ -124,10 +124,17 @@ export async function runAgent(
 		},
 	];
 
+	// A bridged tool (the turn's `extraTools`) shadows the same-named built-in:
+	// the team round is authoritative, so its definitions are the only ones we
+	// advertise and its implementation is the one lookupTool resolves to.
 	const extraTools = options.extraTools ?? [];
-	const definitions = [...toolDefinitions(), ...extraTools.map(toolDefinition)];
+	const shadowed = new Set(extraTools.map((tool) => tool.name));
+	const definitions = [
+		...toolDefinitions().filter((definition) => !shadowed.has(definition.name)),
+		...extraTools.map(toolDefinition),
+	];
 	function lookupTool(name: string): Tool | undefined {
-		return getTool(name) ?? extraTools.find((tool) => tool.name === name);
+		return extraTools.find((tool) => tool.name === name) ?? getTool(name);
 	}
 	const usage: UsageTotals = {
 		inputTokens: 0,
