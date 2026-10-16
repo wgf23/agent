@@ -3813,7 +3813,8 @@ button.browser-crumb:hover {
 .mobile-bar,
 .drawer-backdrop,
 .panel-backdrop,
-.file-panel-close {
+.file-panel-close,
+.sidebar-close {
 	display: none;
 }
 
@@ -3853,7 +3854,8 @@ button.browser-crumb:hover {
 		background: rgb(0 0 0 / 0.4);
 	}
 
-	.file-panel-close {
+	.file-panel-close,
+	.sidebar-close {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;

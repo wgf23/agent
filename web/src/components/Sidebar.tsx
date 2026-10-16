@@ -49,6 +49,10 @@ interface Props {
 	// The right-side file panel; the nav button folds it away.
 	filesOpen: boolean;
 	onToggleFiles: () => void;
+	// Mobile drawer: when true the sidebar is slid in over the main area, and
+	// any navigation choice asks the app to close it.
+	mobileOpen: boolean;
+	onNavigate?: () => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -81,6 +85,8 @@ export default function Sidebar(props: Props) {
 		connection,
 		filesOpen,
 		onToggleFiles,
+		mobileOpen,
+		onNavigate,
 	} = props;
 
 	// The assistant's session list belongs to the assistant area; there it is
@@ -89,8 +95,15 @@ export default function Sidebar(props: Props) {
 	const selectedRob =
 		region === "bots" ? robs.find((rob) => rob.name === selectedId) : undefined;
 
+	// Every sidebar choice closes the mobile drawer, so the reader lands back on
+	// the main area. On desktop `onNavigate` is undefined and this is a no-op.
+	const withNavigate = (act: () => void) => () => {
+		act();
+		onNavigate?.();
+	};
+
 	return (
-		<aside className="sidebar">
+		<aside className={`sidebar${mobileOpen ? " drawer-open" : ""}`}>
 			<div className="sidebar-brand">
 				<span className="logo-mark" aria-hidden="true">
 					✦
@@ -101,9 +114,18 @@ export default function Sidebar(props: Props) {
 					className="icon-btn sidebar-settings"
 					title="模型设置"
 					aria-label="模型设置"
-					onClick={onOpenSettings}
+					onClick={withNavigate(onOpenSettings)}
 				>
 					<GearIcon />
+				</button>
+				<button
+					type="button"
+					className="icon-btn sidebar-close"
+					title="关闭导航"
+					aria-label="关闭导航"
+					onClick={() => onNavigate?.()}
+				>
+					✕
 				</button>
 			</div>
 
@@ -112,12 +134,12 @@ export default function Sidebar(props: Props) {
 					type="button"
 					className="btn new-chat"
 					disabled={workspace === null}
-					onClick={() => {
+					onClick={withNavigate(() => {
 						if (workspace === null) return;
 						onNewSession(workspace.name);
 						onSelect(workspace.name);
 						onViewChange("chat");
-					}}
+					})}
 				>
 					<PlusIcon />
 					新建对话
@@ -128,7 +150,7 @@ export default function Sidebar(props: Props) {
 				<button
 					type="button"
 					className={`nav-item ${view === "chat" ? "active" : ""}`}
-					onClick={() => onViewChange("chat")}
+					onClick={withNavigate(() => onViewChange("chat"))}
 				>
 					对话
 				</button>
@@ -137,7 +159,7 @@ export default function Sidebar(props: Props) {
 						<button
 							type="button"
 							className={`nav-item ${view === "plaza" ? "active" : ""}`}
-							onClick={() => onViewChange("plaza")}
+							onClick={withNavigate(() => onViewChange("plaza"))}
 						>
 							Bot 广场
 							{robs.length > 0 && (
@@ -147,14 +169,14 @@ export default function Sidebar(props: Props) {
 						<button
 							type="button"
 							className={`nav-item ${view === "subagents" ? "active" : ""}`}
-							onClick={() => onViewChange("subagents")}
+							onClick={withNavigate(() => onViewChange("subagents"))}
 						>
 							子 Agent
 						</button>
 						<button
 							type="button"
 							className={`nav-item ${view === "agents" ? "active" : ""}`}
-							onClick={() => onViewChange("agents")}
+							onClick={withNavigate(() => onViewChange("agents"))}
 						>
 							Agents
 						</button>
@@ -164,7 +186,7 @@ export default function Sidebar(props: Props) {
 					type="button"
 					className={`nav-item ${filesOpen ? "active" : ""}`}
 					aria-pressed={filesOpen}
-					onClick={onToggleFiles}
+					onClick={withNavigate(onToggleFiles)}
 				>
 					<FolderIcon size={14} />
 					文件
@@ -183,10 +205,12 @@ export default function Sidebar(props: Props) {
 						onSelect(workspace.name);
 						onOpenSession(workspace.name, sessionId);
 						onViewChange("chat");
+						onNavigate?.();
 					}}
 					onOpenRoom={(room) => {
 						onSelect(room);
 						onViewChange("chat");
+						onNavigate?.();
 					}}
 				/>
 				{region === "bots" && (
@@ -196,7 +220,7 @@ export default function Sidebar(props: Props) {
 							<button
 								type="button"
 								className="sidebar-action"
-								onClick={onCreateBot}
+								onClick={withNavigate(onCreateBot)}
 								title="创建 Bot"
 							>
 								<PlusIcon size={14} />
@@ -209,10 +233,10 @@ export default function Sidebar(props: Props) {
 										bot={bot}
 										state={botStates[bot.name]}
 										selected={view === "chat" && bot.name === selectedId}
-										onClick={() => {
+										onClick={withNavigate(() => {
 											onSelect(bot.name);
 											onViewChange("chat");
-										}}
+										})}
 									/>
 								</li>
 							))}
@@ -227,7 +251,7 @@ export default function Sidebar(props: Props) {
 							<button
 								type="button"
 								className="sidebar-action"
-								onClick={onCreateRoom}
+								onClick={withNavigate(onCreateRoom)}
 								title="创建房间"
 							>
 								<PlusIcon size={14} />
@@ -242,10 +266,10 @@ export default function Sidebar(props: Props) {
 										<RoomItem
 											room={room}
 											selected={view === "chat" && room.name === selectedId}
-											onClick={() => {
+											onClick={withNavigate(() => {
 												onSelect(room.name);
 												onViewChange("chat");
-											}}
+											})}
 										/>
 									</li>
 								))}
@@ -272,6 +296,7 @@ export default function Sidebar(props: Props) {
 										onOpen={() => {
 											onOpenSession(workspace.name, session.id);
 											onViewChange("chat");
+											onNavigate?.();
 										}}
 										onRename={(title) =>
 											onRenameSession(workspace.name, session.id, title)
@@ -292,7 +317,7 @@ export default function Sidebar(props: Props) {
 								type="button"
 								className="sidebar-action"
 								title="新建会话"
-								onClick={() => onNewSession(selectedRob.name)}
+								onClick={withNavigate(() => onNewSession(selectedRob.name))}
 							>
 								<PlusIcon size={14} />
 							</button>
@@ -313,6 +338,7 @@ export default function Sidebar(props: Props) {
 										onOpen={() => {
 											onOpenSession(selectedRob.name, session.id);
 											onViewChange("chat");
+											onNavigate?.();
 										}}
 										onRename={(title) =>
 											onRenameSession(selectedRob.name, session.id, title)

@@ -15,6 +15,7 @@ import SettingsDialog from "./components/SettingsDialog";
 import Sidebar from "./components/Sidebar";
 import SubagentFeed from "./components/SubagentFeed";
 import WakeEditor from "./components/WakeEditor";
+import { drawerReducer } from "./layout";
 import {
 	defaultView,
 	partitionBots,
@@ -50,12 +51,26 @@ export default function App() {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [roomDialogOpen, setRoomDialogOpen] = useState(false);
 	const [filesOpen, setFilesOpen] = useState(true);
+	// The mobile drawer. Client-only, never persisted: the sidebar is hidden
+	// behind it below 640px and shown as a column above.
+	const [mobileNavOpen, setMobileNavOpen] = useState(false);
 	// Theme is client-only; it is applied to <html> and mirrored in localStorage.
 	const [theme, setTheme] = useState<Theme>(readTheme);
 
 	useEffect(() => {
 		applyTheme(theme);
 	}, [theme]);
+
+	// Esc closes the mobile drawer, mirroring the backdrop tap.
+	useEffect(() => {
+		if (!mobileNavOpen) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape")
+				setMobileNavOpen((open) => drawerReducer(open, "close"));
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [mobileNavOpen]);
 
 	const changeTheme = (next: Theme) => {
 		setTheme(next);
@@ -161,6 +176,20 @@ export default function App() {
 		loadAgents().catch(() => {});
 	};
 
+	// The mobile bar's title names whatever the main area is showing.
+	const mobileTitle =
+		region === "assistant"
+			? (workspace?.name ?? "助手")
+			: view === "agents"
+				? "Agents"
+				: view === "plaza"
+					? "Bot 广场"
+					: view === "subagents"
+						? "子 Agent"
+						: currentRoom !== null
+							? `#${currentRoom.name}`
+							: (currentBot?.name ?? "Bot");
+
 	return (
 		<div className="app">
 			<Sidebar
@@ -192,7 +221,22 @@ export default function App() {
 				connection={state.connection}
 				filesOpen={filesOpen}
 				onToggleFiles={() => setFilesOpen((value) => !value)}
+				mobileOpen={mobileNavOpen}
+				onNavigate={() =>
+					setMobileNavOpen((open) => drawerReducer(open, "navigate"))
+				}
 			/>
+
+			{mobileNavOpen && (
+				<button
+					type="button"
+					className="drawer-backdrop"
+					aria-label="关闭导航"
+					onClick={() =>
+						setMobileNavOpen((open) => drawerReducer(open, "close"))
+					}
+				/>
+			)}
 
 			<div className="main">
 				{state.connection === "closed" && (
@@ -205,6 +249,21 @@ export default function App() {
 						{state.lastError}
 					</div>
 				)}
+
+				<div className="mobile-bar">
+					<button
+						type="button"
+						className="icon-btn mobile-bar-menu"
+						aria-label="打开导航"
+						aria-expanded={mobileNavOpen}
+						onClick={() =>
+							setMobileNavOpen((open) => drawerReducer(open, "toggle"))
+						}
+					>
+						☰
+					</button>
+					<span className="mobile-bar-title">{mobileTitle}</span>
+				</div>
 
 				<div className="region-tabs" role="tablist" aria-label="区域">
 					{REGIONS.map((entry) => (
