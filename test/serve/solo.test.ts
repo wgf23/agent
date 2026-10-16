@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -6,10 +6,12 @@ import type { ServerEvent } from "../../shared/protocol.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
+import { MAX_SESSION_MATCHES } from "../../src/serve/search.js";
 import { SoloHub } from "../../src/serve/solo.js";
 import {
 	latestSession,
 	newSession,
+	projectSlug,
 	saveSession,
 } from "../../src/session/store.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
@@ -403,6 +405,34 @@ describe("SoloHub", () => {
 		]);
 		// The "nothing found" case is an empty list, not every session.
 		expect(await hub.search("absent")).toEqual([]);
+		await hub.dispose();
+	});
+
+	it("skips an unreadable session and caps the newest matches", async () => {
+		const sessionsDir = process.env.MY_AGENT_SESSIONS_DIR ?? "";
+		const dir = path.join(sessionsDir, projectSlug(workspaceRoot));
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(path.join(dir, "ses_broken.json"), "{ not json", "utf8");
+
+		const ids: string[] = [];
+		for (let index = 0; index < MAX_SESSION_MATCHES + 5; index += 1) {
+			const session = newSession(workspaceRoot, settings.model);
+			session.messages = [{ role: "user", content: `needle ${index}` }];
+			session.updatedAt = index + 1;
+			await saveSession(session);
+			ids.push(session.id);
+		}
+		const hub = new SoloHub(hubOptions(createMockProvider([])), {
+			session: newSession(workspaceRoot, settings.model),
+			sessions: [],
+		});
+
+		const found = await hub.search("needle");
+		// The corrupt file is dropped, never surfaced as a failure, and the
+		// result stops at the cap with the newest sessions first.
+		expect(found).toHaveLength(MAX_SESSION_MATCHES);
+		expect(found[0]?.sessionId).toBe(ids.at(-1));
+		expect(found.at(-1)?.sessionId).toBe(ids.at(-MAX_SESSION_MATCHES));
 		await hub.dispose();
 	});
 });

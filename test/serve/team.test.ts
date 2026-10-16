@@ -493,4 +493,29 @@ describe("TeamHub", () => {
 		await expect(hub.search("absent")).resolves.toEqual([]);
 		await hub.dispose();
 	});
+
+	it("searches only this workspace's room ledgers", async () => {
+		const otherWorkspace = mkdtempSync(
+			path.join(tmpdir(), "my-agent-web-team-other-"),
+		);
+		const otherStore = createRoomStore({ workspaceRoot: otherWorkspace });
+		await otherStore.save({
+			...newRoomState("elsewhere", 1, ["alpha", "beta"], null),
+			transcript: [{ id: 1, at: 500, kind: "user", text: "needle elsewhere" }],
+		});
+
+		const store = createRoomStore({ workspaceRoot });
+		await store.save({
+			...newRoomState("ship-it", 1, ["alpha", "beta"], null),
+			transcript: [{ id: 1, at: 10, kind: "user", text: "needle here" }],
+		});
+
+		const hub = createRoomHub(slowProvider());
+		const results = await hub.search("needle");
+
+		// Room ledgers are keyed by workspace root, so the other workspace's
+		// newer match can never surface in this one.
+		expect(results.map((entry) => entry.room)).toEqual(["ship-it"]);
+		await hub.dispose();
+	});
 });
