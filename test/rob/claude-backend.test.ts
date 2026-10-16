@@ -696,6 +696,36 @@ describe("claude team bridge", () => {
 		expect(shim).toContain("process.env.MYAGENT_TEAM_SECRET");
 	});
 
+	it("exposes team tools while dropping a built-in that would need approval", async () => {
+		const configDir = path.join(workspace, "cfg-ask");
+		const argvFile = path.join(workspace, "argv-ask.json");
+		process.env.FAKE_CLAUDE_ARGV_FILE = argvFile;
+
+		const { result } = await runTurn({
+			// read_file resolves to "ask": claude's interactive approval is not
+			// bridged, so the built-in Read is left out entirely...
+			rules: { read_file: "ask" },
+			bridge: teamBridge(),
+			configDir,
+		});
+
+		expect(result.ok).toBe(true);
+		const argv = JSON.parse(await readFile(argvFile, "utf8"));
+		const allowed = argv[argv.indexOf("--allowedTools") + 1].split(",");
+		const tools = argv[argv.indexOf("--tools") + 1].split(",");
+
+		expect(tools).not.toContain("Read");
+		expect(allowed).not.toContain("Read");
+		// ...but a team tool is still exposed, because the gateway — not claude —
+		// authorizes the call, so its allowed entry only routes to the shim.
+		expect(allowed).toContain("mcp__myagent-team__send_message");
+		expect(allowed).toContain("mcp__myagent-team__delegate");
+		// The team MCP config is still written for this turn.
+		expect(argv[argv.indexOf("--mcp-config") + 1]).toBe(
+			path.join(configDir, "team-mcp.json"),
+		);
+	});
+
 	it("carries a fake claude's MCP team calls through the turn's gateway", async () => {
 		const callsFile = path.join(workspace, "team-calls.json");
 		const resultsFile = path.join(workspace, "team-results.json");
