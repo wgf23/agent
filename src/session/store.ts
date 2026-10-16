@@ -27,7 +27,7 @@ const imagePartSchema = z.object({
 	data: z.string(),
 });
 
-const messageSchema = z.discriminatedUnion("role", [
+export const messageSchema = z.discriminatedUnion("role", [
 	z.object({ role: z.literal("system"), content: z.string() }),
 	z.object({
 		role: z.literal("user"),

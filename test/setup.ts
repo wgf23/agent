@@ -14,3 +14,9 @@ process.env.MY_AGENT_SKILLS_DIR = mkdtempSync(
 process.env.MY_AGENT_ROOMS_DIR = mkdtempSync(
 	path.join(tmpdir(), "my-agent-test-rooms-"),
 );
+
+// The bot ledger writes to the data root by default, so a test that builds a
+// Team without injecting a store must still land in a temp directory.
+process.env.MY_AGENT_BOTS_DIR = mkdtempSync(
+	path.join(tmpdir(), "my-agent-test-bots-"),
+);
