@@ -2,20 +2,29 @@ import { randomBytes } from "node:crypto";
 import { agentByCommand } from "../../shared/agents.js";
 import { runAgent } from "../agent/agent.js";
 import type { Authorize } from "../agent/authorize.js";
+import { estimateTokens } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/events.js";
 import { ChannelRegistry } from "../bot/channel.js";
+import type { Consolidate } from "../bot/consolidate.js";
+import {
+	assembleContext,
+	type ContextBudget,
+	type ThreadView,
+} from "../bot/context.js";
 import {
 	emptyDelta,
 	type MemoryDelta,
 	renderMemory,
 	replay,
 } from "../bot/record.js";
+import { retrieve } from "../bot/retrieve.js";
 import {
 	BOT_RECORD_VERSION,
 	type BotRecord,
 	type Turn,
 } from "../bot/schema.js";
 import { type BotStore, createBotStore } from "../bot/store.js";
+import { updateThreadSummary } from "../bot/thread-summary.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
@@ -41,6 +50,15 @@ import type {
 	RobUsage,
 	TeamPort,
 } from "./types.js";
+
+// Every turn renders the system prompt (L0) and the assembled message layers.
+// L1 keeps the thread's recent window, L2 its rolling summary, L3 retrieved
+// fragments; the remainder is L0. A turn's assembled messages stay at or below
+// this total.
+export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
+	totalTokens: 100_000,
+	quotas: { l1: 40_000, l2: 20_000, l3: 20_000 },
+};
 
 export interface AuthorizerInput {
 	name: RobName;
@@ -69,6 +87,12 @@ export interface RobOptions {
 	store?: BotStore;
 	channels?: ChannelRegistry;
 	clock?: () => number;
+	// L1/L2/L3 ceilings for the assembled context; defaults to
+	// DEFAULT_CONTEXT_BUDGET.
+	contextBudget?: ContextBudget;
+	// The post-turn consolidation sidecar, built from consolidate({ provider,
+	// model, clock }). Omitted means the turn runs with no consolidation.
+	consolidate?: Consolidate;
 }
 
 export class Rob {
@@ -88,6 +112,8 @@ export class Rob {
 	private readonly store: BotStore;
 	private readonly channels: ChannelRegistry;
 	private readonly clock: () => number;
+	private readonly contextBudget: ContextBudget;
+	private readonly consolidate?: Consolidate;
 
 	// The memory tools capture this.delta by reference, so reset it in place.
 	private readonly delta: MemoryDelta = emptyDelta();
@@ -114,6 +140,8 @@ export class Rob {
 			options.channels ??
 			new ChannelRegistry({ clock: options.clock ?? Date.now });
 		this.clock = options.clock ?? Date.now;
+		this.contextBudget = options.contextBudget ?? DEFAULT_CONTEXT_BUDGET;
+		this.consolidate = options.consolidate;
 		this.authorize = options.authorizerFactory({
 			name: options.name,
 			rules: options.rules,
@@ -284,19 +312,58 @@ export class Rob {
 		this.delta.upsert.length = 0;
 		this.delta.drop.length = 0;
 
+		const thread: ThreadView = {
+			id: this.channelId,
+			summary: record.threads?.[this.channelId]?.summary ?? "",
+		};
+
+		// Roll the thread's summary forward before the turn, so the summary and
+		// the turn land in one atomic commit. The keep window is the L1 quota:
+		// the summary takes over exactly what the recent window drops.
+		const replayed = replay(record.turns, this.workspaceRoot, thread.id);
+		if (estimateTokens(replayed) > this.contextBudget.quotas.l1) {
+			const updated = await updateThreadSummary({
+				provider: this.provider,
+				model: this.model,
+				clock: this.clock,
+			})({
+				threadId: thread.id,
+				previous: record.threads?.[thread.id],
+				messages: replayed,
+				keepTokens: this.contextBudget.quotas.l1,
+			});
+			thread.summary = updated.summary;
+			record.threads = { ...(record.threads ?? {}), [thread.id]: updated };
+		}
+
+		// The model sees the assembled, bounded context, not the raw transcript.
+		// Every backend re-appends the inbound as the current turn, so the
+		// history handed over is the assembly without its trailing L4 layer.
+		const assembled = assembleContext({
+			record,
+			thread,
+			inbound: batch,
+			workspaceRoot: this.workspaceRoot,
+			budget: this.contextBudget,
+			retrieve,
+		}).messages;
+		const history = assembled.slice(0, assembled.length - batch.length);
+		const baseline = history.filter(
+			(message) => message.role !== "system",
+		).length;
+
 		const bridge = await this.team.beginTurn(this.name, {
 			signal,
 			workspaceRoot: this.workspaceRoot,
 			authorize: this.authorize,
 			runSubagent: (task, subSignal) => this.runSubagent(task, subSignal),
 		});
-		const before = this.history.length;
 		let result: Awaited<ReturnType<RobBackend["run"]>> | undefined;
 		let thrown: unknown;
 
 		try {
 			result = await this.backend.run({
-				history: this.history,
+				history,
 				inbound: batch,
 				workspaceRoot: this.workspaceRoot,
 				rules: this.rules,
@@ -308,19 +375,22 @@ export class Rob {
 			thrown = error;
 		} finally {
 			// An abort, a max-steps stop, or a thrown event sink still records
-			// whatever the turn produced, exactly once.
+			// whatever the turn produced, exactly once. The produced messages
+			// begin after the context handed to the backend.
 			const produced =
 				result === undefined
-					? this.history
-					: result.messages.filter((message) => message.role !== "system");
+					? []
+					: result.messages
+							.filter((message) => message.role !== "system")
+							.slice(baseline);
 			const turn: Turn = {
 				id: `trn_${randomBytes(8).toString("hex")}`,
 				seq: record.seq + 1,
-				sessionId: this.channelId,
+				sessionId: thread.id,
 				workspaceRoot: this.workspaceRoot,
 				at: this.clock(),
 				wake: first.kind,
-				messages: produced.slice(before),
+				messages: produced,
 			};
 			this.stampMemorySource(turn);
 			if (thrown !== undefined) {
@@ -328,14 +398,47 @@ export class Rob {
 			}
 			const committed = await this.store.commit(record, turn, this.delta);
 			if (!committed.ok) this.team.emitNotice(this.name, committed.error);
-			this.history = produced;
+			this.history = [...this.history, ...produced];
 			// Close last: a room turn resolves when the bridge closes, so the
 			// ledger write that belongs to this turn lands before the room
 			// considers the turn settled.
 			bridge.close();
+			// The sidecar is enqueued after the turn is durable and never
+			// awaited, so reflection can neither delay nor fail the turn.
+			this.enqueueConsolidation(turn, thread);
 		}
 
 		if (thrown !== undefined) throw thrown;
+	}
+
+	private enqueueConsolidation(turn: Turn, thread: ThreadView): void {
+		const sidecar = this.consolidate;
+		if (sidecar === undefined) return;
+		void sidecar(turn, thread)
+			.then(async (result) => {
+				const text = result.threadSummary.trim();
+				const nextThread =
+					text !== "" && text !== thread.summary
+						? {
+								id: thread.id,
+								summary: { summary: text, summaryAt: turn.at },
+							}
+						: undefined;
+				if (
+					result.delta.upsert.length === 0 &&
+					result.delta.drop.length === 0 &&
+					nextThread === undefined
+				) {
+					return;
+				}
+				const saved = await this.store.saveMemory(
+					this.name,
+					result.delta,
+					nextThread,
+				);
+				if (!saved.ok) this.team.emitNotice(this.name, saved.error);
+			})
+			.catch((error) => this.team.emitNotice(this.name, errorMessage(error)));
 	}
 
 	// A load failure must not end the run loop: report it and carry on with an

@@ -17,6 +17,7 @@ import {
 	type MemoryEntry,
 	memoryEntrySchema,
 	migrateRecord,
+	type ThreadSummary,
 	type Turn,
 } from "./schema.js";
 
@@ -54,8 +55,14 @@ export interface BotStore {
 		delta?: MemoryDelta,
 	): Promise<CommitBotResult>;
 	// A memory-only edit outside a turn. Unlike commit, an absent record is an
-	// error: there is nothing to edit and no turn to lend it identity.
-	saveMemory(bot: string, delta: MemoryDelta): Promise<SaveMemoryResult>;
+	// error: there is nothing to edit and no turn to lend it identity. An
+	// optional thread summary rides the same atomic write, so the consolidation
+	// sidecar's memory and thread products land together.
+	saveMemory(
+		bot: string,
+		delta: MemoryDelta,
+		thread?: { id: string; summary: ThreadSummary },
+	): Promise<SaveMemoryResult>;
 	memory(bot: string): Promise<MemoryEntry[]>;
 	// Deletes the bot's durable record. A missing file is a no-op.
 	remove(bot: string): Promise<void>;
@@ -196,6 +203,7 @@ export function createBotStore(
 	async function saveMemory(
 		bot: string,
 		delta: MemoryDelta,
+		thread?: { id: string; summary: ThreadSummary },
 	): Promise<SaveMemoryResult> {
 		return enqueue(bot, async () => {
 			const filePath = botPath(bot);
@@ -209,6 +217,14 @@ export function createBotStore(
 				...existing.record,
 				updatedAt: clock(),
 				memory: normalizeMemory(applied.memory),
+				...(thread === undefined
+					? {}
+					: {
+							threads: {
+								...existing.record.threads,
+								[thread.id]: thread.summary,
+							},
+						}),
 			};
 			try {
 				await writeJsonAtomic(filePath, next);
