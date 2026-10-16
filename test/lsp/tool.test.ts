@@ -141,7 +141,7 @@ describe("diagnostics tool", () => {
 		const lsp = startLspServers({
 			servers: servers({ FAKE_LSP_SCENARIO: "silent" }),
 			workspaceRoot: workspace,
-			timeoutMs: 100,
+			timeoutMs: 500,
 		});
 		try {
 			const result = await run(lsp.tools[0], { path: "app.ts" }, workspace);

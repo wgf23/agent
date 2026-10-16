@@ -20,6 +20,7 @@ import type {
 import { DEFAULT_PORT } from "../../shared/protocol.js";
 import { verifyApiKey } from "../cli/setup.js";
 import { childProviderEnv, resolveConfig } from "../config/resolve.js";
+import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
@@ -105,6 +106,11 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const lsp = startLspServers({
+		servers: resolved.config.lspServers,
+		workspaceRoot,
+	});
+
 	const plugins = await loadPlugins(resolved.config.plugins, workspaceRoot);
 	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
 
@@ -120,7 +126,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			return runtime.current().settings;
 		},
 		permissions,
-		extraTools: [...mcp.tools, ...plugins.tools],
+		extraTools: [...mcp.tools, ...lsp.tools, ...plugins.tools],
 		compaction: resolved.config.compaction,
 		hooks: resolved.config.hooks,
 		extraInstructions: plugins.extraInstructions || undefined,
@@ -134,8 +140,10 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	const latest = await latestSession(workspaceRoot);
 	const session = latest ?? newSession(workspaceRoot, settings.model);
 	const workspace = new SoloHub(hubOptions, { session, sessions: summaries });
+	// Robs keep the MCP and plugin tools; diagnostics stays on the workspace chat.
 	const robHub = new TeamHub({
 		...hubOptions,
+		extraTools: [...mcp.tools, ...plugins.tools],
 		robs,
 		rooms: resolved.config.rooms,
 		providerEnv: runtime.current().providerEnv,
@@ -172,6 +180,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		);
 		await hub.dispose();
 		await mcp.dispose();
+		await lsp.dispose();
 		await plugins.dispose();
 		process.exitCode = 1;
 		return;
@@ -188,6 +197,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		void (async () => {
 			await hub.dispose().catch(() => undefined);
 			await mcp.dispose().catch(() => undefined);
+			await lsp.dispose().catch(() => undefined);
 			await plugins.dispose().catch(() => undefined);
 			app.server.closeAllConnections?.();
 			await app.close().catch(() => undefined);

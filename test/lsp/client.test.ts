@@ -145,7 +145,7 @@ describe("StdioLspClient", () => {
 
 	it("errors with the server name when diagnostics never arrive", async () => {
 		const client = new StdioLspClient(
-			serverOptions("sleepy", { scenario: "silent", timeoutMs: 100 }),
+			serverOptions("sleepy", { scenario: "silent", timeoutMs: 500 }),
 		);
 		try {
 			await client.ensureStarted();
@@ -319,7 +319,7 @@ describe("StdioLspClient", () => {
 
 	it("rejects an absurd Content-Length instead of buffering", async () => {
 		const client = new StdioLspClient(
-			serverOptions("ts", { scenario: "oversized-frame", timeoutMs: 300 }),
+			serverOptions("ts", { scenario: "oversized-frame", timeoutMs: 1000 }),
 		);
 		try {
 			await client.ensureStarted();

@@ -4,6 +4,7 @@ import { runAgent } from "../agent/agent.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { createSubagentRunner } from "../agent/subagent.js";
 import { missingApiKeyMessage, resolveConfig } from "../config/resolve.js";
+import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import {
@@ -123,6 +124,11 @@ export async function runHeadless(
 	});
 	for (const line of mcpStderrLines(mcp)) process.stderr.write(`${line}\n`);
 
+	const lsp = startLspServers({
+		servers: resolved.config.lspServers,
+		workspaceRoot,
+	});
+
 	const plugins = await loadPlugins(resolved.config.plugins, workspaceRoot);
 	for (const line of plugins.errors) process.stderr.write(`${line}\n`);
 
@@ -170,7 +176,7 @@ export async function runHeadless(
 			signal: controller.signal,
 			authorize,
 			compaction: resolved.config.compaction,
-			extraTools: [...mcp.tools, ...plugins.tools, taskTool],
+			extraTools: [...mcp.tools, ...lsp.tools, ...plugins.tools, taskTool],
 			hooks: resolved.config.hooks,
 			extraInstructions: plugins.extraInstructions || undefined,
 			// No lastInputTokens: the stored session usage is cumulative across
@@ -229,6 +235,7 @@ export async function runHeadless(
 	} finally {
 		process.off("SIGINT", onSigint);
 		await mcp.dispose();
+		await lsp.dispose();
 		await plugins.dispose();
 	}
 }
