@@ -12,10 +12,18 @@ import NewRoomDialog from "./components/NewRoomDialog";
 import PermissionModal from "./components/PermissionModal";
 import RoomView from "./components/RoomView";
 import SettingsDialog from "./components/SettingsDialog";
-import Sidebar, { type View } from "./components/Sidebar";
+import Sidebar from "./components/Sidebar";
 import SubagentFeed from "./components/SubagentFeed";
 import WakeEditor from "./components/WakeEditor";
-import { isLivePhase, robBots, workspaceBot } from "./state";
+import {
+	defaultView,
+	partitionBots,
+	REGIONS,
+	type Region,
+	resolveSelection,
+	type View,
+} from "./regions";
+import { isLivePhase } from "./state";
 import { applyTheme, readTheme, saveTheme, type Theme } from "./theme";
 import { useHub } from "./useHub";
 
@@ -33,6 +41,8 @@ export default function App() {
 	const { state } = hub;
 
 	const [view, setView] = useState<View>("chat");
+	// The top-level area. Client-only: assistant conversation vs everything bot.
+	const [region, setRegion] = useState<Region>("assistant");
 	// One id names the open conversation, bot or room. Room and rob names can
 	// never collide: creating either checks the other.
 	const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -53,24 +63,25 @@ export default function App() {
 	};
 
 	const bots = state.bots;
-	const workspace = workspaceBot(bots);
-	const robs = robBots(bots);
+	// The assistant and the bot roster come from one split of state.bots, so the
+	// two areas can never drift apart (AC-2).
+	const { assistant: workspace, bots: robs } = partitionBots(bots);
 	const rooms = Object.values(state.rooms);
 	// The feed is global: each line is prefixed with its parent, so one page can
 	// show every bot's sub-agent activity the way the TUI shows one bot's.
 	const subagents = Object.values(state.subagents).flat();
 
-	const currentRoom = selectedId !== null ? state.rooms[selectedId] : undefined;
-	const currentBot =
-		currentRoom !== undefined
-			? null
-			: (bots.find((bot) => bot.name === selectedId) ??
-				workspace ??
-				bots[0] ??
-				null);
-	const botName = currentBot?.name ?? null;
+	const { bot: currentBot, room: currentRoom } = resolveSelection({
+		region,
+		selectedId,
+		bots,
+		rooms: state.rooms,
+	});
 	const selectedRob =
-		botName === null ? undefined : robs.find((rob) => rob.name === botName);
+		currentBot === null
+			? undefined
+			: robs.find((rob) => rob.name === currentBot.name);
+	const botName = currentBot?.name ?? null;
 
 	// The allow-all scope the composer shows. "session" applies only to the
 	// session it was set for, so on any other session it reads as off.
@@ -86,13 +97,16 @@ export default function App() {
 			? "off"
 			: state.allowAll.mode;
 
-	// Keep the selection valid as the bot roster and rooms (re)load.
+	// Keep the selection valid as the bot roster and rooms (re)load. Depends on
+	// the raw roster (stable) rather than the filtered lists, which are fresh
+	// arrays every render.
 	useEffect(() => {
 		const known =
 			selectedId !== null &&
-			(bots.some((bot) => bot.name === selectedId) ||
+			(robs.some((rob) => rob.name === selectedId) ||
+				workspace?.name === selectedId ||
 				state.rooms[selectedId] !== undefined);
-		if (!known) setSelectedId(workspace?.name ?? bots[0]?.name ?? null);
+		if (!known) setSelectedId(workspace?.name ?? robs[0]?.name ?? null);
 	}, [bots, selectedId, state.rooms, workspace?.name]);
 
 	const messages = botName !== null ? (state.transcripts[botName] ?? []) : [];
@@ -125,12 +139,18 @@ export default function App() {
 
 	// Selecting a bot loads its transcript and memory in one place, so the
 	// sidebar's session list and the memory panel fill without a second click.
+	// This is explicit navigation, so it also moves to the matching area.
 	const openConversation = (name: string) => {
 		setSelectedId(name);
 		setView("chat");
 		if (robs.some((rob) => rob.name === name)) {
+			setRegion("bots");
 			hub.selectBot(name);
 			setTab("chat");
+		} else if (workspace?.name === name) {
+			setRegion("assistant");
+		} else if (state.rooms[name] !== undefined) {
+			setRegion("bots");
 		}
 	};
 
@@ -144,6 +164,7 @@ export default function App() {
 	return (
 		<div className="app">
 			<Sidebar
+				region={region}
 				view={view}
 				onViewChange={setView}
 				workspace={workspace ?? null}
@@ -185,14 +206,32 @@ export default function App() {
 					</div>
 				)}
 
-				{view === "agents" ? (
+				<div className="region-tabs" role="tablist" aria-label="区域">
+					{REGIONS.map((entry) => (
+						<button
+							key={entry.id}
+							type="button"
+							role="tab"
+							aria-selected={region === entry.id}
+							className={`region-tab ${region === entry.id ? "active" : ""}`}
+							onClick={() => {
+								setRegion(entry.id);
+								setView(defaultView(entry.id));
+							}}
+						>
+							{entry.label}
+						</button>
+					))}
+				</div>
+
+				{region === "bots" && view === "agents" ? (
 					<AgentsPanel
 						agents={state.agents}
 						jobs={state.agentJobs}
 						onInstall={hub.installAgent}
 						onCancel={hub.cancelInstall}
 					/>
-				) : view === "plaza" ? (
+				) : region === "bots" && view === "plaza" ? (
 					<BotPlaza
 						bots={robs}
 						botStates={state.botStates}
@@ -201,9 +240,9 @@ export default function App() {
 						onOpenBot={openConversation}
 						onCreateBot={openCreateBot}
 					/>
-				) : view === "subagents" ? (
+				) : region === "bots" && view === "subagents" ? (
 					<SubagentFeed entries={subagents} />
-				) : currentRoom !== undefined ? (
+				) : region === "bots" && currentRoom !== null ? (
 					<RoomView
 						key={currentRoom.name}
 						room={currentRoom}
@@ -218,7 +257,9 @@ export default function App() {
 							{state.connection === "connecting"
 								? "正在连接…"
 								: configured
-									? "没有可用的 Bot"
+									? region === "assistant"
+										? "还没有可用的助手"
+										: "没有可用的 Bot"
 									: "还没有配置模型"}
 						</p>
 						{!configured && state.connection !== "connecting" && (
