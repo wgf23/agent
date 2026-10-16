@@ -21,6 +21,7 @@ import type {
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
 import type { ImagePart, Message, Provider } from "../providers/types.js";
 import type { Tool } from "../tools/types.js";
+import { webTools } from "../tools/web.js";
 import { errorMessage } from "../util/errors.js";
 import { ApprovalQueue } from "./approvals.js";
 import { writeRoomDeliverable } from "./deliverable.js";
@@ -782,15 +783,19 @@ export class Team implements TeamPort {
 			from: session.rob,
 			runSubagent: host.runSubagent,
 		});
+		// The bridge's tool list is the one place all four backends consume, so
+		// the host-side web tools (which need the host's network egress) mount
+		// here and reach native/pi/opencode/claude alike.
 		const tools =
 			room === undefined
-				? teamTools(operations)
+				? [...teamTools(operations), ...webTools()]
 				: [
 						...teamTools(operations),
 						...roomTools({
 							room,
 							reply: (text) => this.replyToRoom(room, session.rob, text),
 						}),
+						...webTools(),
 					];
 		let closed = false;
 

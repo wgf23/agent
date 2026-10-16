@@ -521,7 +521,7 @@ describe("cli backend", () => {
 
 		const argv = JSON.parse(await readFile(argvFile, "utf8"));
 		expect(argv[argv.indexOf("--tools") + 1]).toBe(
-			"read,write,edit,bash,send_message,delegate",
+			"read,write,edit,bash,send_message,delegate,web_fetch,web_search",
 		);
 		expect(argv[argv.indexOf("--append-system-prompt") + 1]).toContain(
 			'- "worker": work',
