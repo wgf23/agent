@@ -1,34 +1,12 @@
 import DOMPurify from "dompurify";
-import hljs from "highlight.js/lib/common";
 import { Marked } from "marked";
 import { useEffect, useMemo, useRef } from "react";
 import { copyText } from "../clipboard";
+import { escapeHtml, highlight } from "../highlight";
 
 interface Props {
 	text: string;
 	streaming?: boolean;
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;");
-}
-
-// highlight.js escapes its input, so its output is safe to inject; unknown or
-// absent languages fall back to auto-detection, then to plain escaped text.
-function highlight(text: string, lang: string): string {
-	try {
-		if (lang !== "" && hljs.getLanguage(lang) !== undefined) {
-			return hljs.highlight(text, { language: lang, ignoreIllegals: true })
-				.value;
-		}
-		return hljs.highlightAuto(text).value;
-	} catch {
-		return escapeHtml(text);
-	}
 }
 
 const marked = new Marked({

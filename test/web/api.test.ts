@@ -285,6 +285,13 @@ const invocations: Array<{
 		body: undefined,
 	},
 	{
+		name: "filePreview",
+		run: (api) => api.filePreview("docs/a b.xlsx"),
+		path: "/api/files/preview?path=docs%2Fa%20b.xlsx",
+		method: "GET",
+		body: undefined,
+	},
+	{
 		name: "mkdir",
 		run: (api) => api.mkdir("src/new"),
 		path: "/api/files/mkdir",
@@ -327,6 +334,24 @@ describe("fileArchiveUrl", () => {
 		expect(createApi().fileArchiveUrl("docs/my dir")).toBe(
 			"/api/files/archive?path=docs%2Fmy%20dir",
 		);
+	});
+});
+
+describe("filePreview", () => {
+	it("reads the office preview from the literal route", async () => {
+		const calls: Call[] = [];
+		const preview = { kind: "doc" as const, blocks: [], truncated: false };
+		const api = createApi({
+			fetchImpl: recordingFetch(calls, { path: "a.docx", preview }),
+		});
+		await expect(api.filePreview("a.docx")).resolves.toEqual(preview);
+		expect(calls).toEqual([
+			{
+				path: "/api/files/preview?path=a.docx",
+				method: "GET",
+				body: undefined,
+			},
+		]);
 	});
 });
 

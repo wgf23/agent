@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { rename, stat, unlink } from "node:fs/promises";
+import { readFile, rename, stat, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { type Readable, Transform } from "node:stream";
@@ -72,6 +72,7 @@ import {
 } from "./files.js";
 import type { Hub, HubOptions } from "./hub.js";
 import { MAX_SEND_BODY_BYTES, parseImages } from "./images.js";
+import { officeKindOf, previewOffice } from "./office.js";
 import { openBrowser } from "./open-browser.js";
 import {
 	buildProvider,
@@ -81,6 +82,7 @@ import {
 import { SettingsService } from "./settings.js";
 import { SoloHub } from "./solo.js";
 import { TeamHub, toRoomInfo, UnknownMemoryEntryError } from "./team.js";
+import { ZipReadError } from "./unzip.js";
 import { createZipStream } from "./zip.js";
 
 export interface RunServeOptions {
@@ -308,6 +310,11 @@ const UPLOAD_FILES_LIMIT = 20;
 const UPLOAD_FIELDS_LIMIT = 10;
 const MAX_UPLOAD_BODY_BYTES = MAX_UPLOAD_FILE_BYTES + 1024 * 1024;
 
+// The office preview unpacks a zip in memory, so the whole container is capped
+// below the upload limit; a larger document is a 413 and the UI offers the
+// download instead.
+export const MAX_PREVIEW_FILE_BYTES = 25 * 1024 * 1024;
+
 // A test seam: tightening a limit lets a test drive a 413 without posting a
 // real 100 MiB body. Production leaves every field at its default.
 export interface UploadLimits {
@@ -525,6 +532,52 @@ export async function buildServer(
 		reply.header("Content-Length", String(located.size));
 		reply.header("Content-Disposition", `attachment; filename="${filename}"`);
 		return reply.send(createReadStream(located.path));
+	});
+
+	// Extracts a text-and-grid preview from one OOXML office file. The path is
+	// resolved inside the active root, so an escape is a 400 and a missing path
+	// a 404; a directory or a non-office name is a 400. The container is read
+	// whole only after its size is checked, and the extraction caps every part,
+	// sheet, row, and column, so a hostile document cannot exhaust the server.
+	app.get("/api/files/preview", async (request, reply) => {
+		const query = request.query as { path?: unknown };
+		const relPath = typeof query.path === "string" ? query.path : "";
+		let located: PathStat;
+		try {
+			located = await statPath(hub.hello().workspaceRoot, relPath);
+		} catch (error) {
+			if (error instanceof PathEscapeError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
+		}
+		if (located.kind === "missing") {
+			return reply.code(404).send({ error: `No such file: ${relPath}` });
+		}
+		if (located.kind === "directory") {
+			return reply.code(400).send({ error: "directories cannot be previewed" });
+		}
+		const kind = officeKindOf(path.basename(located.path));
+		if (kind === null) {
+			return reply.code(400).send({ error: "unsupported preview format" });
+		}
+		if (located.size > MAX_PREVIEW_FILE_BYTES) {
+			return reply
+				.code(413)
+				.send({ error: "file exceeds the preview size limit" });
+		}
+		try {
+			const buffer = await readFile(located.path);
+			return reply.send({
+				path: relPath,
+				preview: previewOffice(kind, buffer),
+			});
+		} catch (error) {
+			if (error instanceof ZipReadError) {
+				return reply.code(400).send({ error: errorText(error) });
+			}
+			return reply.code(500).send({ error: errorText(error) });
+		}
 	});
 
 	// Streams a whole workspace directory as a zip download. The path is resolved
