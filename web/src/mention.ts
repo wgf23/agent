@@ -9,11 +9,13 @@
 import type { BotState } from "./protocol";
 import { STATUS_LABEL } from "./status";
 
-/** B: the backend's mention token, identical to src/rob/room-text.ts:32. */
+/**
+ * B: the backend's mention token, identical to src/rob/room-text.ts:32. Exported
+ * as source, not as a /g regex: a shared stateful instance is a footgun, since
+ * `matchAll` copies its `lastIndex` and an outside `.test()`/`.exec()` would
+ * silently shift the scan.
+ */
 export const MENTION_RE_SOURCE = "@([a-z][a-z0-9-]*)";
-export const MENTION_RE = new RegExp(MENTION_RE_SOURCE, "g");
-/** Q: the caret query token, case insensitive, for trigger/anchor/span. */
-export const QUERY_TOKEN_RE = /@[A-Za-z][A-Za-z0-9-]*/;
 const QUERY_TAIL_RE = /^[A-Za-z][A-Za-z0-9-]*$/;
 
 export interface MentionQuery {
@@ -125,7 +127,7 @@ export function insertMention(
 	const query = mentionQuery(text, caret);
 	if (query === null) return { text, caret };
 	const end = tokenEnd(text, caret);
-	const next = text.slice(0, query.anchor) + `@${name} ` + text.slice(end);
+	const next = `${text.slice(0, query.anchor)}@${name} ${text.slice(end)}`;
 	return { text: next, caret: query.anchor + name.length + 2 };
 }
 
@@ -176,4 +178,14 @@ export function mentionKeydown(input: {
 export function moveIndex(index: number, count: number, delta: 1 | -1): number {
 	if (count <= 0) return 0;
 	return (index + delta + count) % count;
+}
+
+/**
+ * Keeps the highlight inside the live list, so a candidate set that shrank off
+ * an onChange path (say a members event) can never leave Enter pointing at a
+ * missing row.
+ */
+export function clampIndex(index: number, count: number): number {
+	if (count <= 0) return 0;
+	return Math.min(Math.max(index, 0), count - 1);
 }

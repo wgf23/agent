@@ -5,8 +5,9 @@
 // AC-5/AC-11 stay in test/rob/room-text.test.ts (backend truth, not rewritten).
 import { describe, expect, it } from "vitest";
 import {
+	clampIndex,
 	insertMention,
-	MENTION_RE,
+	MENTION_RE_SOURCE,
 	mentionedNames,
 	mentionKeydown,
 	mentionQuery,
@@ -104,15 +105,12 @@ describe("mentionedNames (B rule: already-@ set, FR-2.7)", () => {
 
 	it("resists a polluted shared /g lastIndex (regression)", () => {
 		// `String.prototype.matchAll` copies the regex's `lastIndex` as its start
-		// offset. If a *shared* module-level /g regex is left non-zero by an
-		// earlier `.test()`/`.exec()`, `mentionedNames` silently skips matches
-		// before that offset. Pollute it on purpose, then require a full scan.
-		try {
-			MENTION_RE.lastIndex = 5;
-			expect(mentionedNames("@dev @worker")).toEqual(["dev", "worker"]);
-		} finally {
-			MENTION_RE.lastIndex = 0;
-		}
+		// offset. `mentionedNames` must not depend on any shared stateful regex, so
+		// a same-source /g instance left non-zero by an outside `.test()`/`.exec()`
+		// cannot make it skip the leading mention.
+		const polluted = new RegExp(MENTION_RE_SOURCE, "g");
+		polluted.lastIndex = 5;
+		expect(mentionedNames("@dev @worker")).toEqual(["dev", "worker"]);
 	});
 });
 
@@ -387,5 +385,23 @@ describe("mentionKeydown / moveIndex (AC-4 / AC-6)", () => {
 		expect(moveIndex(2, 3, 1)).toBe(0);
 		expect(moveIndex(0, 3, -1)).toBe(2);
 		expect(moveIndex(0, 0, 1)).toBe(0);
+	});
+});
+
+describe("clampIndex (AC-3: the highlight never outruns the list)", () => {
+	it("pulls a too-large index back to the last row", () => {
+		// `@` -> [dev,worker,all], ArrowDown x2 -> index 2; typing `d` shrinks the
+		// list to [dev,all], so the stale 2 must fall back to 2 -> 1, not vanish.
+		expect(clampIndex(5, 3)).toBe(2);
+		expect(clampIndex(2, 2)).toBe(1);
+	});
+
+	it("pulls a negative index up to the first row", () => {
+		expect(clampIndex(-1, 3)).toBe(0);
+	});
+
+	it("is safe on an empty list", () => {
+		expect(clampIndex(2, 0)).toBe(0);
+		expect(clampIndex(0, 0)).toBe(0);
 	});
 });

@@ -6,6 +6,7 @@ import {
 	useState,
 } from "react";
 import {
+	clampIndex,
 	insertMention,
 	type MentionState,
 	mentionKeydown,
@@ -63,14 +64,18 @@ export default function RoomView({
 	const running = room.run.phase === "running";
 	const canSend = configured && value.trim() !== "";
 	const open = mention !== null && mention.candidates.length > 0 && !dismissed;
+	// The highlight is clamped to the live list, so a shrinking candidate set can
+	// never leave Enter selecting a missing row.
+	const count = mention?.candidates.length ?? 0;
+	const activeIndex = clampIndex(index, count);
 
 	// Recompute the menu from the live text and caret. The caret comes from the
 	// element, not state: a controlled textarea reports it reliably on change
-	// and on selection, which is what makes insert-at-caret work.
+	// and on selection, which is what makes insert-at-caret work. It leaves the
+	// highlight alone: moving the caret must not reset which candidate is active.
 	const recomputeMention = (el: HTMLTextAreaElement) => {
 		const caret = el.selectionStart ?? el.value.length;
 		setMention(mentionState({ text: el.value, caret, members: room.members }));
-		setIndex(0);
 	};
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: new entries must re-run the scroll
@@ -146,7 +151,7 @@ export default function RoomView({
 		});
 		if (action === "select") {
 			event.preventDefault();
-			const choice = mention?.candidates[index];
+			const choice = mention?.candidates[activeIndex];
 			if (choice !== undefined) choose(choice.name);
 			return;
 		}
@@ -164,7 +169,6 @@ export default function RoomView({
 		if (event.nativeEvent.isComposing) return;
 		if (open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
 			event.preventDefault();
-			const count = mention?.candidates.length ?? 0;
 			setIndex((current) =>
 				moveIndex(current, count, event.key === "ArrowDown" ? 1 : -1),
 			);
@@ -259,13 +263,15 @@ export default function RoomView({
 							aria-label="选择要 @ 的成员"
 						>
 							{mention.candidates.map((candidate, position) => (
-								<button
+								// A div, not a button: a native button inside role="listbox"
+								// would fight the option role the listbox expects.
+								<div
 									key={candidate.name}
-									type="button"
 									role="option"
-									aria-selected={position === index}
+									tabIndex={-1}
+									aria-selected={position === activeIndex}
 									className={`mention-item ${
-										position === index ? "active" : ""
+										position === activeIndex ? "active" : ""
 									}`}
 									onMouseDown={(event) => {
 										// Fires before blur, so the caret is still valid.
@@ -274,7 +280,7 @@ export default function RoomView({
 									}}
 								>
 									{candidate.label}
-								</button>
+								</div>
 							))}
 						</div>
 					)}
@@ -294,13 +300,19 @@ export default function RoomView({
 								return;
 							}
 							recomputeMention(event.target);
+							// The candidate list changed, so the highlight starts over.
+							setIndex(0);
 						}}
 						onSelect={(event) => recomputeMention(event.currentTarget)}
 						onKeyUp={(event) => {
+							// Arrow navigation only moves the highlight; recomputing would
+							// be wasted work (it no longer resets the index either way).
+							if (event.key === "ArrowDown" || event.key === "ArrowUp") return;
 							if (!event.nativeEvent.isComposing) {
 								recomputeMention(event.currentTarget);
 							}
 						}}
+						onBlur={() => setDismissed(true)}
 						onKeyDown={handleKeyDown}
 						rows={1}
 						placeholder={placeholder}
