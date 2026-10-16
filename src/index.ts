@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 import { DEFAULT_PORT } from "../shared/protocol.js";
+import { runAgentsInstall, runAgentsList } from "./cli/agents.js";
 import { runConfigCommand } from "./cli/config.js";
 import { runInitCommand } from "./cli/init.js";
 import { type OutputFormat, runHeadless } from "./cli/run.js";
@@ -283,6 +284,29 @@ skill
 	.argument("<name>", "skill name")
 	.action(async (name: string) => {
 		process.exitCode = await runSkillRemove(name);
+	});
+
+const agents = program
+	.command("agents")
+	.description("Install and list external agent CLIs")
+	.action(async () => {
+		process.exitCode = await runAgentsList();
+	});
+
+agents
+	.command("list")
+	.description("List the recognized agent CLIs and whether they are installed")
+	.action(async () => {
+		process.exitCode = await runAgentsList();
+	});
+
+agents
+	.command("install")
+	.description("Install an external agent CLI from npm")
+	.argument("<id>", "agent id (pi, opencode, claude, codex, or gemini)")
+	.option("--yes", "skip the confirmation prompt")
+	.action(async (id: string, options: { yes?: boolean }) => {
+		process.exitCode = await runAgentsInstall(id, { yes: options.yes });
 	});
 
 await program.parseAsync(process.argv);
