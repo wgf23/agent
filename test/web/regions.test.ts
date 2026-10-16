@@ -19,6 +19,7 @@ function bot(name: string, kind: BotInfo["kind"]): BotInfo {
 }
 
 const ASSISTANT = bot("assistant", "workspace");
+const ASSISTANT2 = bot("assistant2", "workspace");
 const DEV = bot("dev", "rob");
 const REV = bot("rev", "rob");
 const ROSTER: BotInfo[] = [ASSISTANT, DEV, REV];
@@ -57,6 +58,13 @@ describe("REGIONS / defaultView / resolveView (AC-1)", () => {
 			}
 		}
 	});
+
+	it("folds every non-chat view out of the assistant area", () => {
+		expect(resolveView("assistant", "chat")).toBe("chat");
+		expect(resolveView("assistant", "plaza")).toBe("chat");
+		expect(resolveView("assistant", "subagents")).toBe("chat");
+		expect(resolveView("assistant", "agents")).toBe("chat");
+	});
 });
 
 describe("partitionBots (AC-2: single source)", () => {
@@ -88,6 +96,27 @@ describe("partitionBots (AC-2: single source)", () => {
 
 	it("handles an empty roster without throwing", () => {
 		expect(partitionBots([])).toEqual({ assistant: null, bots: [] });
+	});
+
+	it("matches the state helpers it reuses across all three rosters (AC-2)", () => {
+		const rosters: BotInfo[][] = [[], [ASSISTANT], ROSTER];
+		for (const roster of rosters) {
+			const part = partitionBots(roster);
+			expect(part.assistant).toBe(workspaceBot(roster) ?? null);
+			expect(part.bots).toEqual(robBots(roster));
+		}
+	});
+
+	it("keeps only the first workspace bot when several appear", () => {
+		const part = partitionBots([ASSISTANT, ASSISTANT2, DEV, REV]);
+		expect(part.assistant).toBe(ASSISTANT);
+		expect(part.bots.map((b) => b.name)).toEqual(["dev", "rev"]);
+		expect(part.bots).not.toContain(ASSISTANT2);
+	});
+
+	it("preserves the server order of robs even when the roster is shuffled", () => {
+		const part = partitionBots([REV, ASSISTANT, DEV]);
+		expect(part.bots.map((b) => b.name)).toEqual(["rev", "dev"]);
 	});
 });
 
@@ -158,6 +187,55 @@ describe("resolveSelection (AC-2/AC-3)", () => {
 		expect(selection.bot).toBeNull();
 		expect(selection.room).toBeNull();
 	});
+
+	it("never leaks the assistant into the bots area for a stale assistant id", () => {
+		// App's selectedId defaults to workspace.name; switching assistant -> bots
+		// reuses it, so it must resolve to the first rob, never the assistant.
+		const selection = resolveSelection({
+			region: "bots",
+			selectedId: ASSISTANT.name,
+			bots: ROSTER,
+			rooms: {},
+		});
+		expect(selection.bot?.kind).not.toBe("workspace");
+		expect(selection.bot).toBe(DEV);
+		expect(selection.bot).not.toBe(ASSISTANT);
+		expect(selection.room).toBeNull();
+	});
+
+	it("assistant with no workspace in the roster yields nothing", () => {
+		const selection = resolveSelection({
+			region: "assistant",
+			selectedId: null,
+			bots: [DEV, REV],
+			rooms: {},
+		});
+		expect(selection.bot).toBeNull();
+		expect(selection.room).toBeNull();
+	});
+
+	it("bots with no robs and an unknown id yields nothing", () => {
+		const selection = resolveSelection({
+			region: "bots",
+			selectedId: "ghost",
+			bots: [ASSISTANT],
+			rooms: {},
+		});
+		expect(selection.bot).toBeNull();
+		expect(selection.room).toBeNull();
+	});
+
+	it("prefers a selected room over a rob that shares its name", () => {
+		const clash = { ...rooms, dev: room("dev") };
+		const selection = resolveSelection({
+			region: "bots",
+			selectedId: "dev",
+			bots: ROSTER,
+			rooms: clash,
+		});
+		expect(selection.room?.name).toBe("dev");
+		expect(selection.bot).toBeNull();
+	});
 });
 
 describe("visibleRooms (AC-3)", () => {
@@ -165,6 +243,7 @@ describe("visibleRooms (AC-3)", () => {
 
 	it("shows no rooms in the assistant area", () => {
 		expect(visibleRooms("assistant", rooms)).toEqual([]);
+		expect(visibleRooms("assistant", [])).toEqual([]);
 	});
 
 	it("shows every room, in order, in the bots area", () => {
@@ -172,5 +251,9 @@ describe("visibleRooms (AC-3)", () => {
 			"rnd",
 			"ops",
 		]);
+	});
+
+	it("has nothing to show when the bots area has no rooms", () => {
+		expect(visibleRooms("bots", [])).toEqual([]);
 	});
 });
