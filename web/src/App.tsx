@@ -10,6 +10,7 @@ import PermissionModal from "./components/PermissionModal";
 import RoomView from "./components/RoomView";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
+import SubagentFeed from "./components/SubagentFeed";
 import { isLivePhase, robBots, workspaceBot } from "./state";
 import { useHub } from "./useHub";
 
@@ -28,6 +29,9 @@ export default function App() {
 	const workspace = workspaceBot(bots);
 	const robs = robBots(bots);
 	const rooms = Object.values(state.rooms);
+	// The feed is global: each line is prefixed with its parent, so one page can
+	// show every bot's sub-agent activity the way the TUI shows one bot's.
+	const subagents = Object.values(state.subagents).flat();
 
 	const currentRoom = selectedId !== null ? state.rooms[selectedId] : undefined;
 	const currentBot =
@@ -145,6 +149,8 @@ export default function App() {
 						onOpenBot={openConversation}
 						onCreateBot={openCreateBot}
 					/>
+				) : view === "subagents" ? (
+					<SubagentFeed entries={subagents} />
 				) : currentRoom !== undefined ? (
 					<RoomView
 						key={currentRoom.name}

@@ -11,7 +11,7 @@ import { GearIcon, PlusIcon } from "./icons";
 import SearchPanel from "./SearchPanel";
 import SessionRow from "./SessionRow";
 
-export type View = "chat" | "plaza" | "agents";
+export type View = "chat" | "plaza" | "subagents" | "agents";
 
 interface Props {
 	view: View;
@@ -119,6 +119,13 @@ export default function Sidebar(props: Props) {
 				>
 					Bot 广场
 					{robs.length > 0 && <span className="nav-count">{robs.length}</span>}
+				</button>
+				<button
+					type="button"
+					className={`nav-item ${view === "subagents" ? "active" : ""}`}
+					onClick={() => onViewChange("subagents")}
+				>
+					子 Agent
 				</button>
 				<button
 					type="button"
