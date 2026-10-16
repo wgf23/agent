@@ -8,7 +8,7 @@ import type { ClientRoom, ConnectionStatus } from "../state";
 import { STATUS_LABEL } from "../status";
 import { GearIcon, PlusIcon } from "./icons";
 
-export type View = "chat" | "plaza";
+export type View = "chat" | "plaza" | "agents";
 
 interface Props {
 	view: View;
@@ -105,6 +105,13 @@ export default function Sidebar(props: Props) {
 				>
 					Bot 广场
 					{robs.length > 0 && <span className="nav-count">{robs.length}</span>}
+				</button>
+				<button
+					type="button"
+					className={`nav-item ${view === "agents" ? "active" : ""}`}
+					onClick={() => onViewChange("agents")}
+				>
+					Agents
 				</button>
 			</nav>
 

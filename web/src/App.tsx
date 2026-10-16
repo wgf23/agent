@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AgentsPanel from "./components/AgentsPanel";
 import BotHeader from "./components/BotHeader";
 import BotPlaza from "./components/BotPlaza";
 import Composer from "./components/Composer";
@@ -9,7 +10,7 @@ import PermissionModal from "./components/PermissionModal";
 import RoomView from "./components/RoomView";
 import SettingsDialog from "./components/SettingsDialog";
 import Sidebar, { type View } from "./components/Sidebar";
-import { robBots, workspaceBot } from "./state";
+import { isLivePhase, robBots, workspaceBot } from "./state";
 import { useHub } from "./useHub";
 
 export default function App() {
@@ -54,14 +55,37 @@ export default function App() {
 	const configured = state.provider?.configured !== false;
 
 	// Fetch presets (and a fresh provider view) once on load.
-	const { loadSettings } = hub;
+	const { loadSettings, loadAgents } = hub;
 	useEffect(() => {
 		loadSettings().catch(() => {});
 	}, [loadSettings]);
 
+	// Detection reads the machine, so only run it when the Agents view opens.
+	useEffect(() => {
+		if (view !== "agents") return;
+		loadAgents().catch(() => {});
+	}, [view, loadAgents]);
+
+	// Re-detect once a job settles so a finished install stops reading as missing.
+	const settledJobs = Object.values(state.agentJobs)
+		.filter((job) => !isLivePhase(job.phase))
+		.map((job) => job.id)
+		.join(",");
+	useEffect(() => {
+		if (settledJobs === "") return;
+		loadAgents().catch(() => {});
+	}, [settledJobs, loadAgents]);
+
 	const openConversation = (name: string) => {
 		setSelectedId(name);
 		setView("chat");
+	};
+
+	// The create dialog disables a backend whose CLI is missing and offers to
+	// install it, so it needs the detection the Agents view reads.
+	const openCreateBot = () => {
+		setDialogOpen(true);
+		loadAgents().catch(() => {});
 	};
 
 	return (
@@ -81,7 +105,7 @@ export default function App() {
 				onToggleAllowAll={hub.setAllowAll}
 				onNewSession={hub.newSession}
 				onOpenSession={hub.openSession}
-				onCreateBot={() => setDialogOpen(true)}
+				onCreateBot={openCreateBot}
 				onCreateRoom={() => setRoomDialogOpen(true)}
 				onOpenSettings={hub.openSettings}
 				usage={state.usage}
@@ -100,14 +124,21 @@ export default function App() {
 					</div>
 				)}
 
-				{view === "plaza" ? (
+				{view === "agents" ? (
+					<AgentsPanel
+						agents={state.agents}
+						jobs={state.agentJobs}
+						onInstall={hub.installAgent}
+						onCancel={hub.cancelInstall}
+					/>
+				) : view === "plaza" ? (
 					<BotPlaza
 						bots={robs}
 						botStates={state.botStates}
 						dms={state.dms}
 						notices={state.notices}
 						onOpenBot={openConversation}
-						onCreateBot={() => setDialogOpen(true)}
+						onCreateBot={openCreateBot}
 					/>
 				) : currentRoom !== undefined ? (
 					<RoomView
@@ -188,7 +219,9 @@ export default function App() {
 			{dialogOpen && (
 				<NewBotDialog
 					model={state.model}
+					agents={state.agents}
 					onCreateBot={hub.createBot}
+					onInstall={hub.installAgent}
 					onClose={() => setDialogOpen(false)}
 				/>
 			)}
