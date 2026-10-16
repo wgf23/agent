@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useReducer } from "react";
+import {
+	deleteSession as deleteSessionRequest,
+	renameSession as renameSessionRequest,
+	searchSessions,
+} from "./api";
 import type {
 	AgentListResponse,
 	ApprovalChoice,
@@ -8,7 +13,6 @@ import type {
 	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
-	SearchResponse,
 	SendBody,
 	ServerEvent,
 	SettingsResponse,
@@ -158,13 +162,13 @@ export function useHub(): Hub {
 	// can print it.
 	const renameSession = useCallback(
 		async (bot: string, id: string, title: string) => {
-			await postJson("/api/sessions/rename", { bot, id, title });
+			await renameSessionRequest(bot, id, title);
 		},
 		[],
 	);
 
 	const deleteSession = useCallback(async (bot: string, id: string) => {
-		await postJson("/api/sessions/delete", { bot, id });
+		await deleteSessionRequest(bot, id);
 	}, []);
 
 	// A blank query is the server's 400; not sending it gets the same answer
@@ -174,29 +178,13 @@ export function useHub(): Hub {
 		const trimmed = query.trim();
 		if (trimmed === "") return;
 		dispatch({ type: "search_started", query: trimmed });
-		void (async () => {
-			const response = await fetch(
-				`/api/search?q=${encodeURIComponent(trimmed)}`,
-			);
-			if (!response.ok) {
-				let message = `GET /api/search failed: ${response.status}`;
-				try {
-					const body = (await response.json()) as { error?: string };
-					if (typeof body.error === "string" && body.error !== "") {
-						message = body.error;
-					}
-				} catch {
-					// keep the fallback message
-				}
-				throw new Error(message);
-			}
-			const results = (await response.json()) as SearchResponse;
-			dispatch({ type: "search_results", results });
-		})().catch((error: unknown) => {
-			const message = error instanceof Error ? error.message : String(error);
-			dispatch({ type: "request_error", error: message });
-			dispatch({ type: "search_failed", error: message });
-		});
+		searchSessions(trimmed)
+			.then((results) => dispatch({ type: "search_results", results }))
+			.catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : String(error);
+				dispatch({ type: "request_error", error: message });
+				dispatch({ type: "search_failed", error: message });
+			});
 	}, []);
 
 	const clearSearch = useCallback(() => {
