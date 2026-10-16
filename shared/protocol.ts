@@ -273,6 +273,44 @@ export interface SubagentView {
 	event: AgentEvent;
 }
 
+// One entry in a directory listing. `path` is relative to the workspace root
+// in posix form; a directory reports size 0 and a symlink reports its own link
+// stats rather than its target's.
+export interface FileEntry {
+	name: string;
+	path: string;
+	kind: "file" | "dir" | "symlink";
+	size: number;
+	mtime: number;
+}
+
+// The whole answer to one directory read: the requested path (relative, posix;
+// "" is the root), the entries the flags keep, the ones a filter held back so
+// the UI can reveal them without a second request, and whether `limit` clipped
+// the visible list.
+export interface FileListResponse {
+	path: string;
+	entries: FileEntry[];
+	ignored: FileEntry[];
+	truncated: boolean;
+}
+
+// One subdirectory in a filesystem browse listing. `path` is absolute so the
+// browser can enter it directly; `name` is the basename shown in the list.
+export interface FsDirEntry {
+	name: string;
+	path: string;
+}
+
+// The answer to one browse read: the absolute path that was read, its
+// containing directory when that is still inside a browse root (null at a root
+// with no allowed parent), and the subdirectories, sorted by name.
+export interface FsDirsResponse {
+	path: string;
+	parent: string | null;
+	dirs: FsDirEntry[];
+}
+
 // Room wire types mirror src/rob/room.ts: the server maps domain events at the
 // hub boundary, exactly as AgentEvent is mapped, and the client only renders.
 
@@ -440,6 +478,10 @@ export type ServerEvent =
 	| { type: "allow_all"; on: boolean }
 	| { type: "agents"; agents: AgentStatusView[] }
 	| { type: "agent_job"; job: AgentJobView }
+	// An agent wrote to the workspace. An empty `paths` means "refresh whatever
+	// is expanded"; a non-empty list names workspace-relative posix paths that
+	// changed, so the tree can also highlight them.
+	| { type: "files_changed"; paths: string[] }
 	| { type: "error"; bot?: string; message: string };
 
 export interface SendBody {

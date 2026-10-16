@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer } from "react";
 import {
 	closeBotSession as closeBotSessionRequest,
+	createApi,
 	deleteSession as deleteSessionRequest,
 	forgetMemory as forgetMemoryRequest,
 	loadBotTranscript,
@@ -9,12 +10,16 @@ import {
 	renameSession as renameSessionRequest,
 	searchSessions,
 	setWake as setWakeRequest,
+	type UploadOptions,
+	type UploadResult,
 	updateBot as updateBotRequest,
 } from "./api";
 import type {
 	AgentListResponse,
 	ApprovalChoice,
 	BotDraft,
+	FileListResponse,
+	FsDirsResponse,
 	ImagePart,
 	InstallAgentStartResponse,
 	RoomInfo,
@@ -26,7 +31,12 @@ import type {
 	SetWakeBody,
 	UpdateBotBody,
 } from "./protocol";
+import { WORKSPACE_BOT } from "./protocol";
 import { type ClientState, clientReducer, initialState } from "./state";
+
+// Built once; every file-panel request goes through the client so the request
+// construction stays testable outside React.
+const api = createApi();
 
 async function post(path: string, body: unknown): Promise<void> {
 	await postJson(path, body);
@@ -61,6 +71,9 @@ export interface Hub {
 	// Images are optional and already validated by the composer; the route
 	// validates them again and a refusal lands on the error banner.
 	send: (bot: string, text: string, images?: ImagePart[]) => void;
+	// The tree's click-to-read: asks the workspace chat to read one file, named
+	// by its workspace-relative path, through the ordinary send path.
+	readFile: (path: string) => void;
 	interrupt: (bot: string) => void;
 	respondApproval: (id: string, decision: ApprovalChoice) => void;
 	setAllowAll: (on: boolean) => void;
@@ -100,6 +113,34 @@ export interface Hub {
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
 	closeSettings: () => void;
+	// A read-only directory listing for the file panel. The panel owns the
+	// cache and the flags; this only forwards to the client.
+	listFiles: (
+		path: string,
+		options?: { showHidden?: boolean; showIgnored?: boolean },
+	) => Promise<FileListResponse>;
+	// The download URL for one file, so a plain <a download> in the panel
+	// streams it without going through fetch.
+	fileDownloadUrl: (path: string) => string;
+	// The zip URL for one directory, so a directory row's 打包下载 anchor
+	// downloads the tree itself.
+	fileArchiveUrl: (path: string) => string;
+	// A read-only filesystem browse of directories for the panel's root chip,
+	// bounded by the server to the home and the active workspace root.
+	listDirs: (path?: string) => Promise<FsDirsResponse>;
+	// Uploads one file into a workspace directory and reports its progress; the
+	// panel owns the per-file list and the overwrite retry.
+	upload: (
+		path: string,
+		file: File,
+		options?: UploadOptions,
+	) => Promise<UploadResult>;
+	// Structure writes for the file panel; each rejects with the server's
+	// reason so the row can show it, and the panel owns the refresh.
+	mkdir: (path: string) => Promise<void>;
+	renameEntry: (from: string, to: string) => Promise<void>;
+	moveEntry: (from: string, to: string) => Promise<void>;
+	deleteEntry: (path: string, recursive?: boolean) => Promise<void>;
 	// Resolves with the server's optional non-blocking warning so the dialog can
 	// surface it; throws the server's error message on failure.
 	saveProvider: (body: SaveProviderBody) => Promise<string | undefined>;
@@ -156,6 +197,15 @@ export function useHub(): Hub {
 	const interrupt = useCallback((bot: string) => {
 		post("/api/interrupt", { bot }).catch(() => {});
 	}, []);
+
+	// The file tree's click-to-read drafts the message and sends it as if the
+	// user typed it, so the read rides the normal turn machinery.
+	const readFile = useCallback(
+		(path: string) => {
+			send(WORKSPACE_BOT, `请读取工作区文件 ${path}`);
+		},
+		[send],
+	);
 
 	const respondApproval = useCallback(
 		(id: string, decision: ApprovalChoice) => {
@@ -355,6 +405,49 @@ export function useHub(): Hub {
 		await postJson("/api/rooms/interrupt", { room });
 	}, []);
 
+	const listFiles = useCallback(
+		(path: string, options?: { showHidden?: boolean; showIgnored?: boolean }) =>
+			api.listFiles(path, options),
+		[],
+	);
+
+	// Pure URL construction: no request, so a plain anchor can carry it.
+	const fileDownloadUrl = useCallback(
+		(path: string) => api.fileDownloadUrl(path),
+		[],
+	);
+
+	const fileArchiveUrl = useCallback(
+		(path: string) => api.fileArchiveUrl(path),
+		[],
+	);
+
+	// Forwarded whole so the panel keeps the per-file progress callback and the
+	// overwrite retry; a refusal rejects with the server's message.
+	const upload = useCallback(
+		(path: string, file: File, options?: UploadOptions) =>
+			api.upload(path, file, options),
+		[],
+	);
+
+	const listDirs = useCallback((path?: string) => api.listDirs(path), []);
+
+	// Forwarded whole too: the panel shows the server's reason on the row and
+	// re-reads the directories the entry left and landed in.
+	const mkdir = useCallback((path: string) => api.mkdir(path), []);
+	const renameEntry = useCallback(
+		(from: string, to: string) => api.renameEntry(from, to),
+		[],
+	);
+	const moveEntry = useCallback(
+		(from: string, to: string) => api.moveEntry(from, to),
+		[],
+	);
+	const deleteEntry = useCallback(
+		(path: string, recursive?: boolean) => api.deleteEntry(path, recursive),
+		[],
+	);
+
 	const loadSettings = useCallback(async () => {
 		const response = await fetch("/api/settings");
 		if (!response.ok) {
@@ -442,6 +535,7 @@ export function useHub(): Hub {
 	return {
 		state,
 		send,
+		readFile,
 		interrupt,
 		respondApproval,
 		setAllowAll,
@@ -468,5 +562,14 @@ export function useHub(): Hub {
 		loadAgents,
 		installAgent,
 		cancelInstall,
+		listFiles,
+		fileDownloadUrl,
+		fileArchiveUrl,
+		listDirs,
+		upload,
+		mkdir,
+		renameEntry,
+		moveEntry,
+		deleteEntry,
 	};
 }

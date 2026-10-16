@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { ApiClient } from "../../web/src/api";
 import {
 	closeBotSession,
+	createApi,
 	deleteSession,
 	forgetMemory,
 	loadBotTranscript,
@@ -205,5 +207,256 @@ describe("bot ledger requests", () => {
 		await expect(removeBot("ghost", failure)).rejects.toThrow(
 			"Unknown bot: ghost",
 		);
+	});
+});
+
+interface XhrCall {
+	method: string;
+	url: string;
+	headers: Record<string, string>;
+	body: FormData;
+}
+
+// A minimal XMLHttpRequest double: it records the request and drives the
+// progress/load callbacks the upload client installs, so the whole upload path
+// is exercised without a DOM.
+function recordingXhr(
+	response: { status: number; body: string },
+	calls: XhrCall[],
+): typeof XMLHttpRequest {
+	return class {
+		method = "";
+		url = "";
+		headers: Record<string, string> = {};
+		status = 0;
+		responseText = "";
+		upload = {
+			onprogress: null as
+				| ((event: { loaded: number; total: number }) => void)
+				| null,
+		};
+		onload: (() => void) | null = null;
+		onerror: (() => void) | null = null;
+		onabort: (() => void) | null = null;
+
+		open(method: string, url: string) {
+			this.method = method;
+			this.url = url;
+		}
+
+		setRequestHeader(key: string, value: string) {
+			this.headers[key] = value;
+		}
+
+		send(body: FormData) {
+			calls.push({
+				method: this.method,
+				url: this.url,
+				headers: this.headers,
+				body,
+			});
+			this.status = response.status;
+			this.responseText = response.body;
+			this.upload.onprogress?.({ loaded: 4, total: 4 });
+			this.onload?.();
+		}
+	} as unknown as typeof XMLHttpRequest;
+}
+
+const invocations: Array<{
+	name: string;
+	run: (api: ApiClient) => Promise<unknown>;
+	path: string;
+	method: string;
+	body: unknown;
+}> = [
+	{
+		name: "listFiles",
+		run: (api) => api.listFiles("src", { showHidden: true }),
+		path: "/api/files?path=src&showHidden=1",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "listDirs",
+		run: (api) => api.listDirs("/home/x"),
+		path: "/api/fs/dirs?path=%2Fhome%2Fx",
+		method: "GET",
+		body: undefined,
+	},
+	{
+		name: "mkdir",
+		run: (api) => api.mkdir("src/new"),
+		path: "/api/files/mkdir",
+		method: "POST",
+		body: { path: "src/new" },
+	},
+	{
+		name: "renameEntry",
+		run: (api) => api.renameEntry("src/a.txt", "src/b.txt"),
+		path: "/api/files/rename",
+		method: "POST",
+		body: { from: "src/a.txt", to: "src/b.txt" },
+	},
+	{
+		name: "moveEntry",
+		run: (api) => api.moveEntry("a.txt", "src/a.txt"),
+		path: "/api/files/move",
+		method: "POST",
+		body: { from: "a.txt", to: "src/a.txt" },
+	},
+	{
+		name: "deleteEntry",
+		run: (api) => api.deleteEntry("src/old", true),
+		path: "/api/files/delete",
+		method: "POST",
+		body: { path: "src/old", recursive: true },
+	},
+];
+
+describe("fileDownloadUrl", () => {
+	it("percent-encodes the path so a plain link downloads the file", () => {
+		expect(createApi().fileDownloadUrl("docs/a b.txt")).toBe(
+			"/api/files/download?path=docs%2Fa%20b.txt",
+		);
+	});
+});
+
+describe("fileArchiveUrl", () => {
+	it("percent-encodes the path so a plain link downloads the zip", () => {
+		expect(createApi().fileArchiveUrl("docs/my dir")).toBe(
+			"/api/files/archive?path=docs%2Fmy%20dir",
+		);
+	});
+});
+
+describe("upload", () => {
+	it("posts FormData with the path and reports progress", async () => {
+		const calls: XhrCall[] = [];
+		const api = createApi({
+			xhrImpl: recordingXhr(
+				{
+					status: 200,
+					body: JSON.stringify({
+						ok: true,
+						written: ["src/a.txt"],
+						failed: [],
+					}),
+				},
+				calls,
+			),
+		});
+		const seen: Array<{ loaded: number; total: number }> = [];
+		const result = await api.upload("src", new File(["hello"], "a.txt"), {
+			onProgress: (progress) => seen.push(progress),
+		});
+		expect(result).toEqual({
+			ok: true,
+			written: ["src/a.txt"],
+			failed: [],
+		});
+		expect(calls).toHaveLength(1);
+		expect(calls[0].method).toBe("POST");
+		expect(calls[0].url).toBe("/api/files/upload");
+		expect(calls[0].body.get("path")).toBe("src");
+		expect(calls[0].body.get("overwrite")).toBeNull();
+		const part = calls[0].body.get("file");
+		expect(part).toBeInstanceOf(File);
+		expect((part as File).name).toBe("a.txt");
+		expect(seen).toEqual([{ loaded: 4, total: 4 }]);
+	});
+
+	it("adds overwrite=1 when the caller retries over an existing name", async () => {
+		const calls: XhrCall[] = [];
+		const api = createApi({
+			xhrImpl: recordingXhr(
+				{
+					status: 200,
+					body: JSON.stringify({ ok: true, written: [], failed: [] }),
+				},
+				calls,
+			),
+		});
+		await api.upload("", new File(["x"], "x.bin"), { overwrite: true });
+		expect(calls[0].body.get("path")).toBe("");
+		expect(calls[0].body.get("overwrite")).toBe("1");
+	});
+
+	// A per-file refusal is a result, not a dropped request: the panel needs the
+	// `exists` reason to offer the overwrite retry.
+	it("resolves ok:false with the failed reason", async () => {
+		const calls: XhrCall[] = [];
+		const api = createApi({
+			xhrImpl: recordingXhr(
+				{
+					status: 200,
+					body: JSON.stringify({
+						ok: false,
+						written: [],
+						failed: [{ name: "a.txt", reason: "exists" }],
+					}),
+				},
+				calls,
+			),
+		});
+		await expect(api.upload("src", new File(["x"], "a.txt"))).resolves.toEqual({
+			ok: false,
+			written: [],
+			failed: [{ name: "a.txt", reason: "exists" }],
+		});
+	});
+
+	it("rejects with the server's reason on a request-level refusal", async () => {
+		const calls: XhrCall[] = [];
+		const api = createApi({
+			xhrImpl: recordingXhr(
+				{
+					status: 413,
+					body: JSON.stringify({ error: "file exceeds the upload size limit" }),
+				},
+				calls,
+			),
+		});
+		await expect(api.upload("src", new File(["x"], "a.txt"))).rejects.toThrow(
+			"file exceeds the upload size limit",
+		);
+	});
+});
+
+describe("structure writes", () => {
+	it("surface the server's reason on the row", async () => {
+		const api = createApi({
+			fetchImpl: (async () =>
+				new Response(
+					JSON.stringify({ ok: false, error: "Already exists: src" }),
+					{
+						status: 400,
+						headers: { "Content-Type": "application/json" },
+					},
+				)) as typeof fetch,
+		});
+		await expect(api.mkdir("src")).rejects.toThrow("Already exists: src");
+		await expect(api.renameEntry("a.txt", "b.txt")).rejects.toMatchObject({
+			status: 400,
+		});
+		await expect(api.moveEntry("a.txt", "src/a.txt")).rejects.toThrow(
+			"Already exists: src",
+		);
+		await expect(api.deleteEntry("src", true)).rejects.toMatchObject({
+			status: 400,
+		});
+	});
+});
+
+describe("request construction", () => {
+	it("builds every path, method, and body literally", async () => {
+		for (const call of invocations) {
+			const calls: Call[] = [];
+			const api = createApi({ fetchImpl: recordingFetch(calls) });
+			await call.run(api);
+			expect(calls[0].path, call.name).toBe(call.path);
+			expect(calls[0].method, call.name).toBe(call.method);
+			expect(calls[0].body, call.name).toEqual(call.body);
+		}
 	});
 });

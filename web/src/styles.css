@@ -2513,6 +2513,643 @@ select.field-input option {
 	color: var(--yellow);
 }
 
+/* ---------- File tree panel ---------- */
+
+.file-panel {
+	display: flex;
+	flex-direction: column;
+	width: 300px;
+	flex: none;
+	min-height: 0;
+	background: var(--bg-sidebar);
+	border-left: 1px solid var(--border);
+}
+
+.file-panel.closed {
+	display: none;
+}
+
+.file-panel-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 14px 12px 8px 16px;
+}
+
+.file-panel-title {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+}
+
+.file-panel-filters {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 0 16px 10px;
+	border-bottom: 1px solid var(--border);
+}
+
+.file-toggle {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 12px;
+	color: var(--text-2);
+	cursor: pointer;
+}
+
+.file-toggle input {
+	width: 14px;
+	height: 14px;
+	margin: 0;
+	accent-color: var(--accent);
+}
+
+.file-panel-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 8px 8px 14px;
+	scrollbar-width: thin;
+	scrollbar-color: var(--border-strong) transparent;
+}
+
+.file-tree,
+.file-tree-children {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.file-tree-children {
+	padding-left: 14px;
+}
+
+.file-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 6px;
+	border-radius: 6px;
+}
+
+.file-row:hover {
+	background: var(--surface-hover);
+}
+
+.file-arrow {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-3);
+	transition:
+		transform 0.12s,
+		color 0.12s;
+}
+
+.file-arrow.open {
+	transform: rotate(90deg);
+}
+
+.file-arrow:hover {
+	color: var(--text);
+}
+
+.file-kind-icon {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	color: var(--text-3);
+}
+
+.file-kind-icon.dir {
+	color: var(--accent-text);
+}
+
+.file-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	color: var(--text);
+}
+
+.file-empty {
+	padding: 3px 6px 3px 22px;
+	font-size: 11.5px;
+	color: var(--text-3);
+}
+
+.file-panel-loading {
+	margin: 0;
+	padding: 6px 8px;
+	font-size: 12.5px;
+	color: var(--text-3);
+}
+
+.file-panel-error {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 6px 4px;
+	padding: 10px 12px;
+	border: 1px solid var(--error-border);
+	border-radius: var(--radius);
+	background: var(--error-soft);
+}
+
+.file-panel-error-text {
+	font-size: 12.5px;
+	color: var(--red);
+	overflow-wrap: anywhere;
+}
+
+.file-panel-error .btn {
+	align-self: flex-start;
+}
+
+.file-download {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	border-radius: 4px;
+	color: var(--text-3);
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+.file-download:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.file-upload {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-3);
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+.file-upload:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.file-input {
+	display: none;
+}
+
+/* A drag over a directory row highlights just that row; the empty body and
+   header button both target the root. */
+.file-row.drop-target {
+	background: var(--accent-soft);
+	outline: 1px dashed var(--accent);
+	outline-offset: -1px;
+}
+
+.file-panel-body.drop-target {
+	box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.file-uploads {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+.file-uploads-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 11.5px;
+	color: var(--text-3);
+}
+
+.file-uploads-clear {
+	padding: 2px 6px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-3);
+	font-size: 11.5px;
+}
+
+.file-uploads-clear:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.file-upload-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.file-upload-item {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.file-upload-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.file-upload-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--text);
+}
+
+.file-upload-status {
+	flex: none;
+	font-size: 11px;
+	color: var(--text-3);
+}
+
+.file-upload-item.done .file-upload-status {
+	color: var(--green);
+}
+
+.file-upload-item.exists .file-upload-status {
+	color: var(--yellow);
+}
+
+.file-upload-item.error .file-upload-status {
+	color: var(--red);
+}
+
+.file-upload-bar {
+	height: 4px;
+	border-radius: 999px;
+	background: var(--surface-2);
+	overflow: hidden;
+}
+
+.file-upload-bar-fill {
+	height: 100%;
+	border-radius: 999px;
+	background: var(--accent);
+	transition: width 0.12s;
+}
+
+.file-upload-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.file-upload-hint {
+	flex: 1;
+	min-width: 0;
+	font-size: 11px;
+	color: var(--yellow);
+	overflow-wrap: anywhere;
+}
+
+.file-upload-error {
+	flex: 1;
+	min-width: 0;
+	font-size: 11px;
+	color: var(--red);
+	overflow-wrap: anywhere;
+}
+
+/* The panel root chip sits on its own row under the header. */
+.file-panel-root {
+	padding: 0 12px 10px;
+}
+
+/* ---------- Workspace picker ---------- */
+
+.workspace-picker {
+	position: relative;
+	flex-basis: 100%;
+}
+
+.workspace-trigger {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	padding: 5px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	color: var(--text-2);
+	font-size: 12.5px;
+	text-align: left;
+	transition:
+		border-color 0.12s,
+		color 0.12s;
+}
+
+.workspace-trigger:hover {
+	border-color: var(--border-strong);
+	color: var(--text);
+}
+
+.workspace-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workspace-caret {
+	flex: none;
+	font-size: 10px;
+	color: var(--text-3);
+}
+
+/* ---------- Workspace browser modal ---------- */
+
+.modal.workspace-browser {
+	width: 520px;
+}
+
+.browser-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	color: var(--text-3);
+}
+
+.browser-crumb {
+	padding: 2px 5px;
+	border: none;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--text-2);
+	font: inherit;
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+button.browser-crumb:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.browser-crumb.current {
+	color: var(--text);
+	font-weight: 600;
+}
+
+.browser-toolbar {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.browser-list,
+.browser-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 220px;
+	overflow-y: auto;
+}
+
+.browser-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 13px;
+	text-align: left;
+	transition:
+		background 0.12s,
+		border-color 0.12s,
+		color 0.12s;
+}
+
+.browser-row:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.browser-row.selected {
+	border-color: var(--border-strong);
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.browser-row.active {
+	background: var(--surface-2);
+	color: var(--text);
+	font-weight: 550;
+}
+
+.browser-row:disabled {
+	opacity: 0.55;
+}
+
+.browser-folder {
+	flex: none;
+	font-size: 12px;
+}
+
+.browser-row-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.browser-row-mark {
+	flex: none;
+	color: var(--accent-text);
+}
+
+.browser-section-label {
+	margin-top: 4px;
+	font-size: 11.5px;
+	color: var(--text-3);
+}
+
+.browser-empty {
+	margin: 4px 2px;
+	font-size: 12.5px;
+	color: var(--text-3);
+}
+
+.browser-form {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.browser-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.file-more {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	flex: none;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-3);
+	font-size: 14px;
+	line-height: 1;
+	transition:
+		background 0.12s,
+		color 0.12s;
+}
+
+.file-more:hover {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+/* The per-row structure menu and the armed delete both sit under their row, so
+   the target they act on stays visible while the choice is made. */
+.file-menu {
+	display: flex;
+	flex-direction: column;
+	margin: 2px 0 4px 22px;
+	padding: 4px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	box-shadow: var(--shadow-md);
+}
+
+.file-menu button {
+	padding: 5px 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text);
+	font-size: 12.5px;
+	text-align: left;
+}
+
+.file-menu button:hover {
+	background: var(--surface-hover);
+}
+
+.file-menu button.danger {
+	color: var(--red);
+}
+
+.file-confirm {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 2px 0 4px 22px;
+	padding: 6px 8px;
+	border: 1px solid var(--warn-border);
+	border-radius: var(--radius-sm);
+	background: var(--warn-soft);
+}
+
+.file-confirm-text {
+	flex: 1;
+	min-width: 0;
+	font-size: 11.5px;
+	color: var(--yellow);
+	overflow-wrap: anywhere;
+}
+
+/* The inline rename and new-folder inputs share the row's width. */
+.file-rename {
+	flex: 1;
+	min-width: 0;
+	padding: 2px 6px;
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	background: var(--surface);
+	color: var(--text);
+	font-size: 13px;
+}
+
+.file-row-error {
+	margin: 2px 0 4px 22px;
+	font-size: 11.5px;
+	color: var(--red);
+	overflow-wrap: anywhere;
+}
+
+.file-new-row {
+	padding: 2px 0;
+}
+
+/* A row an agent just wrote, flagged for a few seconds after files_changed. */
+.file-row.changed {
+	background: var(--accent-soft);
+}
+
+/* A file's name is the click-to-read affordance: a button dressed as the
+   span a directory row keeps, so the two kinds of row still align. */
+.file-read {
+	padding: 0;
+	border: none;
+	background: transparent;
+	text-align: left;
+	font: inherit;
+	cursor: pointer;
+}
+
+.file-read:hover {
+	color: var(--accent-text);
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 880px) {
@@ -2527,6 +3164,10 @@ select.field-input option {
 
 @media (max-width: 640px) {
 	.sidebar {
+		display: none;
+	}
+
+	.file-panel {
 		display: none;
 	}
 

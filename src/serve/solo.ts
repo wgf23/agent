@@ -34,6 +34,7 @@ import {
 } from "../session/store.js";
 import { createTaskTool } from "../tools/task.js";
 import { summarizeArgs } from "../tui/summarize.js";
+import { FilesChangedTracker } from "./files-changed.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { parseImages } from "./images.js";
 import { fallbackProviderView, UNCONFIGURED_MESSAGE } from "./runtime.js";
@@ -64,6 +65,9 @@ export class SoloHub extends EventBus implements Hub {
 	private controller: AbortController | null = null;
 	private disposed = false;
 	private approvalSeq = 0;
+	// One chat runs at a time, so one tracker is enough to remember a tool's
+	// started args until its `tool_finished` can name the file it wrote.
+	private readonly filesChanged = new FilesChangedTracker();
 	private readonly pendingApprovals = new Map<
 		string,
 		{
@@ -338,6 +342,13 @@ export class SoloHub extends EventBus implements Hub {
 				},
 				onEvent: (event: AgentEvent) => {
 					this.emit({ type: "agent_event", bot: DEFAULT_BOT, event });
+					// A successful write tells the tree to refresh; a bash run
+					// refreshes blindly because its paths are unknown.
+					const paths = this.filesChanged.onEvent(
+						this.options.workspaceRoot,
+						event,
+					);
+					if (paths !== null) this.emit({ type: "files_changed", paths });
 				},
 			});
 

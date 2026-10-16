@@ -7,7 +7,7 @@ import type {
 import { sessionLabel } from "../sessions";
 import type { ClientRoom, ConnectionStatus, SearchState } from "../state";
 import { STATUS_LABEL } from "../status";
-import { GearIcon, PlusIcon } from "./icons";
+import { FolderIcon, GearIcon, PlusIcon } from "./icons";
 import SearchPanel from "./SearchPanel";
 import SessionRow from "./SessionRow";
 
@@ -44,6 +44,9 @@ interface Props {
 	onOpenSettings: () => void;
 	usage: UsageTotals;
 	connection: ConnectionStatus;
+	// The right-side file panel; the nav button folds it away.
+	filesOpen: boolean;
+	onToggleFiles: () => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -75,6 +78,8 @@ export default function Sidebar(props: Props) {
 		onOpenSettings,
 		usage,
 		connection,
+		filesOpen,
+		onToggleFiles,
 	} = props;
 
 	const showSessions = workspace !== null && selectedId === workspace.name;
@@ -142,6 +147,15 @@ export default function Sidebar(props: Props) {
 					onClick={() => onViewChange("agents")}
 				>
 					Agents
+				</button>
+				<button
+					type="button"
+					className={`nav-item ${filesOpen ? "active" : ""}`}
+					aria-pressed={filesOpen}
+					onClick={onToggleFiles}
+				>
+					<FolderIcon size={14} />
+					文件
 				</button>
 			</nav>
 

@@ -28,9 +28,11 @@
 		"lint": "biome check .",
 		"smoke:provider": "tsx scripts/smoke-provider.ts",
 		"e2e": "tsx scripts/e2e.ts",
-		"e2e:team": "tsx scripts/e2e-team.ts"
+		"e2e:team": "tsx scripts/e2e-team.ts",
+		"files:e2e": "tsx scripts/files-e2e.ts"
 	},
 	"dependencies": {
+		"@fastify/multipart": "^9.4.0",
 		"@fastify/static": "^10.1.6",
 		"commander": "^15.0.0",
 		"diff": "^9.0.0",

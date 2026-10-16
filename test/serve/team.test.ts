@@ -171,6 +171,7 @@ describe("TeamHub", () => {
 					name: "bash",
 					args: { command: "echo hi" },
 				},
+				{ type: "finish", reason: "tool_calls" },
 			],
 			[
 				{ type: "text_delta", text: "done" },
@@ -210,6 +211,40 @@ describe("TeamHub", () => {
 			() => events.some((event) => event.type === "approval_resolved"),
 			"the approval to resolve",
 		);
+		await hub.dispose();
+	});
+
+	it("announces the file a rob write wrote so the tree can refresh", async () => {
+		const provider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "write_file",
+					args: { path: "notes/rob.txt", content: "hi" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		// The write_file tool asks by default, so the run needs allow-all on to
+		// reach the write the tracker announces.
+		const hub = createHub(provider, createAllowAll(true));
+		const events = collect(hub);
+
+		hub.dispatch("alpha", "write a note");
+		await waitFor(
+			() => events.some((event) => event.type === "files_changed"),
+			"files_changed for the rob write",
+		);
+
+		expect(events).toContainEqual({
+			type: "files_changed",
+			paths: ["notes/rob.txt"],
+		});
 		await hub.dispose();
 	});
 
