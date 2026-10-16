@@ -23,6 +23,7 @@ import type {
 	FsDirsResponse,
 	ImagePart,
 	InstallAgentStartResponse,
+	OfficePreview,
 	RoomInfo,
 	SaveProviderBody,
 	SaveProviderResponse,
@@ -126,6 +127,9 @@ export interface Hub {
 	// The zip URL for one directory, so a directory row's 打包下载 anchor
 	// downloads the tree itself.
 	fileArchiveUrl: (path: string) => string;
+	// Extracts an office preview (docx/xlsx/pptx) server-side; rejects with the
+	// server's reason so the preview can show it inline.
+	filePreview: (path: string) => Promise<OfficePreview>;
 	// A read-only filesystem browse of directories for the panel's root chip,
 	// bounded by the server to the home and the active workspace root.
 	listDirs: (path?: string) => Promise<FsDirsResponse>;
@@ -433,6 +437,8 @@ export function useHub(): Hub {
 		[],
 	);
 
+	const filePreview = useCallback((path: string) => api.filePreview(path), []);
+
 	// Forwarded whole so the panel keeps the per-file progress callback and the
 	// overwrite retry; a refusal rejects with the server's message.
 	const upload = useCallback(
@@ -576,6 +582,7 @@ export function useHub(): Hub {
 		listFiles,
 		fileDownloadUrl,
 		fileArchiveUrl,
+		filePreview,
 		listDirs,
 		upload,
 		mkdir,

@@ -311,6 +311,45 @@ export interface FsDirsResponse {
 	dirs: FsDirEntry[];
 }
 
+// A preview of an OOXML office document, extracted server-side from the zip
+// container. The union is the domain: a spreadsheet is a grid, a document is a
+// block sequence, and a deck is a list of slides. Only text and grid cells
+// cross the boundary, so untrusted markup can never reach the DOM as HTML.
+export interface SheetPreview {
+	kind: "sheet";
+	sheets: Array<{ name: string; rows: string[][] }>;
+	// True when a sheet, row, or column cap clipped the extraction.
+	truncated: boolean;
+}
+
+// One block of a document: a heading, a list item, or a paragraph. The client
+// maps `style` to an element; `text` is plain, already entity-decoded.
+export interface DocBlock {
+	style: "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "p";
+	text: string;
+}
+
+export interface DocPreview {
+	kind: "doc";
+	blocks: DocBlock[];
+	truncated: boolean;
+}
+
+export interface SlidePreview {
+	kind: "slides";
+	slides: Array<{ title: string; lines: string[] }>;
+	truncated: boolean;
+}
+
+export type OfficePreview = SheetPreview | DocPreview | SlidePreview;
+
+// The answer to one office preview read: the requested workspace-relative path
+// and its extracted preview.
+export interface FilePreviewResponse {
+	path: string;
+	preview: OfficePreview;
+}
+
 // Room wire types mirror src/rob/room.ts: the server maps domain events at the
 // hub boundary, exactly as AgentEvent is mapped, and the client only renders.
 

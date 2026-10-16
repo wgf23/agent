@@ -1,8 +1,10 @@
 import type {
 	BotTranscriptResponse,
 	FileListResponse,
+	FilePreviewResponse,
 	FsDirsResponse,
 	MemoryListResponse,
+	OfficePreview,
 	SearchResponse,
 	SetWakeBody,
 	UpdateBotBody,
@@ -187,6 +189,10 @@ export interface ApiClient {
 	// The same-origin URL that streams a whole workspace directory as a zip, so
 	// a directory row's 打包下载 anchor downloads the tree itself.
 	fileArchiveUrl(path: string): string;
+	// Extracts a text-and-grid preview from one office file (docx/xlsx/pptx)
+	// server-side; rejects with the server's reason for a missing, escaped, or
+	// unsupported path.
+	filePreview(path: string): Promise<OfficePreview>;
 	// A read-only filesystem browse of directories, bounded by the server to
 	// the home directory and the active workspace root; an omitted path means
 	// home. A path outside every root rejects with the server's reason.
@@ -333,6 +339,19 @@ export function createApi(
 		return `/api/files/archive?path=${encodeURIComponent(path)}`;
 	}
 
+	// The office preview is a server-side extraction, so it is a JSON read; a
+	// refusal (missing, escaped, unsupported, over the size cap) keeps the
+	// server's reason and status.
+	async function filePreview(path: string): Promise<OfficePreview> {
+		const route = `/api/files/preview?path=${encodeURIComponent(path)}`;
+		const response = await request(route);
+		if (!response.ok) {
+			throw await failure(response, `GET ${route} failed: ${response.status}`);
+		}
+		const body = (await response.json()) as FilePreviewResponse;
+		return body.preview;
+	}
+
 	// One file is posted per request so the caller sees that file's own upload
 	// progress. The body is multipart/form-data and the browser sets its own
 	// boundary. A non-2xx answer rejects with the server's reason; a 2xx
@@ -415,6 +434,7 @@ export function createApi(
 		listFiles,
 		fileDownloadUrl,
 		fileArchiveUrl,
+		filePreview,
 		listDirs,
 		upload,
 		mkdir,

@@ -9,12 +9,15 @@ import {
 	useState,
 } from "react";
 import type { UploadOptions, UploadResult } from "../api";
+import { formatSize } from "../format";
 import type {
 	FileEntry,
 	FileListResponse,
 	FsDirEntry,
 	FsDirsResponse,
+	OfficePreview,
 } from "../protocol";
+import FilePreview from "./FilePreview";
 import {
 	ArrowDownIcon,
 	ArrowUpIcon,
@@ -37,6 +40,9 @@ interface Props {
 	// A same-origin download URL, so the row anchor lets the browser stream
 	// the file itself.
 	fileDownloadUrl: (path: string) => string;
+	// Extracts an office preview (docx/xlsx/pptx) server-side; the preview
+	// dialog owns its own load and error state.
+	filePreview: (path: string) => Promise<OfficePreview>;
 	// A same-origin zip URL for one directory, so a directory row's 打包下载
 	// anchor downloads the tree itself.
 	fileArchiveUrl: (path: string) => string;
@@ -112,6 +118,7 @@ const FILE_HIGHLIGHT_MS = 3000;
 export default function FileTree({
 	listFiles,
 	fileDownloadUrl,
+	filePreview,
 	fileArchiveUrl,
 	upload,
 	mkdir,
@@ -155,6 +162,8 @@ export default function FileTree({
 		path: string;
 		message: string;
 	} | null>(null);
+	// The file whose contents are open in the preview dialog.
+	const [preview, setPreview] = useState<FileEntry | null>(null);
 
 	// The picker is opened by a row's button; this holds the directory that
 	// button named until the change fires.
@@ -651,9 +660,9 @@ export default function FileTree({
 						<button
 							type="button"
 							className="file-name file-read"
-							title="让 agent 读这个文件"
-							aria-label={`让 agent 读 ${entry.name}`}
-							onClick={() => onReadFile(entry.path)}
+							title={`预览 ${entry.name}`}
+							aria-label={`预览 ${entry.name}`}
+							onClick={() => setPreview(entry)}
 						>
 							{entry.name}
 						</button>
@@ -721,6 +730,18 @@ export default function FileTree({
 						>
 							重命名
 						</button>
+						{!isDir && (
+							<button
+								type="button"
+								role="menuitem"
+								onClick={() => {
+									setMenuPath(null);
+									onReadFile(entry.path);
+								}}
+							>
+								让 agent 读取
+							</button>
+						)}
 						<button
 							type="button"
 							role="menuitem"
@@ -916,6 +937,15 @@ export default function FileTree({
 					onClose={() => setMoving(null)}
 				/>
 			)}
+			{preview !== null && (
+				<FilePreview
+					entry={preview}
+					fileDownloadUrl={fileDownloadUrl}
+					filePreview={filePreview}
+					onReadWithAgent={onReadFile}
+					onClose={() => setPreview(null)}
+				/>
+			)}
 		</aside>
 	);
 }
@@ -1094,18 +1124,6 @@ function kindIcon(kind: FileEntry["kind"]): ReactNode {
 function entryTitle(entry: FileEntry): string {
 	const size = entry.kind === "dir" ? "—" : formatSize(entry.size);
 	return `${entry.name}\n大小：${size}\n修改时间：${new Date(entry.mtime).toLocaleString("zh-CN")}`;
-}
-
-function formatSize(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	const units = ["KB", "MB", "GB", "TB"];
-	let value = bytes / 1024;
-	let unit = 0;
-	while (value >= 1024 && unit < units.length - 1) {
-		value /= 1024;
-		unit += 1;
-	}
-	return `${value.toFixed(1)} ${units[unit]}`;
 }
 
 // Counts every entry under a directory — recursively, hidden and ignored
