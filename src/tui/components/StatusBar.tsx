@@ -3,6 +3,7 @@ import { Text } from "ink";
 import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
 import type {
+	ImagePart,
 	ReasoningEffort,
 	ThinkingSetting,
 } from "../../providers/types.js";
@@ -32,6 +33,7 @@ export interface StatusBarProps {
 	thinking?: ThinkingSetting;
 	reasoningEffort?: ReasoningEffort;
 	allowAll?: boolean;
+	pendingImage?: ImagePart | null;
 }
 
 export function shortenCwd(cwd: string, home: string): string {
@@ -50,6 +52,7 @@ export function StatusBar({
 	thinking,
 	reasoningEffort,
 	allowAll,
+	pendingImage,
 }: StatusBarProps): ReactElement {
 	const streaming = status === "streaming";
 	const awaiting = status === "awaiting_permission";
@@ -65,6 +68,9 @@ export function StatusBar({
 		<StatusRow>
 			<Text color="cyan">{model}</Text>
 			{allowAll === true ? <Text color="green">{"  allow-all"}</Text> : null}
+			{pendingImage ? (
+				<Text dimColor>{`  image ${pendingImage.mediaType}`}</Text>
+			) : null}
 			{thinking !== undefined ? (
 				<Text dimColor>{`  thinking ${thinking}`}</Text>
 			) : null}

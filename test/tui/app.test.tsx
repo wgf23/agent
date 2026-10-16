@@ -575,3 +575,42 @@ describe("file mention expansion", () => {
 		expect(lastFrame()).not.toContain("secret alpha");
 	});
 });
+
+describe("image attachments", () => {
+	let workspace: string;
+
+	beforeAll(async () => {
+		workspace = await makeWorkspace("my-agent-tui-image-");
+		await writeFile(join(workspace, "shot.png"), "hello", "utf8");
+	});
+
+	afterAll(async () => {
+		await removeWorkspace(workspace);
+	});
+
+	it("attaches an image with /image and sends it with the next message", async () => {
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "it is a png" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const { stdin, lastFrame } = render(
+			app(provider, { workspaceRoot: workspace }),
+		);
+
+		stdin.write("/image shot.png");
+		stdin.write("\r");
+		await waitFor(() => expect(lastFrame()).toContain("image image/png"));
+
+		stdin.write("what is this?");
+		stdin.write("\r");
+
+		await waitFor(() => expect(provider.requests).toHaveLength(1));
+		expect(provider.requests[0].messages.at(-1)).toEqual({
+			role: "user",
+			content: "what is this?",
+			images: [{ type: "image", mediaType: "image/png", data: "aGVsbG8=" }],
+		});
+	});
+});
