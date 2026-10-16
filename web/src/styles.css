@@ -3436,6 +3436,39 @@ button.browser-crumb:hover {
 	border-bottom-color: var(--accent);
 }
 
+/* The top-level area switch (assistant vs bot). Mirrors .tab-strip/.tab but a
+   separate name so the two strips can never share styles. */
+.region-tabs {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 8px 20px 0;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg);
+}
+
+.region-tab {
+	padding: 7px 12px;
+	border: none;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 13.5px;
+	transition:
+		color 0.12s,
+		border-color 0.12s;
+}
+
+.region-tab:hover {
+	color: var(--text);
+}
+
+.region-tab.active {
+	color: var(--text);
+	font-weight: 600;
+	border-bottom-color: var(--accent);
+}
+
 .panel {
 	flex: 1;
 	min-height: 0;
