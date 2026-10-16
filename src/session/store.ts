@@ -21,10 +21,19 @@ const toolCallBlockSchema = z.object({
 	name: z.string(),
 	args: z.unknown(),
 });
+const imagePartSchema = z.object({
+	type: z.literal("image"),
+	mediaType: z.string(),
+	data: z.string(),
+});
 
 const messageSchema = z.discriminatedUnion("role", [
 	z.object({ role: z.literal("system"), content: z.string() }),
-	z.object({ role: z.literal("user"), content: z.string() }),
+	z.object({
+		role: z.literal("user"),
+		content: z.string(),
+		images: z.array(imagePartSchema).optional(),
+	}),
 	z.object({
 		role: z.literal("assistant"),
 		content: z.array(

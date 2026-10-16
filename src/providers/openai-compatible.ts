@@ -1,13 +1,17 @@
 import OpenAI from "openai";
 import type {
+	ChatCompletionContentPart,
+	ChatCompletionContentPartImage,
 	ChatCompletionCreateParamsStreaming,
 	ChatCompletionMessageParam,
 	ChatCompletionTool,
+	ChatCompletionUserMessageParam,
 } from "openai/resources/chat/completions";
 import { friendlyProviderError } from "./errors.js";
 import type {
 	AssistantMessage,
 	FinishReason,
+	ImagePart,
 	Message,
 	Provider,
 	ProviderRequest,
@@ -16,6 +20,7 @@ import type {
 	TextBlock,
 	ToolCallBlock,
 	ToolDefinition,
+	UserMessage,
 } from "./types.js";
 
 // A minimal structural view of the wire chunks. The official SDK types omit
@@ -57,7 +62,7 @@ function toOpenAIMessage(message: Message): ChatCompletionMessageParam {
 		case "system":
 			return { role: "system", content: message.content };
 		case "user":
-			return { role: "user", content: message.content };
+			return toUserParam(message);
 		case "tool":
 			return {
 				role: "tool",
@@ -67,6 +72,25 @@ function toOpenAIMessage(message: Message): ChatCompletionMessageParam {
 		case "assistant":
 			return toAssistantParam(message);
 	}
+}
+
+function toUserParam(message: UserMessage): ChatCompletionUserMessageParam {
+	const images = message.images;
+	if (images === undefined || images.length === 0) {
+		return { role: "user", content: message.content };
+	}
+	const parts: ChatCompletionContentPart[] = [
+		{ type: "text", text: message.content },
+		...images.map(toImagePart),
+	];
+	return { role: "user", content: parts };
+}
+
+function toImagePart(image: ImagePart): ChatCompletionContentPartImage {
+	return {
+		type: "image_url",
+		image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+	};
 }
 
 function toAssistantParam(

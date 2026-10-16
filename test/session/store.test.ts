@@ -106,6 +106,31 @@ describe("saveSession and loadSession", () => {
 		});
 	});
 
+	it("round trips an image on a user message", async () => {
+		const session = makeSession({
+			messages: [
+				{
+					role: "user",
+					content: "what is this?",
+					images: [{ type: "image", mediaType: "image/png", data: "aGVsbG8=" }],
+				},
+			],
+		});
+
+		await saveSession(session);
+
+		const loaded = await loadSession(workspaceRoot, session.id);
+		expect(loaded.ok).toBe(true);
+		if (!loaded.ok) return;
+		expect(loaded.session.messages).toEqual([
+			{
+				role: "user",
+				content: "what is this?",
+				images: [{ type: "image", mediaType: "image/png", data: "aGVsbG8=" }],
+			},
+		]);
+	});
+
 	it("drops system messages on save", async () => {
 		const session = makeSession({
 			messages: [

@@ -21,6 +21,42 @@ async function collect(chunks: ChatChunk[]): Promise<StreamEvent[]> {
 }
 
 describe("toOpenAIMessages", () => {
+	it("serializes a user message with images as an image_url content array", () => {
+		const result = toOpenAIMessages([
+			{
+				role: "user",
+				content: "what is this?",
+				images: [
+					{ type: "image", mediaType: "image/png", data: "aGVsbG8=" },
+					{ type: "image", mediaType: "image/webp", data: "d2Vi" },
+				],
+			},
+		]);
+
+		expect(result).toEqual([
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "what is this?" },
+					{
+						type: "image_url",
+						image_url: { url: "data:image/png;base64,aGVsbG8=" },
+					},
+					{
+						type: "image_url",
+						image_url: { url: "data:image/webp;base64,d2Vi" },
+					},
+				],
+			},
+		]);
+	});
+
+	it("keeps a plain string content for a user message without images", () => {
+		const result = toOpenAIMessages([{ role: "user", content: "time?" }]);
+
+		expect(result).toEqual([{ role: "user", content: "time?" }]);
+	});
+
 	it("drops reasoning and serializes assistant tool calls with JSON arguments", () => {
 		const messages: Message[] = [
 			{ role: "system", content: "be terse" },

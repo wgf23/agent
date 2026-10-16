@@ -26,9 +26,16 @@ export interface SystemMessage {
 	content: string;
 }
 
+export interface ImagePart {
+	type: "image";
+	mediaType: string;
+	data: string;
+}
+
 export interface UserMessage {
 	role: "user";
 	content: string;
+	images?: ImagePart[];
 }
 
 export interface AssistantMessage {
