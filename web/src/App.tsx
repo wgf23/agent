@@ -97,16 +97,16 @@ export default function App() {
 			? "off"
 			: state.allowAll.mode;
 
-	// Keep the selection valid as the bot roster and rooms (re)load. Depends on
-	// the raw roster (stable) rather than the filtered lists, which are fresh
-	// arrays every render.
+	// Keep the selection valid as the bot roster and rooms (re)load. `bots`
+	// already holds both the assistant and every rob, so one pass covers both
+	// areas; depending on it (stable) rather than the filtered lists (fresh
+	// arrays every render) avoids re-running the check on every render.
 	useEffect(() => {
 		const known =
 			selectedId !== null &&
-			(robs.some((rob) => rob.name === selectedId) ||
-				workspace?.name === selectedId ||
+			(bots.some((bot) => bot.name === selectedId) ||
 				state.rooms[selectedId] !== undefined);
-		if (!known) setSelectedId(workspace?.name ?? robs[0]?.name ?? null);
+		if (!known) setSelectedId(workspace?.name ?? bots[0]?.name ?? null);
 	}, [bots, selectedId, state.rooms, workspace?.name]);
 
 	const messages = botName !== null ? (state.transcripts[botName] ?? []) : [];
