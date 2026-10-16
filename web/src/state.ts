@@ -1,10 +1,13 @@
 import type {
 	AgentEvent,
+	AgentJobView,
+	AgentStatusView,
 	ApprovalRequestInfo,
 	BotInfo,
 	BotState,
 	BotStatus,
 	DmInfo,
+	InstallPhase,
 	PresetInfo,
 	ProviderView,
 	RoomDeliverableInfo,
@@ -66,6 +69,9 @@ export interface ClientState {
 	lastError: string | null;
 	settingsOpen: boolean;
 	settingsError: string | null;
+	agents: AgentStatusView[];
+	// Latest job per agent id, live or terminal.
+	agentJobs: Record<string, AgentJobView>;
 }
 
 export type ClientAction =
@@ -79,6 +85,7 @@ export type ClientAction =
 	| { type: "settings_open" }
 	| { type: "settings_close" }
 	| { type: "settings_error"; error: string | null }
+	| { type: "agents_loaded"; agents: AgentStatusView[] }
 	// A request this client made was refused (not an SSE error): the server's
 	// reason goes to the same banner so it is never swallowed.
 	| { type: "request_error"; error: string };
@@ -104,6 +111,8 @@ export function initialState(): ClientState {
 		lastError: null,
 		settingsOpen: false,
 		settingsError: null,
+		agents: [],
+		agentJobs: {},
 	};
 }
 
@@ -113,6 +122,12 @@ export function workspaceBot(bots: BotInfo[]): BotInfo | undefined {
 
 export function robBots(bots: BotInfo[]): BotInfo[] {
 	return bots.filter((bot) => bot.kind === "rob");
+}
+
+// Mirrors isLive in src/agents/job.ts: only these phases have a process behind
+// them. Kept here because the web bundle cannot import the Node-side module.
+export function isLivePhase(phase: InstallPhase): boolean {
+	return phase === "queued" || phase === "installing" || phase === "verifying";
 }
 
 export function clientReducer(
@@ -186,6 +201,9 @@ export function clientReducer(
 
 		case "settings_error":
 			return { ...state, settingsError: action.error };
+
+		case "agents_loaded":
+			return { ...state, agents: action.agents };
 
 		case "request_error":
 			return { ...state, lastError: action.error };
@@ -330,6 +348,15 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 
 		case "allow_all":
 			return { ...state, allowAll: event.on };
+
+		case "agents":
+			return { ...state, agents: event.agents };
+
+		case "agent_job":
+			return {
+				...state,
+				agentJobs: { ...state.agentJobs, [event.job.agent]: event.job },
+			};
 
 		case "error": {
 			let next = state;

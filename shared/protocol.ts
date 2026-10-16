@@ -344,6 +344,8 @@ export type ServerEvent =
 	| { type: "dm"; entry: DmInfo }
 	| { type: "room"; event: RoomEventInfo }
 	| { type: "allow_all"; on: boolean }
+	| { type: "agents"; agents: AgentStatusView[] }
+	| { type: "agent_job"; job: AgentJobView }
 	| { type: "error"; bot?: string; message: string };
 
 export interface SendBody {

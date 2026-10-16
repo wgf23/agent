@@ -3,11 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import fastifyStatic from "@fastify/static";
 import { type FastifyInstance, fastify } from "fastify";
+import { type AgentId, agentById } from "../../shared/agents.js";
 import type {
 	AllowAllBody,
 	ApprovalBody,
 	BotDraft,
+	CancelAgentBody,
 	CreateRoomBody,
+	InstallAgentBody,
 	InterruptBody,
 	RoomInterruptBody,
 	RoomSendBody,
@@ -18,6 +21,11 @@ import type {
 	SessionOpenBody,
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
+import {
+	AgentSupervisor,
+	toAgentJobView,
+	toAgentStatusView,
+} from "../agents/supervisor.js";
 import { verifyApiKey } from "../cli/setup.js";
 import { childProviderEnv, resolveConfig } from "../config/resolve.js";
 import { startLspServers } from "../lsp/manager.js";
@@ -145,6 +153,8 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		runtime,
 	} satisfies HubOptions;
 
+	const supervisor = new AgentSupervisor();
+
 	// The workspace chat and the rob roster coexist: creating a bot never
 	// replaces the default assistant, and no mode switch is involved.
 	const summaries = await listSessions(workspaceRoot);
@@ -160,7 +170,13 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		rooms: resolved.config.rooms,
 		providerEnv: runtime.current().providerEnv,
 	});
-	const hub: Hub = new CompositeHub(workspace, robHub, workspaceRoot, runtime);
+	const hub: Hub = new CompositeHub(
+		workspace,
+		robHub,
+		workspaceRoot,
+		runtime,
+		supervisor,
+	);
 
 	const settingsService = new SettingsService({
 		homeDir,
@@ -179,10 +195,15 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		verify: verifyApiKey,
 	});
 
-	const app = await buildServer(hub, options.webDist, {
-		service: settingsService,
-		host,
-	});
+	const app = await buildServer(
+		hub,
+		options.webDist,
+		{
+			service: settingsService,
+			host,
+		},
+		{ supervisor, host },
+	);
 
 	try {
 		await app.listen({ port, host });
@@ -191,6 +212,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 			`Failed to listen on ${host}:${port}: ${errorText(error)}\n`,
 		);
 		await hub.dispose();
+		await supervisor.dispose();
 		await mcp.dispose();
 		await lsp.dispose();
 		await plugins.dispose();
@@ -208,6 +230,7 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		shuttingDown = true;
 		void (async () => {
 			await hub.dispose().catch(() => undefined);
+			await supervisor.dispose().catch(() => undefined);
 			await mcp.dispose().catch(() => undefined);
 			await lsp.dispose().catch(() => undefined);
 			await plugins.dispose().catch(() => undefined);
@@ -226,10 +249,17 @@ export interface SettingsBinding {
 	host: string;
 }
 
+export interface AgentsBinding {
+	supervisor: AgentSupervisor;
+	// The resolved bind host. A non-loopback bind refuses installs and cancels.
+	host: string;
+}
+
 export async function buildServer(
 	hub: Hub,
 	webDist: string | undefined,
 	settings?: SettingsBinding,
+	agents?: AgentsBinding,
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
 
@@ -247,13 +277,30 @@ export async function buildServer(
 		};
 		// Subscribe before the snapshot so no event can slip between them: both
 		// calls are synchronous, so the client sees the snapshot then the tail.
-		const unsubscribe = hub.subscribe(send);
+		const unsubscribers: Array<() => void> = [hub.subscribe(send)];
+		if (agents !== undefined) {
+			unsubscribers.push(
+				agents.supervisor.subscribe((event) => {
+					if (event.type === "list") {
+						send({
+							type: "agents",
+							agents: event.agents.map(toAgentStatusView),
+						});
+					} else {
+						send({ type: "agent_job", job: toAgentJobView(event.job) });
+					}
+				}),
+			);
+		}
 		send(hub.hello());
+		// The first list populates the panel and warms the probe cache. It emits
+		// through the subscription above, so it becomes the initial snapshot.
+		if (agents !== undefined) void agents.supervisor.list().catch(() => {});
 
 		const heartbeat = setInterval(() => raw.write(": ping\n\n"), 25_000);
 		const cleanup = (): void => {
 			clearInterval(heartbeat);
-			unsubscribe();
+			for (const unsubscribe of unsubscribers) unsubscribe();
 		};
 		request.raw.on("close", cleanup);
 		request.raw.on("error", cleanup);
@@ -464,6 +511,90 @@ export async function buildServer(
 			provider: result.provider,
 			...(result.warning !== undefined ? { warning: result.warning } : {}),
 		});
+	});
+
+	app.get("/api/agents", async (_request, reply) => {
+		if (agents === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot manage agents" });
+		}
+		const states = await agents.supervisor.list();
+		return { agents: states.map(toAgentStatusView) };
+	});
+
+	app.post("/api/agents/install", async (request, reply) => {
+		if (agents === undefined) {
+			return reply
+				.code(501)
+				.send({ ok: false, error: "this server cannot manage agents" });
+		}
+		// Installing an external CLI is a local-only action, like writing a key:
+		// a server bound to a non-loopback host would let the network seed one.
+		if (!isLoopbackHost(agents.host)) {
+			return reply.code(403).send({
+				ok: false,
+				error: "installing agents is only allowed on a loopback bind",
+			});
+		}
+		const body = request.body as Partial<InstallAgentBody> | undefined;
+		if (typeof body?.id !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {id}" });
+		}
+		const row = agentById(body.id);
+		if (row === undefined) {
+			return reply
+				.code(400)
+				.send({ ok: false, error: `Unknown agent: ${body.id}` });
+		}
+		// Installing runs a global npm command, so the body must opt in.
+		if (body.confirm !== true) {
+			return reply
+				.code(428)
+				.send({ ok: false, error: "expected {confirm: true}" });
+		}
+		const result = await agents.supervisor.install(
+			row.id as AgentId,
+			async () => ({ ok: true }),
+		);
+		// A refusal while another install is live is a conflict, not a new job.
+		if (!result.alreadyRunning && result.job.phase === "failed") {
+			return reply.code(409).send({
+				ok: false,
+				error: result.job.error ?? "another install is running",
+			});
+		}
+		return reply.code(202).send({
+			ok: true,
+			job: toAgentJobView(result.job),
+			alreadyRunning: result.alreadyRunning,
+		});
+	});
+
+	app.post("/api/agents/cancel", async (request, reply) => {
+		if (agents === undefined) {
+			return reply
+				.code(501)
+				.send({ ok: false, error: "this server cannot manage agents" });
+		}
+		if (!isLoopbackHost(agents.host)) {
+			return reply.code(403).send({
+				ok: false,
+				error: "cancelling agents is only allowed on a loopback bind",
+			});
+		}
+		const body = request.body as Partial<CancelAgentBody> | undefined;
+		if (typeof body?.id !== "string") {
+			return reply.code(400).send({ ok: false, error: "expected {id}" });
+		}
+		const row = agentById(body.id);
+		if (row === undefined) {
+			return reply
+				.code(400)
+				.send({ ok: false, error: `Unknown agent: ${body.id}` });
+		}
+		const cancelled = agents.supervisor.cancel(row.id as AgentId);
+		return reply.send({ ok: true, cancelled });
 	});
 
 	if (webDist !== undefined && existsSync(path.join(webDist, "index.html"))) {
