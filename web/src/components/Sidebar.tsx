@@ -28,8 +28,6 @@ interface Props {
 	botActiveSession: Record<string, string | null>;
 	selectedId: string | null;
 	onSelect: (name: string) => void;
-	allowAll: boolean;
-	onToggleAllowAll: (on: boolean) => void;
 	onNewSession: (bot: string) => void;
 	onOpenSession: (bot: string, id: string) => void;
 	onRenameSession: (bot: string, id: string, title: string) => Promise<void>;
@@ -63,8 +61,6 @@ export default function Sidebar(props: Props) {
 		botActiveSession,
 		selectedId,
 		onSelect,
-		allowAll,
-		onToggleAllowAll,
 		onNewSession,
 		onOpenSession,
 		onRenameSession,
@@ -329,20 +325,6 @@ export default function Sidebar(props: Props) {
 			</div>
 
 			<div className="sidebar-footer">
-				<label className="switch-row">
-					<span className="switch-text">
-						<span className="switch-title">自动放行工具</span>
-						<span className="switch-desc">
-							{allowAll ? "所有工具调用不再询问" : "写文件、执行命令前询问"}
-						</span>
-					</span>
-					<input
-						type="checkbox"
-						className="switch"
-						checked={allowAll}
-						onChange={(event) => onToggleAllowAll(event.target.checked)}
-					/>
-				</label>
 				<div className="sidebar-meta">
 					<span className={`connection-dot ${connection}`} />
 					<span>{CONNECTION_LABEL[connection]}</span>

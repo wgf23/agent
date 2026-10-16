@@ -439,10 +439,17 @@ export async function buildServer(
 
 	app.post("/api/allow-all", (request, reply) => {
 		const body = request.body as Partial<AllowAllBody> | undefined;
-		if (typeof body?.on !== "boolean") {
-			return reply.code(400).send({ error: "expected {on}" });
+		const mode = body?.mode;
+		if (mode !== "off" && mode !== "session" && mode !== "all") {
+			return reply.code(400).send({ error: "expected {mode}" });
 		}
-		hub.setAllowAll(body.on);
+		if (mode === "session" && typeof body?.sessionId !== "string") {
+			return reply.code(400).send({ error: "session mode needs a sessionId" });
+		}
+		hub.setAllowAll(
+			mode,
+			mode === "session" ? (body?.sessionId ?? null) : null,
+		);
 		return reply.send({ ok: true });
 	});
 

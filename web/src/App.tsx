@@ -72,6 +72,20 @@ export default function App() {
 	const selectedRob =
 		botName === null ? undefined : robs.find((rob) => rob.name === botName);
 
+	// The allow-all scope the composer shows. "session" applies only to the
+	// session it was set for, so on any other session it reads as off.
+	const currentSessionId =
+		currentBot === null
+			? null
+			: currentBot.name === workspace?.name
+				? state.activeSessionId
+				: (state.botActiveSession[currentBot.name] ?? null);
+	const allowAllMode =
+		state.allowAll.mode === "session" &&
+		state.allowAll.sessionId !== currentSessionId
+			? "off"
+			: state.allowAll.mode;
+
 	// Keep the selection valid as the bot roster and rooms (re)load.
 	useEffect(() => {
 		const known =
@@ -142,8 +156,6 @@ export default function App() {
 				botActiveSession={state.botActiveSession}
 				selectedId={selectedId}
 				onSelect={openConversation}
-				allowAll={state.allowAll}
-				onToggleAllowAll={hub.setAllowAll}
 				onNewSession={hub.newSession}
 				onOpenSession={hub.openSession}
 				onRenameSession={hub.renameSession}
@@ -270,6 +282,10 @@ export default function App() {
 									model={currentBot.model || state.model}
 									status={botState?.status ?? "idle"}
 									configured={configured}
+									allowAllMode={allowAllMode}
+									onAllowAllChange={(next) =>
+										hub.setAllowAll(next, currentSessionId)
+									}
 									onSend={(text, images) =>
 										hub.send(currentBot.name, text, images)
 									}

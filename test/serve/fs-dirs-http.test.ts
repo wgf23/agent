@@ -56,7 +56,7 @@ function stubHub(workspaceRoot: string): Hub {
 			activeSessionId: null,
 			transcript: [],
 			approvals: [],
-			allowAll: false,
+			allowAll: { mode: "off", sessionId: null },
 		}),
 		subscribe: () => () => {},
 		dispatch: () => {},

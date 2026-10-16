@@ -1,4 +1,5 @@
 import type {
+	AllowAllMode,
 	ApprovalChoice,
 	BotDraft,
 	BotInfo,
@@ -60,7 +61,7 @@ export interface Hub {
 	dispatch(bot: string, text: string, images?: ImagePart[]): void;
 	interrupt(bot: string): void;
 	resolveApproval(id: string, decision: ApprovalChoice): void;
-	setAllowAll(on: boolean): void;
+	setAllowAll(mode: AllowAllMode, sessionId: string | null): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
 	closeSession?(bot: string, id: string): Promise<void>;

@@ -1,4 +1,5 @@
 import type {
+	AllowAllMode,
 	ApprovalRequestInfo,
 	BotInfo,
 	BotState,
@@ -102,7 +103,7 @@ export class SoloHub extends EventBus implements Hub {
 			activeSessionId: this.session.id,
 			transcript: toTranscript(this.session.messages),
 			approvals: [...this.pendingApprovals.values()].map((p) => p.request),
-			allowAll: this.allowAll.get(),
+			allowAll: this.allowAll.state(),
 		};
 	}
 
@@ -156,9 +157,9 @@ export class SoloHub extends EventBus implements Hub {
 		this.emit({ type: "approval_resolved", id, decision });
 	}
 
-	setAllowAll(on: boolean): void {
-		this.allowAll.set(on);
-		this.emit({ type: "allow_all", on });
+	setAllowAll(mode: AllowAllMode, sessionId: string | null): void {
+		this.allowAll.setMode(mode, sessionId);
+		this.emit({ type: "allow_all", allowAll: this.allowAll.state() });
 	}
 
 	async newSession(bot: string): Promise<void> {
@@ -284,6 +285,7 @@ export class SoloHub extends EventBus implements Hub {
 			approval: (request) => this.requestApproval(request),
 			yesAll: false,
 			allowAll: this.allowAll,
+			sessionId: () => this.session.id,
 			onAutoApproved: (request) =>
 				this.emit({
 					type: "notice",

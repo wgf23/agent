@@ -2,6 +2,7 @@ import type {
 	AgentEvent,
 	AgentJobView,
 	AgentStatusView,
+	AllowAllState,
 	ApprovalRequestInfo,
 	BotInfo,
 	BotState,
@@ -85,7 +86,7 @@ export interface ClientState {
 	memory: Record<string, MemoryEntryView[]>;
 	transcripts: Record<string, TranscriptMessage[]>;
 	approvals: ApprovalRequestInfo[];
-	allowAll: boolean;
+	allowAll: AllowAllState;
 	dms: DmInfo[];
 	rooms: Record<string, ClientRoom>;
 	notices: NoticeView[];
@@ -145,7 +146,7 @@ export function initialState(): ClientState {
 		memory: {},
 		transcripts: {},
 		approvals: [],
-		allowAll: false,
+		allowAll: { mode: "off", sessionId: null },
 		dms: [],
 		rooms: {},
 		notices: [],
@@ -501,7 +502,7 @@ function applyServerEvent(state: ClientState, event: ServerEvent): ClientState {
 			return applyRoomEvent(state, event.event);
 
 		case "allow_all":
-			return { ...state, allowAll: event.on };
+			return { ...state, allowAll: event.allowAll };
 
 		case "agents":
 			return { ...state, agents: event.agents };

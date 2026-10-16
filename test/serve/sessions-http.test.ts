@@ -181,7 +181,7 @@ describe("POST /api/sessions/delete and /api/sessions/rename", () => {
 				activeSessionId: null,
 				transcript: [],
 				approvals: [],
-				allowAll: false,
+				allowAll: { mode: "off", sessionId: null },
 			}),
 			subscribe: () => () => {},
 			dispatch: () => {},

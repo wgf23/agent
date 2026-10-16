@@ -1,4 +1,5 @@
 import type {
+	AllowAllMode,
 	ApprovalChoice,
 	BotInfo,
 	BotState,
@@ -110,13 +111,14 @@ export class TeamHub extends EventBus implements Hub {
 			store: this.store,
 			clock: this.options.clock ?? systemClock,
 			timer: this.options.timer ?? systemTimer,
-			authorizerFactory: ({ name, rules, approval }) =>
+			authorizerFactory: ({ name, rules, approval, sessionId }) =>
 				createAuthorizer({
 					workspaceRoot: this.options.workspaceRoot,
 					rules,
 					approval,
 					yesAll: false,
 					allowAll: this.options.allowAll,
+					sessionId,
 					onAutoApproved: (request) =>
 						this.emit({
 							type: "notice",
@@ -166,7 +168,7 @@ export class TeamHub extends EventBus implements Hub {
 			activeSessionId: null,
 			transcript: [],
 			approvals: [],
-			allowAll: this.options.allowAll.get(),
+			allowAll: this.options.allowAll.state(),
 		};
 	}
 
@@ -263,9 +265,9 @@ export class TeamHub extends EventBus implements Hub {
 		}
 	}
 
-	setAllowAll(on: boolean): void {
-		this.options.allowAll.set(on);
-		this.emit({ type: "allow_all", on });
+	setAllowAll(mode: AllowAllMode, sessionId: string | null): void {
+		this.options.allowAll.setMode(mode, sessionId);
+		this.emit({ type: "allow_all", allowAll: this.options.allowAll.state() });
 	}
 
 	async newSession(bot: string): Promise<void> {

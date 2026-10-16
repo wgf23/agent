@@ -31,6 +31,9 @@ export interface AuthorizerOptions {
 	approval: Approval;
 	yesAll: boolean;
 	allowAll?: AllowAll;
+	// The session this authorizer answers for, read live so a rob that switches
+	// channels is scoped correctly. Absent means only the "all" scope applies.
+	sessionId?: () => string | null;
 	onAutoApproved?: (request: ApprovalRequest) => void;
 }
 
@@ -71,7 +74,7 @@ export function createAuthorizer(options: AuthorizerOptions): Authorize {
 			return { allowed: true };
 		}
 
-		if (options.allowAll?.get() === true) {
+		if (options.allowAll?.allows(options.sessionId?.() ?? null) === true) {
 			if (dangerous) options.onAutoApproved?.(request);
 			return { allowed: true };
 		}

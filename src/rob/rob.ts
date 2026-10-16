@@ -46,6 +46,7 @@ export interface AuthorizerInput {
 	name: RobName;
 	rules: PermissionRules;
 	approval: Approval;
+	sessionId?: () => string | null;
 }
 
 export type AuthorizerFactory = (input: AuthorizerInput) => Authorize;
@@ -118,6 +119,7 @@ export class Rob {
 			name: options.name,
 			rules: options.rules,
 			approval: (request) => this.team.requestApproval(this.name, request),
+			sessionId: () => this.channelId,
 		});
 		this.backend =
 			options.backend?.kind === "cli"

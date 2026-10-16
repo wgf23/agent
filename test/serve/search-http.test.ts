@@ -158,7 +158,7 @@ describe("GET /api/search", () => {
 				activeSessionId: null,
 				transcript: [],
 				approvals: [],
-				allowAll: false,
+				allowAll: { mode: "off", sessionId: null },
 			}),
 			subscribe: () => () => {},
 			dispatch: () => {},

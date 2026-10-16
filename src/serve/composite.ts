@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentByCommand, missingCommandMessage } from "../../shared/agents.js";
 import {
+	type AllowAllMode,
 	type ApprovalChoice,
 	type BotDraft,
 	type BotInfo,
@@ -115,9 +116,9 @@ export class CompositeHub extends EventBus implements Hub {
 		else this.robs.resolveApproval(id, decision);
 	}
 
-	setAllowAll(on: boolean): void {
+	setAllowAll(mode: AllowAllMode, sessionId: string | null): void {
 		// One shared AllowAll backs both hubs; the workspace emits the event.
-		this.workspace.setAllowAll(on);
+		this.workspace.setAllowAll(mode, sessionId);
 	}
 
 	newSession(bot: string): Promise<void> {

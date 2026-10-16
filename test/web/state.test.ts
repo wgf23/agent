@@ -59,7 +59,7 @@ const hello: ServerEvent = {
 	transcript: [],
 	approvals: [],
 	rooms: [],
-	allowAll: false,
+	allowAll: { mode: "off", sessionId: null },
 };
 
 describe("clientReducer", () => {

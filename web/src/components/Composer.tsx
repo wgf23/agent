@@ -12,13 +12,16 @@ import {
 	readImageFile,
 	toImagePart,
 } from "../images";
-import type { BotStatus, ImagePart } from "../protocol";
+import type { AllowAllMode, BotStatus, ImagePart } from "../protocol";
 import { ArrowUpIcon, ImageIcon, StopIcon, XIcon } from "./icons";
 
 interface Props {
 	model: string;
 	status: BotStatus;
 	configured: boolean;
+	// The runtime allow-all scope, shown as the dropdown under the composer.
+	allowAllMode: AllowAllMode;
+	onAllowAllChange: (mode: AllowAllMode) => void;
 	// Images ride along with the text; the composer's chips are what becomes a
 	// PickedImage list, and the send clears them.
 	onSend: (text: string, images: ImagePart[]) => void;
@@ -31,6 +34,8 @@ export default function Composer({
 	model,
 	status,
 	configured,
+	allowAllMode,
+	onAllowAllChange,
 	onSend,
 	onInterrupt,
 }: Props) {
@@ -218,11 +223,27 @@ export default function Composer({
 					</div>
 				</div>
 			</div>
-			<p className="composer-hint">
-				{busy
-					? "插话会在下一步注入；停止会清空待发送的插话"
-					: "Enter 发送 · Shift+Enter 换行 · 图片随消息一起发送"}
-			</p>
+			<div className="composer-tools">
+				<label className="allow-all-control">
+					<span className="allow-all-label">自动放行工具</span>
+					<select
+						className="allow-all-select"
+						value={allowAllMode}
+						onChange={(event) =>
+							onAllowAllChange(event.target.value as AllowAllMode)
+						}
+					>
+						<option value="off">关闭</option>
+						<option value="session">本次会话放行</option>
+						<option value="all">所有会话放行</option>
+					</select>
+				</label>
+				<span className="composer-hint">
+					{busy
+						? "插话会在下一步注入；停止会清空待发送的插话"
+						: "Enter 发送 · Shift+Enter 换行 · 图片随消息一起发送"}
+				</span>
+			</div>
 		</div>
 	);
 }

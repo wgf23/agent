@@ -450,7 +450,7 @@ export type ServerEvent =
 			activeSessionId: string | null;
 			transcript: TranscriptMessage[];
 			approvals: ApprovalRequestInfo[];
-			allowAll: boolean;
+			allowAll: AllowAllState;
 	  }
 	| { type: "bots"; bots: BotInfo[]; states: BotState[] }
 	| { type: "settings"; provider: ProviderView }
@@ -475,7 +475,7 @@ export type ServerEvent =
 	| { type: "notice"; bot: string; text: string }
 	| { type: "dm"; entry: DmInfo }
 	| { type: "room"; event: RoomEventInfo }
-	| { type: "allow_all"; on: boolean }
+	| { type: "allow_all"; allowAll: AllowAllState }
 	| { type: "agents"; agents: AgentStatusView[] }
 	| { type: "agent_job"; job: AgentJobView }
 	// An agent wrote to the workspace. An empty `paths` means "refresh whatever
@@ -501,8 +501,18 @@ export interface ApprovalBody {
 	decision: ApprovalChoice;
 }
 
+export type AllowAllMode = "off" | "session" | "all";
+
+// The runtime allow-all scope. `session` applies only to sessionId; `all`
+// applies everywhere; `off` applies nowhere. In-memory only.
+export interface AllowAllState {
+	mode: AllowAllMode;
+	sessionId: string | null;
+}
+
 export interface AllowAllBody {
-	on: boolean;
+	mode: AllowAllMode;
+	sessionId?: string | null;
 }
 
 export interface SessionNewBody {

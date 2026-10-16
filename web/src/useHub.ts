@@ -16,6 +16,7 @@ import {
 } from "./api";
 import type {
 	AgentListResponse,
+	AllowAllMode,
 	ApprovalChoice,
 	BotDraft,
 	FileListResponse,
@@ -76,7 +77,7 @@ export interface Hub {
 	readFile: (path: string) => void;
 	interrupt: (bot: string) => void;
 	respondApproval: (id: string, decision: ApprovalChoice) => void;
-	setAllowAll: (on: boolean) => void;
+	setAllowAll: (mode: AllowAllMode, sessionId: string | null) => void;
 	newSession: (bot: string) => void;
 	openSession: (bot: string, id: string) => void;
 	// Rejects with the server's message so the row can show it inline.
@@ -217,10 +218,20 @@ export function useHub(): Hub {
 		[],
 	);
 
-	const setAllowAll = useCallback((on: boolean) => {
-		dispatch({ type: "server", event: { type: "allow_all", on } });
-		post("/api/allow-all", { on }).catch(() => {});
-	}, []);
+	const setAllowAll = useCallback(
+		(mode: AllowAllMode, sessionId: string | null) => {
+			const scoped = mode === "session" ? sessionId : null;
+			dispatch({
+				type: "server",
+				event: {
+					type: "allow_all",
+					allowAll: { mode, sessionId: scoped },
+				},
+			});
+			post("/api/allow-all", { mode, sessionId: scoped }).catch(() => {});
+		},
+		[],
+	);
 
 	const newSession = useCallback((bot: string) => {
 		post("/api/sessions/new", { bot }).catch(() => {});
