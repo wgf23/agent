@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { expandPluginCommand, loadPlugins } from "../../src/plugins/load.js";
+import { loadPlugins } from "../../src/plugins/load.js";
 import { executeTool } from "../../src/tools/registry.js";
 
 const FAKE_PLUGIN = fileURLToPath(
@@ -208,6 +208,29 @@ describe("loadPlugins", () => {
 		expect(result.commands.map((command) => command.name)).toEqual(["dup"]);
 	});
 
+	it("rejects a plugin command that collides with a file-based command", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "my-agent-plugin-cmd-"));
+		tempDirs.push(dir);
+		await mkdir(path.join(dir, ".my-agent", "commands"), { recursive: true });
+		await writeFile(
+			path.join(dir, ".my-agent", "commands", "foo.md"),
+			"---\nname: foo\ndescription: File command\n---\nBody.",
+			"utf8",
+		);
+		const bad = await writePlugin(
+			'export default { name: "x", commands: [{ name: "foo", description: "d", body: "b" }] };\n',
+		);
+
+		const result = await loadPlugins([bad], dir);
+
+		expect(result.errors).toEqual([
+			`plugin ${bad}: command "foo" collides with the file-based command "foo".`,
+		]);
+		expect(result.commands).toEqual([
+			{ name: "foo", description: "File command", body: "Body." },
+		]);
+	});
+
 	it("dedupes a spec listed twice so it loads once", async () => {
 		const result = await loadPlugins([FAKE_PLUGIN, FAKE_PLUGIN], process.cwd());
 
@@ -290,27 +313,26 @@ describe("loadPlugins", () => {
 	});
 });
 
-describe("expandPluginCommand", () => {
-	const commands = [
-		{
-			name: "greet",
-			description: "Greet someone by name",
-			body: "Say hello to $ARGUMENTS.",
-		},
-		{ name: "digest", description: "Summarize", body: "Summarize the day." },
-	];
-
-	it("substitutes $ARGUMENTS and appends when the body has no token", () => {
-		expect(expandPluginCommand("/greet Ada", commands)).toBe(
-			"Say hello to Ada.",
+describe("loadPlugins commands", () => {
+	it("returns the file-based commands first, then the plugin commands", async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), "my-agent-plugin-merge-"));
+		tempDirs.push(dir);
+		await mkdir(path.join(dir, ".my-agent", "commands"), { recursive: true });
+		await writeFile(
+			path.join(dir, ".my-agent", "commands", "alpha.md"),
+			"---\nname: alpha\ndescription: From a file\n---\nAlpha body.",
+			"utf8",
 		);
-		expect(expandPluginCommand("/digest today", commands)).toBe(
-			"Summarize the day. today",
+		const plugin = await writePlugin(
+			'export default { name: "x", commands: [{ name: "beta", description: "From a plugin", body: "Beta body." }] };\n',
 		);
-	});
 
-	it("returns null for an unknown command or a plain prompt", () => {
-		expect(expandPluginCommand("/unknown", commands)).toBeNull();
-		expect(expandPluginCommand("hello", commands)).toBeNull();
+		const result = await loadPlugins([plugin], dir);
+
+		expect(result.errors).toEqual([]);
+		expect(result.commands).toEqual([
+			{ name: "alpha", description: "From a file", body: "Alpha body." },
+			{ name: "beta", description: "From a plugin", body: "Beta body." },
+		]);
 	});
 });

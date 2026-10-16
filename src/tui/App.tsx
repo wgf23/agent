@@ -11,10 +11,9 @@ import {
 	splitForCompaction,
 	summarizeMessages,
 } from "../agent/compact.js";
+import { type Command, expandCommand } from "../commands/commands.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import { type AllowAll, parseAllowAllArg } from "../permissions/allow-all.js";
-import { expandPluginCommand } from "../plugins/load.js";
-import type { PluginCommand } from "../plugins/types.js";
 import { friendlyProviderError } from "../providers/errors.js";
 import type {
 	Message,
@@ -59,7 +58,7 @@ export interface AppProps {
 	initialSessionId?: string;
 	extraTools?: Tool[];
 	extraInstructions?: string;
-	pluginCommands?: PluginCommand[];
+	commands?: Command[];
 	startupLines?: string[];
 	compaction?: CompactionSettings;
 	hooks?: HooksConfig;
@@ -94,7 +93,7 @@ export function App({
 	initialSessionId,
 	extraTools,
 	extraInstructions,
-	pluginCommands,
+	commands,
 	startupLines,
 	compaction,
 	hooks,
@@ -162,12 +161,12 @@ export function App({
 
 	useEffect(() => {
 		setCustomCommands(
-			(pluginCommands ?? []).map((command) => ({
+			(commands ?? []).map((command) => ({
 				name: `/${command.name}`,
 				hint: command.description,
 			})),
 		);
-	}, [pluginCommands]);
+	}, [commands]);
 
 	const setAllowAll = useCallback(
 		(arg: string) => {
@@ -344,7 +343,7 @@ export function App({
 			const text = raw.trim();
 			if (text === "") return;
 			if (text.startsWith("/")) {
-				const expanded = expandPluginCommand(text, pluginCommands ?? []);
+				const expanded = expandCommand(text, commands ?? []);
 				if (expanded !== null) {
 					if (controllerRef.current !== null) return;
 					void send(expanded);
@@ -365,16 +364,7 @@ export function App({
 			if (controllerRef.current !== null) return;
 			void send(text);
 		},
-		[
-			model,
-			exit,
-			clear,
-			compact,
-			send,
-			setAllowAll,
-			attachImage,
-			pluginCommands,
-		],
+		[model, exit, clear, compact, send, setAllowAll, attachImage, commands],
 	);
 
 	const cancel = useCallback(() => {

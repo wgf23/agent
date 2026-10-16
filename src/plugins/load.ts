@@ -1,19 +1,18 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { BUILTIN_COMMAND_NAMES, type Command } from "../commands/commands.js";
+import { loadCommands } from "../commands/load.js";
 import { tools as builtinTools } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
-import {
-	ARGUMENTS_TOKEN,
-	BUILTIN_COMMAND_NAMES,
-	type MyAgentPlugin,
-	type PluginCommand,
-} from "./types.js";
+import type { MyAgentPlugin } from "./types.js";
 
 export interface LoadedPlugins {
 	tools: Tool[];
-	commands: PluginCommand[];
+	// Every slash command the workspace offers, file-based first, then the
+	// plugin contributions that survived the collision checks.
+	commands: Command[];
 	extraInstructions: string;
 	errors: string[];
 	dispose: () => Promise<void>;
@@ -30,7 +29,7 @@ export async function loadPlugins(
 	extraInstructions?: string,
 ): Promise<LoadedPlugins> {
 	const tools: Tool[] = [];
-	const commands: PluginCommand[] = [];
+	const pluginCommands: Command[] = [];
 	const prompts: string[] = [];
 	const errors: string[] = [];
 	const disposers: Array<{
@@ -41,6 +40,8 @@ export async function loadPlugins(
 	const builtinNames = new Set(builtinTools.map((tool) => tool.name));
 	const toolOwners = new Map<string, string>();
 	const builtinCommandNames = new Set(BUILTIN_COMMAND_NAMES);
+	const fileCommands = await loadCommands(workspaceRoot);
+	const fileCommandNames = new Set(fileCommands.map((command) => command.name));
 	const commandOwners = new Map<string, string>();
 
 	for (const spec of new Set(specs)) {
@@ -65,6 +66,7 @@ export async function loadPlugins(
 		const commandCollision = collidingCommand(
 			plugin,
 			builtinCommandNames,
+			fileCommandNames,
 			commandOwners,
 		);
 		if (commandCollision !== undefined) {
@@ -77,7 +79,7 @@ export async function loadPlugins(
 			toolOwners.set(tool.name, plugin.name);
 		}
 		for (const command of plugin.commands ?? []) {
-			commands.push(command);
+			pluginCommands.push(command);
 			commandOwners.set(command.name, plugin.name);
 		}
 		if (
@@ -99,7 +101,7 @@ export async function loadPlugins(
 
 	return {
 		tools,
-		commands,
+		commands: [...fileCommands, ...pluginCommands],
 		extraInstructions: sections.join("\n\n"),
 		errors,
 		dispose: async () => {
@@ -115,32 +117,6 @@ export async function loadPlugins(
 			}
 		},
 	};
-}
-
-// Expands a submitted "/name args" line against the loaded plugin commands.
-// The arguments substitute into the body's $ARGUMENTS token; a body without one
-// appends them. An unknown name or a non-command line yields null so the caller
-// falls back to its built-in handling.
-export function expandPluginCommand(
-	text: string,
-	commands: readonly PluginCommand[],
-): string | null {
-	const input = text.trim();
-	if (!input.startsWith("/")) return null;
-
-	const whitespace = input.search(/\s/);
-	const token = whitespace === -1 ? input : input.slice(0, whitespace);
-	const name = token.slice(1);
-	if (name === "") return null;
-
-	const args = whitespace === -1 ? "" : input.slice(whitespace).trim();
-	const command = commands.find((entry) => entry.name === name);
-	if (command === undefined) return null;
-
-	if (command.body.includes(ARGUMENTS_TOKEN)) {
-		return command.body.split(ARGUMENTS_TOKEN).join(args);
-	}
-	return args === "" ? command.body : `${command.body.trimEnd()} ${args}`;
 }
 
 async function importPlugin(
@@ -310,11 +286,15 @@ function collidingTool(
 function collidingCommand(
 	plugin: MyAgentPlugin,
 	builtinNames: ReadonlySet<string>,
+	fileNames: ReadonlySet<string>,
 	owners: ReadonlyMap<string, string>,
 ): string | undefined {
 	for (const command of plugin.commands ?? []) {
 		if (builtinNames.has(command.name)) {
 			return `command "${command.name}" collides with the built-in command "${command.name}".`;
+		}
+		if (fileNames.has(command.name)) {
+			return `command "${command.name}" collides with the file-based command "${command.name}".`;
 		}
 		const owner = owners.get(command.name);
 		if (owner !== undefined) {

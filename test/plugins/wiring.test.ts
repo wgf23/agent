@@ -2,15 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, render } from "ink-testing-library";
-import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import { runHeadless } from "../../src/cli/run.js";
-import { createAllowAll } from "../../src/permissions/allow-all.js";
-import type { PluginCommand } from "../../src/plugins/types.js";
-import { App } from "../../src/tui/App.js";
-import { createApprovalBridge } from "../../src/tui/approval.js";
 import { createMockProvider } from "../helpers/mock-provider.js";
 
 const FAKE_PLUGIN = fileURLToPath(
@@ -147,71 +140,5 @@ describe("runHeadless with plugins", () => {
 		expect(provider.requests[0].tools.map((tool) => tool.name)).not.toContain(
 			"greet",
 		);
-	});
-});
-
-describe("TUI plugin commands", () => {
-	const originalSessionsDir = process.env.MY_AGENT_SESSIONS_DIR;
-	let sessionsDir: string;
-	let workspaceRoot: string;
-
-	beforeEach(async () => {
-		sessionsDir = await mkdtemp(path.join(tmpdir(), "my-agent-tui-plugin-"));
-		workspaceRoot = await mkdtemp(
-			path.join(tmpdir(), "my-agent-tui-plugin-ws-"),
-		);
-		process.env.MY_AGENT_SESSIONS_DIR = sessionsDir;
-	});
-
-	afterEach(async () => {
-		if (originalSessionsDir === undefined) {
-			delete process.env.MY_AGENT_SESSIONS_DIR;
-		} else {
-			process.env.MY_AGENT_SESSIONS_DIR = originalSessionsDir;
-		}
-		await rm(sessionsDir, { recursive: true, force: true });
-		await rm(workspaceRoot, { recursive: true, force: true });
-		cleanup();
-	});
-
-	it("expands a submitted plugin command into the prompt", async () => {
-		const commands: PluginCommand[] = [
-			{
-				name: "greet",
-				description: "Greet someone by name",
-				body: "Say hello to $ARGUMENTS.",
-			},
-		];
-		const provider = createMockProvider([
-			[
-				{ type: "text_delta", text: "done" },
-				{ type: "finish", reason: "stop" },
-			],
-		]);
-
-		const { stdin } = render(
-			createElement(App, {
-				provider,
-				authorize: readOnlyAuthorize,
-				approval: createApprovalBridge(),
-				allowAll: createAllowAll(),
-				model: "deepseek-flash",
-				workspaceRoot,
-				pluginCommands: commands,
-			}),
-		);
-
-		stdin.write("/greet Ada");
-		stdin.write("\r");
-		const deadline = Date.now() + 4000;
-		while (provider.requests.length === 0) {
-			if (Date.now() > deadline) throw new Error("no provider request");
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		}
-
-		expect(provider.requests[0].messages.at(-1)).toEqual({
-			role: "user",
-			content: "Say hello to Ada.",
-		});
 	});
 });

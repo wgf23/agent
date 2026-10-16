@@ -291,7 +291,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
 				...(semanticTool === undefined ? [] : [semanticTool]),
 			]}
 			extraInstructions={plugins.extraInstructions || undefined}
-			pluginCommands={plugins.commands}
+			commands={plugins.commands}
 			startupLines={startupLines}
 			compaction={options.compaction ?? resolved.config.compaction}
 			hooks={resolved.config.hooks}
