@@ -5,7 +5,15 @@ import {
 	useRef,
 	useState,
 } from "react";
-import type { RoomMessageView } from "../protocol";
+import {
+	insertMention,
+	type MentionState,
+	mentionKeydown,
+	mentionState,
+	moveIndex,
+	rosterRows,
+} from "../mention";
+import type { BotState, RoomMessageView } from "../protocol";
 import type { ClientRoom, RoomOutcome } from "../state";
 import { formatTime } from "../time";
 import { ArrowDownIcon, ArrowUpIcon, StopIcon } from "./icons";
@@ -14,6 +22,7 @@ import Markdown from "./Markdown";
 interface Props {
 	room: ClientRoom;
 	configured: boolean;
+	botStates: Record<string, BotState>;
 	onSend: (text: string) => Promise<void>;
 	onInterrupt: () => Promise<void>;
 }
@@ -35,17 +44,34 @@ const OUTCOME_LABEL: Record<RoomOutcome, string> = {
 export default function RoomView({
 	room,
 	configured,
+	botStates,
 	onSend,
 	onInterrupt,
 }: Props) {
 	const [value, setValue] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [following, setFollowing] = useState(true);
+	const [mention, setMention] = useState<MentionState | null>(null);
+	// Esc, blur or a send hide the menu until the text or caret moves again,
+	// the web counterpart of the TUI's MENU_NEUTRAL.
+	const [dismissed, setDismissed] = useState(false);
+	const [index, setIndex] = useState(0);
+	const [rosterOpen, setRosterOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const running = room.run.phase === "running";
 	const canSend = configured && value.trim() !== "";
+	const open = mention !== null && mention.candidates.length > 0 && !dismissed;
+
+	// Recompute the menu from the live text and caret. The caret comes from the
+	// element, not state: a controlled textarea reports it reliably on change
+	// and on selection, which is what makes insert-at-caret work.
+	const recomputeMention = (el: HTMLTextAreaElement) => {
+		const caret = el.selectionStart ?? el.value.length;
+		setMention(mentionState({ text: el.value, caret, members: room.members }));
+		setIndex(0);
+	};
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: new entries must re-run the scroll
 	useLayoutEffect(() => {
@@ -77,6 +103,8 @@ export default function RoomView({
 			await onSend(value.trim());
 			setValue("");
 			setError(null);
+			setMention(null);
+			setDismissed(false);
 			if (textareaRef.current !== null) {
 				textareaRef.current.style.height = "auto";
 			}
@@ -94,13 +122,52 @@ export default function RoomView({
 		}
 	};
 
+	// One path for mouse and keyboard selection: replace the @ token, put the
+	// caret after the inserted name, and drop the menu.
+	const choose = (name: string) => {
+		const el = textareaRef.current;
+		const caret = el?.selectionStart ?? value.length;
+		const next = insertMention(value, caret, name);
+		setValue(next.text);
+		setMention(null);
+		setDismissed(false);
+		if (el !== null) {
+			el.setSelectionRange(next.caret, next.caret);
+			resize(el);
+		}
+	};
+
 	const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-		// While an IME is composing (e.g. Chinese pinyin), Enter confirms the
-		// candidate and must not send the message.
-		if (event.nativeEvent.isComposing) return;
-		if (event.key === "Enter" && !event.shiftKey) {
+		const action = mentionKeydown({
+			key: event.key,
+			shiftKey: event.shiftKey,
+			isComposing: event.nativeEvent.isComposing,
+			open,
+		});
+		if (action === "select") {
+			event.preventDefault();
+			const choice = mention?.candidates[index];
+			if (choice !== undefined) choose(choice.name);
+			return;
+		}
+		if (action === "close") {
+			event.preventDefault();
+			setDismissed(true);
+			return;
+		}
+		if (action === "submit") {
 			event.preventDefault();
 			void submit();
+			return;
+		}
+		// IME composition also suppresses the menu navigation below.
+		if (event.nativeEvent.isComposing) return;
+		if (open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+			event.preventDefault();
+			const count = mention?.candidates.length ?? 0;
+			setIndex((current) =>
+				moveIndex(current, count, event.key === "ArrowDown" ? 1 : -1),
+			);
 			return;
 		}
 		if (event.key === "Escape" && running) {
@@ -185,13 +252,54 @@ export default function RoomView({
 					</div>
 				)}
 				<div className={`composer ${running ? "busy" : ""}`}>
+					{open && mention !== null && (
+						<div
+							className="mention-menu"
+							role="listbox"
+							aria-label="选择要 @ 的成员"
+						>
+							{mention.candidates.map((candidate, position) => (
+								<button
+									key={candidate.name}
+									type="button"
+									role="option"
+									aria-selected={position === index}
+									className={`mention-item ${
+										position === index ? "active" : ""
+									}`}
+									onMouseDown={(event) => {
+										// Fires before blur, so the caret is still valid.
+										event.preventDefault();
+										choose(candidate.name);
+									}}
+								>
+									{candidate.label}
+								</button>
+							))}
+						</div>
+					)}
 					<textarea
 						ref={textareaRef}
 						className="composer-input"
 						value={value}
 						onChange={(event) => {
 							setValue(event.target.value);
+							setDismissed(false);
 							resize(event.target);
+							// An IME composition's intermediate text must not pop the
+							// candidate menu: hide it and wait for the composed result,
+							// which fires a final change with isComposing cleared.
+							if ((event.nativeEvent as InputEvent).isComposing) {
+								setMention(null);
+								return;
+							}
+							recomputeMention(event.target);
+						}}
+						onSelect={(event) => recomputeMention(event.currentTarget)}
+						onKeyUp={(event) => {
+							if (!event.nativeEvent.isComposing) {
+								recomputeMention(event.currentTarget);
+							}
 						}}
 						onKeyDown={handleKeyDown}
 						rows={1}
@@ -199,7 +307,14 @@ export default function RoomView({
 						aria-label="房间消息输入"
 					/>
 					<div className="composer-footer">
-						<span className="composer-model">{room.members.length} 名成员</span>
+						<button
+							type="button"
+							className="roster-trigger"
+							aria-haspopup="dialog"
+							onClick={() => setRosterOpen((current) => !current)}
+						>
+							{room.members.length} 名成员
+						</button>
 						<div className="composer-actions">
 							{running && (
 								<button
@@ -231,7 +346,82 @@ export default function RoomView({
 						: "Enter 发送 · Shift+Enter 换行"}
 				</p>
 			</div>
+			{rosterOpen && (
+				<RoomRosterDialog
+					room={room}
+					botStates={botStates}
+					onClose={() => setRosterOpen(false)}
+				/>
+			)}
 		</section>
+	);
+}
+
+// The member roster, opened from the composer's member-count button. It reads
+// the same room.members the picker does (AC-9) plus coordinator and status.
+function RoomRosterDialog({
+	room,
+	botStates,
+	onClose,
+}: {
+	room: ClientRoom;
+	botStates: Record<string, BotState>;
+	onClose: () => void;
+}) {
+	const rows = rosterRows(room.members, room.coordinator, botStates);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		dialogRef.current?.focus();
+	}, []);
+	return (
+		<div className="modal-backdrop">
+			<div
+				className="modal roster-dialog"
+				role="dialog"
+				aria-modal="true"
+				aria-label="房间成员"
+				ref={dialogRef}
+				tabIndex={-1}
+				onKeyDown={(event) => {
+					if (event.key === "Escape") {
+						event.preventDefault();
+						onClose();
+					}
+				}}
+			>
+				<div className="modal-header">
+					<span className="modal-title">房间成员</span>
+					<span className="modal-subtitle">{room.members.length} 人</span>
+					<button
+						type="button"
+						className="btn small"
+						onClick={onClose}
+						title="关闭（Esc）"
+					>
+						关闭
+					</button>
+				</div>
+				<div className="modal-body">
+					{rows.length === 0 ? (
+						<p className="roster-empty">这个房间还没有成员。</p>
+					) : (
+						<ul className="roster-list">
+							{rows.map((row) => (
+								<li className="roster-row" key={row.name}>
+									<span className="roster-name">{row.label}</span>
+									{row.isCoordinator && (
+										<span className="roster-badge">协调者</span>
+									)}
+									<span className="status-pill roster-status">
+										{row.statusLabel}
+									</span>
+								</li>
+							))}
+						</ul>
+					)}
+				</div>
+			</div>
+		</div>
 	);
 }
 

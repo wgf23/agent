@@ -208,6 +208,7 @@ export default function App() {
 						key={currentRoom.name}
 						room={currentRoom}
 						configured={configured}
+						botStates={state.botStates}
 						onSend={(text) => hub.sendToRoom(currentRoom.name, text)}
 						onInterrupt={() => hub.interruptRoom(currentRoom.name)}
 					/>

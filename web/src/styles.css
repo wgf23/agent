@@ -3626,3 +3626,113 @@ button.browser-crumb:hover {
 	color: var(--text-2);
 	overflow-wrap: anywhere;
 }
+
+/* ---------- Mention picker & room roster ---------- */
+
+/* The picker floats just above the composer, anchored to its width. */
+.composer {
+	position: relative;
+}
+
+.mention-menu {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	left: 10px;
+	right: 10px;
+	z-index: 20;
+	max-height: 240px;
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+	overflow-y: auto;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-lg);
+}
+
+.mention-item {
+	display: block;
+	width: 100%;
+	padding: 6px 10px;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-2);
+	font-size: 13px;
+	font-family: var(--font-mono);
+	text-align: left;
+	cursor: pointer;
+}
+
+.mention-item.active,
+.mention-item:hover {
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.roster-trigger {
+	padding: 2px 8px;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--text-3);
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.roster-trigger:hover {
+	border-color: var(--border);
+	background: var(--surface-2);
+	color: var(--text-2);
+}
+
+.modal.roster-dialog {
+	width: 320px;
+}
+
+.roster-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.roster-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	border-radius: var(--radius-sm);
+}
+
+.roster-row:hover {
+	background: var(--surface-2);
+}
+
+.roster-name {
+	font-family: var(--font-mono);
+	font-size: 13px;
+	color: var(--text);
+}
+
+.roster-badge {
+	padding: 1px 7px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.roster-status {
+	margin-left: auto;
+}
+
+.roster-empty {
+	margin: 0;
+	font-size: 12.5px;
+	color: var(--text-3);
+}
