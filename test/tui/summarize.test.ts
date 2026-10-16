@@ -30,6 +30,24 @@ describe("summarizeArgs", () => {
 		expect(summarizeArgs("grep", { pattern: "TODO" })).toBe("TODO");
 	});
 
+	it("shows the url for web_fetch", () => {
+		expect(summarizeArgs("web_fetch", { url: "https://example.com" })).toBe(
+			"https://example.com",
+		);
+	});
+
+	it("shows the query for web_search", () => {
+		expect(summarizeArgs("web_search", { query: "hello world" })).toBe(
+			"hello world",
+		);
+	});
+
+	it("shows the task for task", () => {
+		expect(summarizeArgs("task", { task: "summarize the repo" })).toBe(
+			"summarize the repo",
+		);
+	});
+
 	it("falls back to the first 60 characters of JSON", () => {
 		expect(summarizeArgs("mystery", { foo: 1 })).toBe('{"foo":1}');
 		expect(summarizeArgs("mystery", { value: "x".repeat(100) })).toBe(
