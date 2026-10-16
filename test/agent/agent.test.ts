@@ -537,6 +537,48 @@ describe("runAgent", () => {
 			isError: false,
 		});
 	});
+
+	it("deduplicates two extra tools that share a name, first one winning", async () => {
+		const dupeSchema = z.object({ text: z.string() });
+		const makeDupe = (tag: string): Tool<typeof dupeSchema> => ({
+			name: "echo",
+			description: `Echo (${tag}).`,
+			schema: dupeSchema,
+			readOnly: true,
+			async execute() {
+				return { ok: true, output: tag };
+			},
+		});
+		const provider = createMockProvider([
+			[
+				{ type: "tool_call", id: "call_1", name: "echo", args: { text: "hi" } },
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		const result = await runAgent({
+			provider,
+			model: "deepseek-flash",
+			workspaceRoot: workspace,
+			prompt: "echo",
+			extraTools: [makeDupe("first"), makeDupe("second")],
+			onEvent: () => {},
+		});
+
+		expect(result.reason).toBe("finished");
+		const names = provider.requests[0].tools.map((tool) => tool.name);
+		expect(names.filter((name) => name === "echo")).toHaveLength(1);
+		expect(toolMessages(provider.requests[1].messages)).toContainEqual({
+			role: "tool",
+			toolCallId: "call_1",
+			content: "first",
+			isError: false,
+		});
+	});
 });
 
 describe("runAgent compaction", () => {

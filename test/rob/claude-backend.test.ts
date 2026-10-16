@@ -110,8 +110,13 @@ describe("claudeToolAllowlist", () => {
 		).toEqual(["Glob", "Grep"]);
 	});
 
-	it("exposes web_search as claude's WebSearch tool", () => {
-		expect(claudeToolAllowlist({ web_search: "allow" })).toContain("WebSearch");
+	it("never exposes claude's built-in WebFetch/WebSearch, so team rounds use the MCP host tools", () => {
+		const allowlist = claudeToolAllowlist({
+			web_search: "allow",
+			web_fetch: "allow",
+		});
+		expect(allowlist).not.toContain("WebSearch");
+		expect(allowlist).not.toContain("WebFetch");
 	});
 });
 

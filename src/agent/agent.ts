@@ -127,8 +127,15 @@ export async function runAgent(
 	// A bridged tool (the turn's `extraTools`) shadows the same-named built-in:
 	// the team round is authoritative, so its definitions are the only ones we
 	// advertise and its implementation is the one lookupTool resolves to.
-	const extraTools = options.extraTools ?? [];
-	const shadowed = new Set(extraTools.map((tool) => tool.name));
+	// Extra tools are deduplicated first-come-first-served so two namesakes can
+	// never be advertised twice; that also matches lookupTool's `.find` pick.
+	const extraTools: Tool[] = [];
+	const shadowed = new Set<string>();
+	for (const tool of options.extraTools ?? []) {
+		if (shadowed.has(tool.name)) continue;
+		shadowed.add(tool.name);
+		extraTools.push(tool);
+	}
 	const definitions = [
 		...toolDefinitions().filter((definition) => !shadowed.has(definition.name)),
 		...extraTools.map(toolDefinition),

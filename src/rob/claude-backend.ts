@@ -31,7 +31,9 @@ export const CLAUDE_CONFIG_DIR_ENV = "MY_AGENT_CLAUDE_CONFIG_DIR";
 const TEAM_MCP_FILE = "team-mcp.mjs";
 const TEAM_MCP_CONFIG_FILE = "team-mcp.json";
 
-// Our tool name to Claude Code's built-in tool name.
+// Our tool name to Claude Code's built-in tool name. The web tools are
+// deliberately absent: claude's WebFetch/WebSearch run inside the claude child
+// (no network egress), so team rounds use the bridge's MCP host tools instead.
 const CLAUDE_TOOLS: ReadonlyArray<readonly [string, string]> = [
 	["read_file", "Read"],
 	["write_file", "Write"],
@@ -39,8 +41,6 @@ const CLAUDE_TOOLS: ReadonlyArray<readonly [string, string]> = [
 	["glob", "Glob"],
 	["grep", "Grep"],
 	["bash", "Bash"],
-	["web_fetch", "WebFetch"],
-	["web_search", "WebSearch"],
 ];
 
 const CLAUDE_TO_OURS = new Map(
