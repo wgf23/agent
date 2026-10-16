@@ -56,6 +56,10 @@ export interface Hub {
 	setAllowAll(on: boolean): void;
 	newSession(bot: string): Promise<void>;
 	openSession(bot: string, id: string): Promise<void>;
+	// A hub that owns durable sessions can drop or relabel one. False means the
+	// bot or the session is unknown, so the route answers 404.
+	deleteSession?(bot: string, id: string): Promise<boolean>;
+	renameSession?(bot: string, id: string, title: string): Promise<boolean>;
 	// Only a hub that manages a rob roster can create one.
 	createBot?(draft: BotDraft): Promise<BotInfo>;
 	// Only a hub with a rob roster manages rooms.

@@ -122,6 +122,17 @@ export class CompositeHub extends EventBus implements Hub {
 		return this.workspace.openSession(bot, id);
 	}
 
+	// The session store belongs to the workspace chat; a rob's history lives in
+	// its backend's own session, which this server cannot address, so a
+	// non-workspace bot resolves to false and the route answers 404.
+	deleteSession(bot: string, id: string): Promise<boolean> {
+		return this.workspace.deleteSession(bot, id);
+	}
+
+	renameSession(bot: string, id: string, title: string): Promise<boolean> {
+		return this.workspace.renameSession(bot, id, title);
+	}
+
 	createRoom(config: RoomConfig): RoomCreateOutcome {
 		return this.robs.createRoom(config);
 	}

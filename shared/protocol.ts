@@ -201,6 +201,8 @@ export interface SessionSummaryInfo {
 	updatedAt: number;
 	messageCount: number;
 	firstUserText: string;
+	// An owner-set label; null until the session is renamed.
+	title: string | null;
 }
 
 export interface DmInfo {
@@ -376,6 +378,12 @@ export interface SessionNewBody {
 export interface SessionOpenBody {
 	bot: string;
 	id: string;
+}
+
+export interface RenameSessionBody {
+	bot: string;
+	id: string;
+	title: string;
 }
 
 export type CreateBotBody = BotDraft;

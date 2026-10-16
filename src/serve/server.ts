@@ -12,6 +12,7 @@ import type {
 	CreateRoomBody,
 	InstallAgentBody,
 	InterruptBody,
+	RenameSessionBody,
 	RoomInterruptBody,
 	RoomSendBody,
 	SaveProviderBody,
@@ -375,6 +376,54 @@ export async function buildServer(
 			return reply.code(400).send({ error: "expected {bot, id}" });
 		}
 		await hub.openSession(body.bot, body.id);
+		return reply.send({ ok: true });
+	});
+
+	app.post("/api/sessions/delete", async (request, reply) => {
+		const deleteSession = hub.deleteSession?.bind(hub);
+		if (deleteSession === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot delete sessions" });
+		}
+		const body = request.body as Partial<SessionOpenBody> | undefined;
+		if (typeof body?.bot !== "string" || typeof body.id !== "string") {
+			return reply.code(400).send({ error: "expected {bot, id}" });
+		}
+		const deleted = await deleteSession(body.bot, body.id);
+		if (!deleted) {
+			return reply.code(404).send({ error: `Unknown session: ${body.id}` });
+		}
+		return reply.send({ ok: true });
+	});
+
+	app.post("/api/sessions/rename", async (request, reply) => {
+		const renameSession = hub.renameSession?.bind(hub);
+		if (renameSession === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot rename sessions" });
+		}
+		const body = request.body as Partial<RenameSessionBody> | undefined;
+		if (
+			typeof body?.bot !== "string" ||
+			typeof body.id !== "string" ||
+			typeof body.title !== "string"
+		) {
+			return reply.code(400).send({ error: "expected {bot, id, title}" });
+		}
+		// A title is trimmed and bounded here, before any hub sees it, so a blank
+		// or over-long label is a 400 and the stored value is the trimmed one.
+		const title = body.title.trim();
+		if (title === "" || title.length > 120) {
+			return reply
+				.code(400)
+				.send({ error: "title must be 1 to 120 characters" });
+		}
+		const renamed = await renameSession(body.bot, body.id, title);
+		if (!renamed) {
+			return reply.code(404).send({ error: `Unknown session: ${body.id}` });
+		}
 		return reply.send({ ok: true });
 	});
 

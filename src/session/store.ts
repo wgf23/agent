@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -61,6 +61,9 @@ export const storedSessionSchema = z.object({
 	model: z.string(),
 	usage: z.object({ input: z.number(), output: z.number() }),
 	messages: z.array(messageSchema),
+	// Optional and additive: a file written before the field existed still
+	// parses, so this does not bump SESSION_VERSION.
+	title: z.string().min(1).max(120).optional(),
 });
 
 export type StoredSession = z.infer<typeof storedSessionSchema>;
@@ -70,11 +73,14 @@ export interface SessionSummary {
 	updatedAt: number;
 	messageCount: number;
 	firstUserText: string;
+	title: string | null;
 }
 
 export type SaveSessionResult =
 	| { ok: true; path: string }
 	| { ok: false; error: string };
+
+export type DeleteSessionResult = { ok: true } | { ok: false; error: string };
 
 export type LoadSessionResult =
 	| { ok: true; session: StoredSession }
@@ -157,6 +163,38 @@ export async function loadSession(
 	return readSessionFile(sessionPath(workspaceRoot, id));
 }
 
+// Unlinks a stored session. A missing file reuses loadSession's error, so a
+// second delete reports the same literal message instead of succeeding.
+export async function deleteSession(
+	workspaceRoot: string,
+	id: string,
+): Promise<DeleteSessionResult> {
+	const filePath = sessionPath(workspaceRoot, id);
+	const loaded = await loadSession(workspaceRoot, id);
+	if (!loaded.ok) return loaded;
+	try {
+		await rm(filePath);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to delete ${filePath}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true };
+}
+
+// A label change only: updatedAt and the messages are carried over untouched,
+// so renaming never moves the session in the list.
+export async function renameSession(
+	workspaceRoot: string,
+	id: string,
+	title: string,
+): Promise<SaveSessionResult> {
+	const loaded = await loadSession(workspaceRoot, id);
+	if (!loaded.ok) return loaded;
+	return saveSession({ ...loaded.session, title });
+}
+
 // Forks a saved session into a fresh one. `at` truncates the copied messages
 // to the first `at` when given; the source file is never touched.
 export async function forkSession(
@@ -201,6 +239,7 @@ export async function listSessions(
 			updatedAt: session.updatedAt,
 			messageCount: session.messages.length,
 			firstUserText: firstUserText(session.messages),
+			title: session.title ?? null,
 		}))
 		.sort((a, b) => b.updatedAt - a.updatedAt);
 }
