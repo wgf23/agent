@@ -103,6 +103,11 @@ export function opencodePermissions(
 ): OpencodePermissionRule[] {
 	const result: OpencodePermissionRule[] = [
 		{ action: "*", resource: "*", effect: "deny" },
+		// Code Mode is the only path to the team MCP tools in v2.0.24, so the
+		// base deny must not hide its `execute` entry tool. Each inner call is
+		// still gated: team calls by the gateway authorizer, built-ins by the
+		// mapped rules below.
+		{ action: "execute", resource: "*", effect: "allow" },
 	];
 	// Later rules win, so the allows and asks are appended onto the base deny.
 	const byAction = new Map<string, Effect[]>();
@@ -389,10 +394,11 @@ export function createOpencodeBackend(
 						// The bridge env is opaque to this backend, so it travels
 						// whole rather than by key name.
 						environment: childEnv,
-						// 2.0.24 hides MCP tools behind Code Mode by default, which
-						// the total-deny base rule leaves unreachable; false keeps
-						// them direct, as the pi backend exposes them.
-						codemode: false,
+						// v2.0.24 exposes MCP tools through Code Mode only, so the
+						// agent reaches send_message/delegate via an `execute` call.
+						// With codemode false the server connects and lists tools but
+						// the agent cannot call them, so the bridge is dead.
+						codemode: true,
 					},
 				},
 			};
