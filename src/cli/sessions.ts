@@ -1,8 +1,14 @@
-import { listSessions } from "../session/store.js";
+import { forkSession, listSessions } from "../session/store.js";
 
 const FIRST_USER_MAX_CHARS = 60;
 
 export interface SessionsListOptions {
+	workspaceRoot?: string;
+}
+
+export interface SessionsForkOptions {
+	id: string;
+	at?: number;
 	workspaceRoot?: string;
 }
 
@@ -24,5 +30,18 @@ export async function runSessionsListCommand(
 			`${session.id}  ${updatedAt}  ${session.messageCount}  ${firstUser}`,
 		);
 	}
+	return 0;
+}
+
+export async function runSessionsForkCommand(
+	options: SessionsForkOptions,
+): Promise<number> {
+	const workspaceRoot = options.workspaceRoot ?? process.cwd();
+	const result = await forkSession(workspaceRoot, options.id, options.at);
+	if (!result.ok) {
+		console.error(result.error);
+		return 1;
+	}
+	console.log(result.session.id);
 	return 0;
 }

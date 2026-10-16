@@ -11,6 +11,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	forkSession,
 	latestSession,
 	listSessions,
 	loadSession,
@@ -287,6 +288,60 @@ describe("latestSession and listSessions", () => {
 
 		expect(await listSessions(workspaceRoot)).toHaveLength(1);
 		expect((await latestSession(workspaceRoot))?.id).toBe(good.id);
+	});
+});
+
+describe("forkSession", () => {
+	it("copies messages and model into a fresh id and leaves the source unchanged", async () => {
+		const source = makeSession({
+			messages: [
+				{ role: "user", content: "first" },
+				{ role: "assistant", content: [{ type: "text", text: "reply" }] },
+			],
+		});
+		await saveSession(source);
+
+		const forked = await forkSession(workspaceRoot, source.id);
+
+		expect(forked.ok).toBe(true);
+		if (!forked.ok) return;
+		expect(forked.session.id).toMatch(/^ses_[0-9a-f]{32}$/);
+		expect(forked.session.id).not.toBe(source.id);
+		expect(forked.session.model).toBe(source.model);
+		expect(forked.session.messages).toEqual(source.messages);
+
+		const reloaded = await loadSession(workspaceRoot, source.id);
+		expect(reloaded.ok).toBe(true);
+		if (!reloaded.ok) return;
+		expect(reloaded.session.messages).toEqual(source.messages);
+	});
+
+	it("keeps only the first `at` messages when given", async () => {
+		const source = makeSession({
+			messages: [
+				{ role: "user", content: "one" },
+				{ role: "user", content: "two" },
+				{ role: "user", content: "three" },
+			],
+		});
+		await saveSession(source);
+
+		const forked = await forkSession(workspaceRoot, source.id, 2);
+
+		expect(forked.ok).toBe(true);
+		if (!forked.ok) return;
+		expect(forked.session.messages).toEqual([
+			{ role: "user", content: "one" },
+			{ role: "user", content: "two" },
+		]);
+	});
+
+	it("returns the loadSession error for an unknown id", async () => {
+		const forked = await forkSession(workspaceRoot, "ses_missing");
+
+		expect(forked.ok).toBe(false);
+		if (forked.ok) return;
+		expect(forked.error).toContain("Session file not found");
 	});
 });
 

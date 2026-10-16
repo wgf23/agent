@@ -80,6 +80,10 @@ export type LoadSessionResult =
 	| { ok: true; session: StoredSession }
 	| { ok: false; error: string };
 
+export type ForkSessionResult =
+	| { ok: true; session: StoredSession }
+	| { ok: false; error: string };
+
 // The environment override is read here and only here; every other function
 // goes through sessionsRoot() so tests set one variable.
 export function sessionsRoot(
@@ -151,6 +155,27 @@ export async function loadSession(
 	id: string,
 ): Promise<LoadSessionResult> {
 	return readSessionFile(sessionPath(workspaceRoot, id));
+}
+
+// Forks a saved session into a fresh one. `at` truncates the copied messages
+// to the first `at` when given; the source file is never touched.
+export async function forkSession(
+	workspaceRoot: string,
+	id: string,
+	at?: number,
+): Promise<ForkSessionResult> {
+	const loaded = await loadSession(workspaceRoot, id);
+	if (!loaded.ok) return loaded;
+
+	const source = loaded.session;
+	const fork = newSession(workspaceRoot, source.model);
+	fork.messages =
+		at === undefined ? source.messages : source.messages.slice(0, at);
+
+	const saved = await saveSession(fork);
+	if (!saved.ok) return saved;
+
+	return { ok: true, session: fork };
 }
 
 export async function latestSession(
