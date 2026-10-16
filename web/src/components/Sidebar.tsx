@@ -4,6 +4,7 @@ import type {
 	SessionSummaryInfo,
 	UsageTotals,
 } from "../protocol";
+import type { Region, View } from "../regions";
 import { sessionLabel } from "../sessions";
 import type { ClientRoom, ConnectionStatus, SearchState } from "../state";
 import { STATUS_LABEL } from "../status";
@@ -11,9 +12,12 @@ import { FolderIcon, GearIcon, PlusIcon } from "./icons";
 import SearchPanel from "./SearchPanel";
 import SessionRow from "./SessionRow";
 
-export type View = "chat" | "plaza" | "subagents" | "agents";
+// Kept as a re-export so existing importers (App) do not break as the type
+// moves to regions.ts.
+export type { View };
 
 interface Props {
+	region: Region;
 	view: View;
 	onViewChange: (view: View) => void;
 	workspace: BotInfo | null;
@@ -49,6 +53,7 @@ interface Props {
 
 export default function Sidebar(props: Props) {
 	const {
+		region,
 		view,
 		onViewChange,
 		workspace,
@@ -78,8 +83,11 @@ export default function Sidebar(props: Props) {
 		onToggleFiles,
 	} = props;
 
-	const showSessions = workspace !== null && selectedId === workspace.name;
-	const selectedRob = robs.find((rob) => rob.name === selectedId);
+	// The assistant's session list belongs to the assistant area; there it is
+	// always on, since the area renders the assistant regardless of selectedId.
+	const showSessions = region === "assistant" && workspace !== null;
+	const selectedRob =
+		region === "bots" ? robs.find((rob) => rob.name === selectedId) : undefined;
 
 	return (
 		<aside className="sidebar">
@@ -99,20 +107,22 @@ export default function Sidebar(props: Props) {
 				</button>
 			</div>
 
-			<button
-				type="button"
-				className="btn new-chat"
-				disabled={workspace === null}
-				onClick={() => {
-					if (workspace === null) return;
-					onNewSession(workspace.name);
-					onSelect(workspace.name);
-					onViewChange("chat");
-				}}
-			>
-				<PlusIcon />
-				新建对话
-			</button>
+			{region === "assistant" && (
+				<button
+					type="button"
+					className="btn new-chat"
+					disabled={workspace === null}
+					onClick={() => {
+						if (workspace === null) return;
+						onNewSession(workspace.name);
+						onSelect(workspace.name);
+						onViewChange("chat");
+					}}
+				>
+					<PlusIcon />
+					新建对话
+				</button>
+			)}
 
 			<nav className="nav" aria-label="视图">
 				<button
@@ -122,28 +132,34 @@ export default function Sidebar(props: Props) {
 				>
 					对话
 				</button>
-				<button
-					type="button"
-					className={`nav-item ${view === "plaza" ? "active" : ""}`}
-					onClick={() => onViewChange("plaza")}
-				>
-					Bot 广场
-					{robs.length > 0 && <span className="nav-count">{robs.length}</span>}
-				</button>
-				<button
-					type="button"
-					className={`nav-item ${view === "subagents" ? "active" : ""}`}
-					onClick={() => onViewChange("subagents")}
-				>
-					子 Agent
-				</button>
-				<button
-					type="button"
-					className={`nav-item ${view === "agents" ? "active" : ""}`}
-					onClick={() => onViewChange("agents")}
-				>
-					Agents
-				</button>
+				{region === "bots" && (
+					<>
+						<button
+							type="button"
+							className={`nav-item ${view === "plaza" ? "active" : ""}`}
+							onClick={() => onViewChange("plaza")}
+						>
+							Bot 广场
+							{robs.length > 0 && (
+								<span className="nav-count">{robs.length}</span>
+							)}
+						</button>
+						<button
+							type="button"
+							className={`nav-item ${view === "subagents" ? "active" : ""}`}
+							onClick={() => onViewChange("subagents")}
+						>
+							子 Agent
+						</button>
+						<button
+							type="button"
+							className={`nav-item ${view === "agents" ? "active" : ""}`}
+							onClick={() => onViewChange("agents")}
+						>
+							Agents
+						</button>
+					</>
+				)}
 				<button
 					type="button"
 					className={`nav-item ${filesOpen ? "active" : ""}`}
@@ -173,69 +189,70 @@ export default function Sidebar(props: Props) {
 						onViewChange("chat");
 					}}
 				/>
-				<section className="sidebar-section">
-					<div className="sidebar-label">
-						<span>Bots</span>
-						<button
-							type="button"
-							className="sidebar-action"
-							onClick={onCreateBot}
-							title="创建 Bot"
-						>
-							<PlusIcon size={14} />
-						</button>
-					</div>
-					<ul className="bot-list">
-						{[workspace, ...robs].map(
-							(bot) =>
-								bot !== null && (
-									<li key={bot.name}>
-										<BotItem
-											bot={bot}
-											state={botStates[bot.name]}
-											selected={view === "chat" && bot.name === selectedId}
-											onClick={() => {
-												onSelect(bot.name);
-												onViewChange("chat");
-											}}
-										/>
-									</li>
-								),
-						)}
-					</ul>
-				</section>
-
-				<section className="sidebar-section">
-					<div className="sidebar-label">
-						<span>Rooms</span>
-						<button
-							type="button"
-							className="sidebar-action"
-							onClick={onCreateRoom}
-							title="创建房间"
-						>
-							<PlusIcon size={14} />
-						</button>
-					</div>
-					{rooms.length === 0 ? (
-						<p className="sidebar-empty">还没有房间</p>
-					) : (
-						<ul className="room-list">
-							{rooms.map((room) => (
-								<li key={room.name}>
-									<RoomItem
-										room={room}
-										selected={view === "chat" && room.name === selectedId}
+				{region === "bots" && (
+					<section className="sidebar-section">
+						<div className="sidebar-label">
+							<span>Bots</span>
+							<button
+								type="button"
+								className="sidebar-action"
+								onClick={onCreateBot}
+								title="创建 Bot"
+							>
+								<PlusIcon size={14} />
+							</button>
+						</div>
+						<ul className="bot-list">
+							{robs.map((bot) => (
+								<li key={bot.name}>
+									<BotItem
+										bot={bot}
+										state={botStates[bot.name]}
+										selected={view === "chat" && bot.name === selectedId}
 										onClick={() => {
-											onSelect(room.name);
+											onSelect(bot.name);
 											onViewChange("chat");
 										}}
 									/>
 								</li>
 							))}
 						</ul>
-					)}
-				</section>
+					</section>
+				)}
+
+				{region === "bots" && (
+					<section className="sidebar-section">
+						<div className="sidebar-label">
+							<span>Rooms</span>
+							<button
+								type="button"
+								className="sidebar-action"
+								onClick={onCreateRoom}
+								title="创建房间"
+							>
+								<PlusIcon size={14} />
+							</button>
+						</div>
+						{rooms.length === 0 ? (
+							<p className="sidebar-empty">还没有房间</p>
+						) : (
+							<ul className="room-list">
+								{rooms.map((room) => (
+									<li key={room.name}>
+										<RoomItem
+											room={room}
+											selected={view === "chat" && room.name === selectedId}
+											onClick={() => {
+												onSelect(room.name);
+												onViewChange("chat");
+											}}
+										/>
+									</li>
+								))}
+							</ul>
+						)}
+					</section>
+				)}
 
 				{showSessions && (
 					<section className="sidebar-section">
