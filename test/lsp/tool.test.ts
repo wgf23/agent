@@ -171,6 +171,28 @@ describe("diagnostics tool", () => {
 		}
 	});
 
+	it("degrades cleanly when the server binary is missing", async () => {
+		await writeFile(path.join(workspace, "app.ts"), "const x = 1;\n", "utf8");
+		const lsp = startLspServers({
+			servers: {
+				typescript: {
+					command: ["my-agent-missing-lsp-binary"],
+					extensions: [".ts"],
+				},
+			},
+			workspaceRoot: workspace,
+		});
+		try {
+			const result = await run(lsp.tools[0], { path: "app.ts" }, workspace);
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.error).toContain("lsp typescript");
+			expect(result.error).toContain("ENOENT");
+		} finally {
+			await lsp.dispose();
+		}
+	});
+
 	it("matches the server's real-path uri for a symlinked file", async () => {
 		await mkdir(path.join(workspace, "real"), { recursive: true });
 		await writeFile(

@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -318,6 +325,37 @@ describe("semantic_search", () => {
 		expect(embedded.some((text) => text.includes("ignored log"))).toBe(false);
 		expect(embedded.some((text) => text.includes("nested secret"))).toBe(false);
 		expect(embedded.some((text) => text.includes("credentials"))).toBe(false);
+	});
+
+	it("never embeds a file linked from outside the workspace", async () => {
+		const outside = await mkdtemp(path.join(tmpdir(), "semantic-outside-"));
+		try {
+			await writeFile(
+				path.join(outside, "secret.txt"),
+				"outside apple\n",
+				"utf8",
+			);
+			await symlink(
+				path.join(outside, "secret.txt"),
+				path.join(workspace, "link.txt"),
+			);
+			const { embedder, calls } = makeEmbedder();
+			const tool = createSemanticSearchTool({
+				config: CONFIG,
+				workspaceRoot: workspace,
+				env: env(),
+				embedder,
+			});
+
+			await executeTool(tool, { query: "apple" }, { workspaceRoot: workspace });
+
+			const embedded = calls.flat();
+			expect(embedded.some((text) => text.includes("outside apple"))).toBe(
+				false,
+			);
+		} finally {
+			await rm(outside, { recursive: true, force: true });
+		}
 	});
 
 	it("reuses a persisted index across tool instances", async () => {
