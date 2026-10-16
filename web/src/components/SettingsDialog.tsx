@@ -5,10 +5,13 @@ import type {
 	ProviderView,
 	SaveProviderBody,
 } from "../protocol";
+import type { Theme } from "../theme";
 
 interface Props {
 	provider: ProviderView | null;
 	presets: PresetInfo[];
+	theme: Theme;
+	onThemeChange: (theme: Theme) => void;
 	onSave: (body: SaveProviderBody) => Promise<string | undefined>;
 	onClose: () => void;
 }
@@ -32,6 +35,8 @@ function isHttpUrl(value: string): boolean {
 export default function SettingsDialog({
 	provider,
 	presets,
+	theme,
+	onThemeChange,
 	onSave,
 	onClose,
 }: Props) {
@@ -170,6 +175,18 @@ export default function SettingsDialog({
 
 				<form className="settings-form" onSubmit={submit}>
 					<div className="modal-body">
+						<label className="field">
+							<span className="field-label">主题</span>
+							<select
+								className="field-input"
+								value={theme}
+								onChange={(event) => onThemeChange(event.target.value as Theme)}
+							>
+								<option value="dark">深色</option>
+								<option value="light">浅色</option>
+							</select>
+						</label>
+
 						<label className="field">
 							<span className="field-label">提供方预设</span>
 							<select

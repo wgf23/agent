@@ -76,7 +76,7 @@ my-agent serve --open     # also open the browser
 my-agent serve [--port <port>] [--host <host>] [--open] [-m <model>] [--max-steps <n>]
 ```
 
-The server binds `127.0.0.1` by default and has no authentication, so keep it on the loopback interface. The client streams answers token by token, renders Markdown and tool cards, folds reasoning, and shows the same permission dialog (`Allow once` / `Always allow` / `Deny`) and allow-all switch as the TUI. `Stop` cancels the running turn without ending the session, and a message sent mid-turn is queued and injected at the next step.
+The server binds `127.0.0.1` by default and has no authentication, so keep it on the loopback interface. The client streams answers token by token, renders Markdown and tool cards, folds reasoning into a Think block that opens while a turn streams and collapses when it ends, and shows the same permission dialog (`Allow once` / `Always allow` / `Deny`) and allow-all switch as the TUI. The client is dark by default; Settings switches to light and remembers the choice. `Stop` cancels the running turn without ending the session, and a message sent mid-turn is queued and injected at the next step.
 
 The sidebar has two areas. The **工作区** area is the default assistant, a plain chat whose sessions are saved and listed like the TUI. The **Rob** area holds the rob roster: click `＋ 创建 Bot`, fill in a name, role, optional model, and backend, and it is written to `my-agent.json` and starts running immediately. A rob is separate from the workspace chat and never replaces it, and an existing `robs` list in `my-agent.json` shows up here too. `assistant` is reserved for the workspace and cannot be used as a rob name.
 

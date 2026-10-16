@@ -25,14 +25,17 @@
 - `@file` mentions. Typing `@` completes workspace files with an anchored accept that replaces only the token, and sending a message expands each resolvable `@path` into a bounded `Referenced files` block so the model does not need a separate read.
 - Dollar cost tracking and a run budget. The headless `[usage]` line and the TUI status row report the accumulated cost in USD, computed from per-model input, output, and cache-read rates (`deepseek-flash` and `deepseek-v4-pro` have prices; an unknown model costs 0). `--max-cost <usd>` on the root command and the `run` subcommand stops a run with a `budget` done reason once the cost exceeds the cap and exits non-zero. No cap by default.
 - Custom slash commands. Markdown files in `<workspace>/.my-agent/commands/*.md` define a command with YAML frontmatter (`name` in kebab-case, one-line `description`) and a prompt body. Typing `/name args` sends the expanded prompt, substituting `$ARGUMENTS` (or appending the arguments when the body has none), and the suggestion menu lists custom commands after the built-ins. The built-in names are skipped, a missing directory or malformed file is ignored, and a plugin command that reuses a file-based command's name is rejected as a collision. File-based and plugin commands share one list and one expansion path.
+- Folded reasoning in the web client. A `reasoning_delta` renders as a collapsible Think block that is open while its turn streams and collapses when the turn ends, and a manual toggle overrides that until the next streaming change.
 
 ### Changed
 
+- The web client is dark by default. Dark design tokens move into `:root` and light becomes an explicit `data-theme="light"` override, applied before first paint from a stored choice. The model settings dialog gains a theme select that persists to `localStorage`.
 - Rob `opencode` backends now run isolated under `~/.config/my-agent/opencode/<name>/` and receive the configured provider key as its environment variable, so rob sessions stay out of your own opencode data and a key stored with `my-agent setup` authenticates the child without exporting anything.
 - An `opencode` action is exposed as a blanket `allow` only when its rules cannot resolve any subject to something else: a scalar `allow`, or a list of catch-all `allow` entries. A pattern-specific, `deny`, or `ask` entry gates the action as `ask` instead, closing a bypass where `[{ "pattern": "rm *", "action": "deny" }, { "pattern": "*", "action": "allow" }]` was translated to an unconditional allow. `write_file` and `edit_file` share opencode's `edit` action and merge most-restrictively.
 
 ### Fixed
 
+- An `opencode` rob now reaches the team tools. The backend had pinned the team MCP server to `codemode: false`, which in opencode v2.0.24 connects the server and lists its tools but leaves them uncallable, so `send_message` and `delegate` were silently missing. The server now uses Code Mode and the permission rules keep its `execute` entry tool reachable, while each call stays gated by the gateway authorizer.
 - A `cli` rob now receives the resolved provider key in its environment, so `pi` authenticates from a key stored with `my-agent setup` or the web Settings dialog instead of reporting "No API key found".
 - A `cli` rob whose command is not on `PATH` is rejected at creation, and an already-saved one reports an actionable "command not found on PATH" message instead of the raw `spawn <cmd> ENOENT`.
 

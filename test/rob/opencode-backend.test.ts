@@ -59,6 +59,7 @@ describe("opencodePermissions", () => {
 			}),
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
 			{ action: "read", resource: "*", effect: "allow" },
 			{ action: "glob", resource: "*", effect: "allow" },
 			{ action: "grep", resource: "*", effect: "allow" },
@@ -79,6 +80,7 @@ describe("opencodePermissions", () => {
 			}),
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
 			{ action: "read", resource: "*", effect: "allow" },
 			{ action: "shell", resource: "*", effect: "ask" },
 		]);
@@ -101,6 +103,7 @@ describe("opencodePermissions", () => {
 			}),
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
 			{ action: "read", resource: "*", effect: "allow" },
 			{ action: "glob", resource: "*", effect: "allow" },
 			{ action: "grep", resource: "*", effect: "allow" },
@@ -120,6 +123,7 @@ describe("opencodePermissions", () => {
 			}),
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
 			{ action: "edit", resource: "*", effect: "ask" },
 		]);
 	});
@@ -136,11 +140,12 @@ describe("opencodePermissions", () => {
 			}),
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
 			{ action: "read", resource: "*", effect: "allow" },
 		]);
 	});
 
-	it("stays a total deny when everything is denied", () => {
+	it("denies every mapped action and keeps only the Code Mode entry", () => {
 		expect(
 			opencodePermissions({
 				read_file: "deny",
@@ -150,7 +155,10 @@ describe("opencodePermissions", () => {
 				edit_file: "deny",
 				bash: "deny",
 			}),
-		).toEqual([{ action: "*", resource: "*", effect: "deny" }]);
+		).toEqual([
+			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
+		]);
 	});
 
 	it("gates an empty rule list instead of allowing it", () => {
@@ -167,6 +175,7 @@ describe("opencodePermissions", () => {
 			}),
 		).toEqual([
 			{ action: "*", resource: "*", effect: "deny" },
+			{ action: "execute", resource: "*", effect: "allow" },
 			{ action: "read", resource: "*", effect: "allow" },
 			{ action: "shell", resource: "*", effect: "ask" },
 		]);
@@ -553,6 +562,7 @@ describe("opencode backend", () => {
 					system: "review code",
 					permissions: [
 						{ action: "*", resource: "*", effect: "deny" },
+						{ action: "execute", resource: "*", effect: "allow" },
 						{ action: "read", resource: "*", effect: "allow" },
 						{ action: "shell", resource: "*", effect: "allow" },
 					],
@@ -969,6 +979,7 @@ describe("opencode team bridge", () => {
 					system: "review code",
 					permissions: [
 						{ action: "*", resource: "*", effect: "deny" },
+						{ action: "execute", resource: "*", effect: "allow" },
 						{ action: "read", resource: "*", effect: "allow" },
 						{ action: "myagent-team_*", resource: "*", effect: "ask" },
 					],
@@ -980,7 +991,7 @@ describe("opencode team bridge", () => {
 						type: "local",
 						command: ["node", shimFile],
 						environment: TEAM_CHILD_ENV,
-						codemode: false,
+						codemode: true,
 					},
 				},
 			},

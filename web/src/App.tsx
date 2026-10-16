@@ -16,6 +16,7 @@ import Sidebar, { type View } from "./components/Sidebar";
 import SubagentFeed from "./components/SubagentFeed";
 import WakeEditor from "./components/WakeEditor";
 import { isLivePhase, robBots, workspaceBot } from "./state";
+import { applyTheme, readTheme, saveTheme, type Theme } from "./theme";
 import { useHub } from "./useHub";
 
 type BotTab = "chat" | "memory" | "wake" | "settings";
@@ -39,6 +40,17 @@ export default function App() {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [roomDialogOpen, setRoomDialogOpen] = useState(false);
 	const [filesOpen, setFilesOpen] = useState(true);
+	// Theme is client-only; it is applied to <html> and mirrored in localStorage.
+	const [theme, setTheme] = useState<Theme>(readTheme);
+
+	useEffect(() => {
+		applyTheme(theme);
+	}, [theme]);
+
+	const changeTheme = (next: Theme) => {
+		setTheme(next);
+		saveTheme(next);
+	};
 
 	const bots = state.bots;
 	const workspace = workspaceBot(bots);
@@ -346,6 +358,8 @@ export default function App() {
 				<SettingsDialog
 					provider={state.provider}
 					presets={state.presets}
+					theme={theme}
+					onThemeChange={changeTheme}
 					onSave={hub.saveProvider}
 					onClose={hub.closeSettings}
 				/>

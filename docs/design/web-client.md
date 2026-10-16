@@ -198,7 +198,8 @@ web/dist 路径在 `src/index.ts` 用 `new URL("../web/dist", import.meta.url)` 
 | `src/components/icons.tsx` | 内联 SVG 图标（避免 emoji 字体差异） |
 | `src/clipboard.ts` | 复制到剪贴板（代码块与整条消息共用） |
 | `src/status.ts` | Bot 状态中文文案 |
-| `src/styles.css` | 设计令牌 + 浅色/深色（`prefers-color-scheme`） |
+| `src/styles.css` | 设计令牌，深色为默认，浅色经 `data-theme="light"` 覆盖 |
+| `src/theme.ts` | 主题读写（`readTheme`/`applyTheme`/`saveTheme`，存 `localStorage`） |
 
 ## 关键流程
 
