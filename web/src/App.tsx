@@ -105,6 +105,8 @@ export default function App() {
 				onToggleAllowAll={hub.setAllowAll}
 				onNewSession={hub.newSession}
 				onOpenSession={hub.openSession}
+				onRenameSession={hub.renameSession}
+				onDeleteSession={hub.deleteSession}
 				onCreateBot={openCreateBot}
 				onCreateRoom={() => setRoomDialogOpen(true)}
 				onOpenSettings={hub.openSettings}

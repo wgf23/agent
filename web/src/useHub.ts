@@ -52,6 +52,9 @@ export interface Hub {
 	setAllowAll: (on: boolean) => void;
 	newSession: (bot: string) => void;
 	openSession: (bot: string, id: string) => void;
+	// Rejects with the server's message so the row can show it inline.
+	renameSession: (bot: string, id: string, title: string) => Promise<void>;
+	deleteSession: (bot: string, id: string) => Promise<void>;
 	createBot: (draft: BotDraft) => Promise<void>;
 	createRoom: (
 		name: string,
@@ -141,6 +144,21 @@ export function useHub(): Hub {
 
 	const openSession = useCallback((bot: string, id: string) => {
 		post("/api/sessions/open", { bot, id }).catch(() => {});
+	}, []);
+
+	// A rename and a delete are reflected by the server's next `sessions` (or
+	// `session_opened`) event, which replaces the list wholesale, so no reducer
+	// change is needed. The rejection carries the server's reason so the row
+	// can print it.
+	const renameSession = useCallback(
+		async (bot: string, id: string, title: string) => {
+			await postJson("/api/sessions/rename", { bot, id, title });
+		},
+		[],
+	);
+
+	const deleteSession = useCallback(async (bot: string, id: string) => {
+		await postJson("/api/sessions/delete", { bot, id });
 	}, []);
 
 	const createBot = useCallback(async (draft: BotDraft) => {
@@ -281,6 +299,8 @@ export function useHub(): Hub {
 		setAllowAll,
 		newSession,
 		openSession,
+		renameSession,
+		deleteSession,
 		createBot,
 		createRoom,
 		sendToRoom,

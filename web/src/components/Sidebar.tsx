@@ -4,9 +4,11 @@ import type {
 	SessionSummaryInfo,
 	UsageTotals,
 } from "../protocol";
+import { sessionLabel } from "../sessions";
 import type { ClientRoom, ConnectionStatus } from "../state";
 import { STATUS_LABEL } from "../status";
 import { GearIcon, PlusIcon } from "./icons";
+import SessionRow from "./SessionRow";
 
 export type View = "chat" | "plaza" | "agents";
 
@@ -25,6 +27,8 @@ interface Props {
 	onToggleAllowAll: (on: boolean) => void;
 	onNewSession: (bot: string) => void;
 	onOpenSession: (bot: string, id: string) => void;
+	onRenameSession: (bot: string, id: string, title: string) => Promise<void>;
+	onDeleteSession: (bot: string, id: string) => Promise<void>;
 	onCreateBot: () => void;
 	onCreateRoom: () => void;
 	onOpenSettings: () => void;
@@ -48,6 +52,8 @@ export default function Sidebar(props: Props) {
 		onToggleAllowAll,
 		onNewSession,
 		onOpenSession,
+		onRenameSession,
+		onDeleteSession,
 		onCreateBot,
 		onCreateRoom,
 		onOpenSettings,
@@ -190,25 +196,20 @@ export default function Sidebar(props: Props) {
 						) : (
 							<ul className="session-list">
 								{sessions.map((session) => (
-									<li key={session.id}>
-										<button
-											type="button"
-											className={`session-item ${
-												session.id === activeSessionId ? "active" : ""
-											}`}
-											onClick={() => {
-												onOpenSession(workspace.name, session.id);
-												onViewChange("chat");
-											}}
-										>
-											<span className="session-title">
-												{session.firstUserText || "新会话"}
-											</span>
-											<span className="session-meta">
-												{session.messageCount} 条消息
-											</span>
-										</button>
-									</li>
+									<SessionRow
+										key={session.id}
+										session={session}
+										label={sessionLabel(session)}
+										active={session.id === activeSessionId}
+										onOpen={() => {
+											onOpenSession(workspace.name, session.id);
+											onViewChange("chat");
+										}}
+										onRename={(title) =>
+											onRenameSession(workspace.name, session.id, title)
+										}
+										onDelete={() => onDeleteSession(workspace.name, session.id)}
+									/>
 								))}
 							</ul>
 						)}
