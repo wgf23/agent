@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AgentsPanel from "./components/AgentsPanel";
 import BotHeader from "./components/BotHeader";
 import BotMemoryPanel from "./components/BotMemoryPanel";
@@ -70,6 +70,20 @@ export default function App() {
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [mobileNavOpen]);
+
+	// When the drawer closes, hand focus back to the hamburger so a keyboard user
+	// is not dropped at the document start. The guard keeps the initial mount
+	// (already closed) from grabbing focus.
+	const menuRef = useRef<HTMLButtonElement>(null);
+	const wasNavOpen = useRef(false);
+	useEffect(() => {
+		if (mobileNavOpen) {
+			wasNavOpen.current = true;
+		} else if (wasNavOpen.current) {
+			wasNavOpen.current = false;
+			menuRef.current?.focus();
+		}
 	}, [mobileNavOpen]);
 
 	const changeTheme = (next: Theme) => {
@@ -253,6 +267,7 @@ export default function App() {
 				<div className="mobile-bar">
 					<button
 						type="button"
+						ref={menuRef}
 						className="icon-btn mobile-bar-menu"
 						aria-label="打开导航"
 						aria-expanded={mobileNavOpen}

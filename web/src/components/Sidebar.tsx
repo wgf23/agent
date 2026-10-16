@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type {
 	BotInfo,
 	BotState,
@@ -102,6 +103,14 @@ export default function Sidebar(props: Props) {
 		onNavigate?.();
 	};
 
+	// When the drawer opens, move focus into it (its close button) so keyboard
+	// and screen-reader users land in the panel they just opened. On desktop
+	// `mobileOpen` stays false, so focus is never stolen.
+	const closeRef = useRef<HTMLButtonElement>(null);
+	useEffect(() => {
+		if (mobileOpen) closeRef.current?.focus();
+	}, [mobileOpen]);
+
 	return (
 		<aside className={`sidebar${mobileOpen ? " drawer-open" : ""}`}>
 			<div className="sidebar-brand">
@@ -120,6 +129,7 @@ export default function Sidebar(props: Props) {
 				</button>
 				<button
 					type="button"
+					ref={closeRef}
 					className="icon-btn sidebar-close"
 					title="关闭导航"
 					aria-label="关闭导航"
