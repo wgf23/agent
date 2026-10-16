@@ -10,6 +10,7 @@ import {
 	BOT_RECORD_VERSION,
 	type BotRecord,
 	MAX_MEMORY_ENTRIES,
+	MAX_MEMORY_TEXT,
 	MAX_RING_TURNS,
 	type MemoryEntry,
 	type Turn,
@@ -181,6 +182,135 @@ describe("reconcileRing", () => {
 		const result = reconcileRing(record({ turns: [existing] }), existing);
 
 		expect(result).toEqual({ turns: [existing], digest: null });
+	});
+});
+
+describe("digest fidelity", () => {
+	// Fills the ring with `target` as the oldest turn, then appends one more so
+	// `target` is the evicted turn whose digest comes back.
+	function digestOf(target: Turn): MemoryEntry {
+		const turns = [
+			target,
+			...Array.from({ length: MAX_RING_TURNS - 1 }, (_, index) =>
+				turn({
+					id: `trn_${(index + 1).toString(16).padStart(32, "0")}`,
+					seq: index + 2,
+					at: index + 2,
+				}),
+			),
+		];
+		const result = reconcileRing(
+			record({ turns }),
+			turn({ id: `trn_${"f".repeat(32)}`, seq: MAX_RING_TURNS + 1, at: 99 }),
+		);
+		if (result.digest === null) throw new Error("expected an evicted digest");
+		return result.digest;
+	}
+
+	it("keeps the first ask, the last assistant text, and the artifact path", () => {
+		const digest = digestOf(
+			turn({
+				id: "trn_000000000000000000000000000000aa",
+				messages: [
+					{ role: "user", content: "wire the digest" },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "text",
+								text: "decision: keep the ledger; artifact docs/x.md",
+							},
+						],
+					},
+				],
+			}),
+		);
+
+		expect(digest.text).toBe(
+			"wire the digest\ndecision: keep the ledger; artifact docs/x.md\nartifacts: docs/x.md",
+		);
+		expect(digest.id).toBe("mem_000000000000000000000000000000aa");
+	});
+
+	it("takes the last assistant message when several are present", () => {
+		const digest = digestOf(
+			turn({
+				id: "trn_000000000000000000000000000000ab",
+				messages: [
+					{ role: "user", content: "pick a plan" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "first draft" }],
+					},
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "final decision" }],
+					},
+				],
+			}),
+		);
+
+		expect(digest.text).toBe("pick a plan\nfinal decision");
+	});
+
+	it("digests a turn with no assistant text to its first user line", () => {
+		const digest = digestOf(
+			turn({
+				id: "trn_000000000000000000000000000000ac",
+				messages: [{ role: "user", content: "just the ask" }],
+			}),
+		);
+
+		expect(digest.text).toBe("just the ask");
+	});
+
+	it("truncates the assembled digest to MAX_MEMORY_TEXT", () => {
+		const digest = digestOf(
+			turn({
+				id: "trn_000000000000000000000000000000ad",
+				messages: [
+					{ role: "user", content: "x".repeat(MAX_MEMORY_TEXT + 500) },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "TAILMARK" }],
+					},
+				],
+			}),
+		);
+
+		expect(digest.text).toHaveLength(MAX_MEMORY_TEXT);
+		expect(digest.text).not.toContain("TAILMARK");
+	});
+
+	it("falls back to the message count when the turn has no text", () => {
+		expect(
+			digestOf(
+				turn({ id: "trn_000000000000000000000000000000ae", messages: [] }),
+			).text,
+		).toBe("0 messages");
+		expect(
+			digestOf(
+				turn({
+					id: "trn_000000000000000000000000000000af",
+					messages: [{ role: "user", content: "" }],
+				}),
+			).text,
+		).toBe("1 messages");
+	});
+
+	it("produces the same digest for an unchanged turn", () => {
+		const rich = turn({
+			id: "trn_000000000000000000000000000000b0",
+			messages: [
+				{ role: "user", content: "ask" },
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "done docs/y.md" }],
+				},
+			],
+		});
+
+		expect(digestOf(rich)).toEqual(digestOf(rich));
 	});
 });
 

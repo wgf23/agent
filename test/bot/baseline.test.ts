@@ -63,7 +63,7 @@ function record(overrides: Partial<BotRecord> = {}): BotRecord {
 }
 
 describe("bot ledger baseline", () => {
-	it("digests an evicted turn to its first user text and drops the rest", () => {
+	it("digests an evicted turn to its first ask, last decision, and artifacts", () => {
 		const rich = turn({
 			id: "trn_000000000000000000000000000000aa",
 			seq: 1,
@@ -93,9 +93,12 @@ describe("bot ledger baseline", () => {
 
 		const result = reconcileRing(record({ turns: [rich, ...rest] }), next);
 
-		// The evicted turn keeps only its first user line; the decision and the
-		// artifact path are lost. This is the coarseness T8 targets.
-		expect(result.digest?.text).toBe("short ask");
+		// T8 raised fidelity: the evicted turn now keeps its first ask, the
+		// assistant's decision, and the artifact path it touched. The original
+		// coarseness (first user line only) is asserted gone.
+		expect(result.digest?.text).toBe(
+			"short ask\ndecision: use the ledger; artifact docs/x.md\nartifacts: docs/x.md",
+		);
 	});
 
 	it("converges byte-equal when the same delta is applied twice", () => {

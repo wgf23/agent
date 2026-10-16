@@ -106,20 +106,81 @@ export function replay(
 
 function digestFor(turn: Turn): MemoryEntry {
 	const firstUser = turn.messages.find((message) => message.role === "user");
+	const parts: string[] = [];
+	if (firstUser !== undefined && firstUser.content !== "") {
+		parts.push(firstUser.content);
+	}
+	const assistant = lastAssistantText(turn.messages);
+	if (assistant !== "") parts.push(assistant);
+	const artifacts = artifactPaths(turn.messages);
+	if (artifacts.length > 0) parts.push(`artifacts: ${artifacts.join(" ")}`);
+
+	// Assembled first, then bounded once, so a long ask cannot silently drop the
+	// decision and paths that follow it.
 	const text =
-		firstUser === undefined || firstUser.content === ""
+		parts.length === 0
 			? `${turn.messages.length} messages`
-			: firstUser.content;
+			: parts.join("\n").slice(0, MAX_MEMORY_TEXT);
+
 	return {
 		// Derived from the turn id, so the same turn always digests to the same
 		// entry and a repeated fold stays idempotent.
 		id: `mem_${turn.id.slice("trn_".length)}`,
 		at: turn.at,
 		kind: "digest",
-		text: text.slice(0, MAX_MEMORY_TEXT),
+		text,
 		source: { sessionId: turn.sessionId, turnSeq: turn.seq },
 		supersedes: [],
 	};
+}
+
+// The last thing the assistant said, so a digest keeps the turn's decision or
+// summary rather than only the prompt that started it. Walks backward so the
+// final assistant message wins when a turn has several.
+function lastAssistantText(messages: Message[]): string {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message.role !== "assistant") continue;
+		const blocks: string[] = [];
+		for (const block of message.content) {
+			if (block.type === "text" && block.text !== "") blocks.push(block.text);
+		}
+		const joined = blocks.join("\n").trim();
+		if (joined !== "") return joined;
+	}
+	return "";
+}
+
+// Every string the turn emitted: user and tool content are plain strings, an
+// assistant message contributes its text blocks (not reasoning or tool calls).
+function messageTexts(messages: Message[]): string[] {
+	const texts: string[] = [];
+	for (const message of messages) {
+		if (message.role === "assistant") {
+			for (const block of message.content) {
+				if (block.type === "text" && block.text !== "") texts.push(block.text);
+			}
+		} else if (message.content !== "") {
+			texts.push(message.content);
+		}
+	}
+	return texts;
+}
+
+// Path-like tokens: at least one directory segment and a filename extension, so
+// `docs/x.md` survives while prose, versions, and bare words do not.
+function artifactPaths(messages: Message[]): string[] {
+	const pattern = /(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]+/g;
+	const paths: string[] = [];
+	const seen = new Set<string>();
+	for (const text of messageTexts(messages)) {
+		for (const match of text.matchAll(pattern)) {
+			if (seen.has(match[0])) continue;
+			seen.add(match[0]);
+			paths.push(match[0]);
+		}
+	}
+	return paths;
 }
 
 function enforceCaps(memory: MemoryEntry[]): MemoryEntry[] | null {
