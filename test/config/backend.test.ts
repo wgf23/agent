@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { unsupportedCommandMessage } from "../../shared/agents.js";
 import { parseRobs } from "../../src/config/project-file.js";
 import { globalConfigPath, resolveConfig } from "../../src/config/resolve.js";
+import { robConfigSchema } from "../../src/rob/types.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
 
 let workspace: string;
@@ -87,13 +89,12 @@ describe("rob backend schema", () => {
 	});
 
 	it("rejects an unknown cli command with a friendly message", () => {
-		const result = parseRobs([
-			{
-				name: "reviewer",
-				role: "review",
-				backend: { ...PI_BACKEND, command: "codex" },
-			},
-		]);
+		const draft = {
+			name: "reviewer",
+			role: "review",
+			backend: { ...PI_BACKEND, command: "codex" },
+		};
+		const result = parseRobs([draft]);
 
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
@@ -101,6 +102,14 @@ describe("rob backend schema", () => {
 		expect(result.error).toContain(
 			'Only "pi", "opencode", and "claude" are supported',
 		);
+
+		const parsed = robConfigSchema.safeParse(draft);
+		expect(parsed.success).toBe(false);
+		if (parsed.success) return;
+		const commandIssue = parsed.error.issues.find(
+			(issue) => issue.path.join(".") === "backend.command",
+		);
+		expect(commandIssue?.message).toBe(unsupportedCommandMessage("codex"));
 	});
 
 	it("accepts an opencode cli backend with a provider and model", () => {
