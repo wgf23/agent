@@ -74,6 +74,12 @@ interface Props {
 	onReadFile: (path: string) => void;
 	// Wide screens show the panel inline; a sidebar button folds it away.
 	open: boolean;
+	// Mobile (<640px) shows the panel as a right-side overlay instead, driven by
+	// its own state so the two defaults (desktop on, mobile off) never fight.
+	mobileOpen: boolean;
+	// The overlay's own close verb: the header button and the backdrop call it,
+	// leaving the sidebar's "文件" toggle untouched.
+	onClose: () => void;
 }
 
 // One row of the upload list: the file still held so an `exists` refusal can be
@@ -131,6 +137,8 @@ export default function FileTree({
 	filesChanged,
 	onReadFile,
 	open,
+	mobileOpen,
+	onClose,
 }: Props) {
 	// The directory the panel lists at its top level; workspace-relative, so ""
 	// is the workspace root and the paths the routes take stay unchanged.
@@ -828,9 +836,29 @@ export default function FileTree({
 	const listing = cache[root];
 
 	return (
-		<aside className={`file-panel ${open ? "" : "closed"}`} aria-label="文件树">
+		<aside
+			className={`file-panel ${open ? "" : "closed"}${mobileOpen ? " mobile-open" : ""}`}
+			aria-label="文件树"
+		>
+			{mobileOpen && (
+				<button
+					type="button"
+					className="panel-backdrop"
+					aria-label="关闭文件面板"
+					onClick={onClose}
+				/>
+			)}
 			<div className="file-panel-header">
 				<h2 className="file-panel-title">文件</h2>
+				<button
+					type="button"
+					className="icon-btn file-panel-close"
+					title="关闭文件面板"
+					aria-label="关闭文件面板"
+					onClick={onClose}
+				>
+					✕
+				</button>
 				<button
 					type="button"
 					className="icon-btn"

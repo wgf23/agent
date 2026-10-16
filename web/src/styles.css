@@ -3387,8 +3387,17 @@ button.browser-crumb:hover {
 		visibility: visible;
 	}
 
-	/* The file panel is the same overlay pattern on the right; open/closed is
-	   still the existing `open`/`.closed` state. */
+	/* The file panel is the same overlay pattern on the right. Its `open`/
+	   `.closed` state is desktop's; on mobile visibility follows `.mobile-open`
+	   alone, so the desktop default (open) does not pop the overlay on load. */
+	.file-panel.closed {
+		display: flex;
+	}
+
+	.file-panel:not(.mobile-open) {
+		display: none;
+	}
+
 	.file-panel {
 		position: fixed;
 		top: 0;

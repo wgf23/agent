@@ -51,6 +51,10 @@ export default function App() {
 	const [dialogOpen, setDialogOpen] = useState(false);
 	const [roomDialogOpen, setRoomDialogOpen] = useState(false);
 	const [filesOpen, setFilesOpen] = useState(true);
+	// The mobile file overlay has its own state: the panel defaults open inline
+	// on desktop but closed as an overlay on a phone, so one flag cannot serve
+	// both. The "文件" button flips the pair together.
+	const [mobileFilesOpen, setMobileFilesOpen] = useState(false);
 	// The mobile drawer. Client-only, never persisted: the sidebar is hidden
 	// behind it below 640px and shown as a column above.
 	const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -234,7 +238,12 @@ export default function App() {
 				usage={state.usage}
 				connection={state.connection}
 				filesOpen={filesOpen}
-				onToggleFiles={() => setFilesOpen((value) => !value)}
+				onToggleFiles={() => {
+					// Desktop reads filesOpen, mobile (<640) reads mobileFilesOpen;
+					// flipping both keeps the one button correct in either form.
+					setFilesOpen((value) => !value);
+					setMobileFilesOpen((value) => !value);
+				}}
 				mobileOpen={mobileNavOpen}
 				onNavigate={() =>
 					setMobileNavOpen((open) => drawerReducer(open, "navigate"))
@@ -457,6 +466,8 @@ export default function App() {
 				filesChanged={state.filesChanged}
 				onReadFile={hub.readFile}
 				open={filesOpen}
+				mobileOpen={mobileFilesOpen}
+				onClose={() => setMobileFilesOpen(false)}
 			/>
 
 			{approval !== null && (
