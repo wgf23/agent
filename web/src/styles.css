@@ -1,76 +1,21 @@
 /* ---------- Tokens ---------- */
 
-/* Dark is the first-class default. Light is opt-in from Settings, which sets
-   data-theme="light" on <html>; without it the dark tokens below apply. */
+/* Light is the first-class default, matching opencode-ui. Dark is opt-in from
+   Settings, which sets data-theme="dark" on <html>. */
 :root {
-	color-scheme: dark;
-
-	--bg: #17181c;
-	--bg-sidebar: #111215;
-	--surface: #1e1f24;
-	--surface-2: #26282e;
-	--surface-hover: #2e3037;
-	--border: #2a2c33;
-	--border-strong: #3a3d46;
-
-	--text: #ececef;
-	--text-2: #a4a8b3;
-	--text-3: #6e727e;
-
-	--accent: #7c86f5;
-	--accent-hover: #939bf7;
-	--accent-soft: rgba(124, 134, 245, 0.16);
-	--accent-text: #a3abff;
-
-	--code-bg: #131418;
-	--code-comment: #8b949e;
-	--code-keyword: #ff7b72;
-	--code-string: #a5d6ff;
-	--code-number: #79c0ff;
-	--code-title: #d2a8ff;
-	--code-attr: #ffa657;
-
-	--green: #4ade80;
-	--yellow: #fbbf24;
-	--red: #f87171;
-	--red-soft: rgba(248, 113, 113, 0.12);
-	--gray: #6b7280;
-
-	--warn-soft: rgba(251, 191, 36, 0.1);
-	--warn-border: rgba(251, 191, 36, 0.28);
-	--error-soft: rgba(248, 113, 113, 0.1);
-	--error-border: rgba(248, 113, 113, 0.3);
-
-	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-	--shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
-	--shadow-lg: 0 24px 64px -16px rgba(0, 0, 0, 0.7);
-
-	--radius-lg: 14px;
-	--radius: 10px;
-	--radius-sm: 8px;
-
-	--font-sans:
-		-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "PingFang SC",
-		"Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-	--font-mono:
-		ui-monospace, "JetBrains Mono", "SFMono-Regular", Consolas,
-		"Liberation Mono", Menlo, monospace;
-}
-
-:root[data-theme="light"] {
 	color-scheme: light;
 
-	--bg: #f7f7f5;
-	--bg-sidebar: #efeeea;
+	--bg: #fafafa;
+	--bg-sidebar: #f4f4f4;
 	--surface: #ffffff;
-	--surface-2: #f2f1ee;
-	--surface-hover: #e9e8e4;
-	--border: #e5e3dd;
-	--border-strong: #d3d0c7;
+	--surface-2: #f5f5f5;
+	--surface-hover: #ececec;
+	--border: #e8e8e8;
+	--border-strong: #d6d6d6;
 
-	--text: #1d1e22;
-	--text-2: #5d616c;
-	--text-3: #8e929c;
+	--text: #1a1a1a;
+	--text-2: #6b6b6b;
+	--text-3: #9a9a9a;
 
 	--accent: #4f5bd5;
 	--accent-hover: #434ec4;
@@ -99,6 +44,61 @@
 	--shadow-sm: 0 1px 2px rgba(20, 20, 30, 0.05);
 	--shadow-md: 0 8px 24px -12px rgba(20, 20, 30, 0.18);
 	--shadow-lg: 0 24px 64px -16px rgba(20, 20, 30, 0.35);
+
+	--radius-lg: 14px;
+	--radius: 10px;
+	--radius-sm: 8px;
+
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "PingFang SC",
+		"Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+	--font-mono:
+		ui-monospace, "JetBrains Mono", "SFMono-Regular", Consolas,
+		"Liberation Mono", Menlo, monospace;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+
+	--bg: #080808;
+	--bg-sidebar: #0d0d0d;
+	--surface: #141414;
+	--surface-2: #1c1c1c;
+	--surface-hover: #242424;
+	--border: #262626;
+	--border-strong: #383838;
+
+	--text: #ededed;
+	--text-2: #a0a0a0;
+	--text-3: #6b6b6b;
+
+	--accent: #7c86f5;
+	--accent-hover: #939bf7;
+	--accent-soft: rgba(124, 134, 245, 0.16);
+	--accent-text: #a3abff;
+
+	--code-bg: #101010;
+	--code-comment: #8b949e;
+	--code-keyword: #ff7b72;
+	--code-string: #a5d6ff;
+	--code-number: #79c0ff;
+	--code-title: #d2a8ff;
+	--code-attr: #ffa657;
+
+	--green: #4ade80;
+	--yellow: #fbbf24;
+	--red: #f87171;
+	--red-soft: rgba(248, 113, 113, 0.12);
+	--gray: #6b7280;
+
+	--warn-soft: rgba(251, 191, 36, 0.1);
+	--warn-border: rgba(251, 191, 36, 0.28);
+	--error-soft: rgba(248, 113, 113, 0.1);
+	--error-border: rgba(248, 113, 113, 0.3);
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+	--shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+	--shadow-lg: 0 24px 64px -16px rgba(0, 0, 0, 0.7);
 }
 
 /* ---------- Base ---------- */

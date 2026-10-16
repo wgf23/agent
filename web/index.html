@@ -3,19 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark light" />
+    <meta name="color-scheme" content="light dark" />
     <title>my-agent</title>
     <style>
-      /* Dark is the default; main.tsx sets data-theme="light" before render
-         when the reader has chosen light in Settings. */
+      /* Light is the default; main.tsx sets data-theme="dark" before render
+         when the reader has chosen dark in Settings. */
       html,
       body {
         margin: 0;
-        background: #17181c;
+        background: #fafafa;
       }
-      html[data-theme="light"],
-      html[data-theme="light"] body {
-        background: #f7f7f5;
+      html[data-theme="dark"],
+      html[data-theme="dark"] body {
+        background: #080808;
       }
     </style>
   </head>

@@ -182,8 +182,8 @@ export default function SettingsDialog({
 								value={theme}
 								onChange={(event) => onThemeChange(event.target.value as Theme)}
 							>
-								<option value="dark">深色</option>
 								<option value="light">浅色</option>
+								<option value="dark">深色</option>
 							</select>
 						</label>
 

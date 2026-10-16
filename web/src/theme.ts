@@ -2,12 +2,12 @@ export type Theme = "dark" | "light";
 
 const THEME_KEY = "my-agent-theme";
 
-// Dark is the default. Only an explicit stored "light" switches the app, so a
+// Light is the default. Only an explicit stored "dark" switches the app, so a
 // missing or corrupt value never leaves the reader on an unstyled theme.
 export function readTheme(
 	storage: Pick<Storage, "getItem"> = localStorage,
 ): Theme {
-	return storage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+	return storage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
 }
 
 export function applyTheme(theme: Theme): void {

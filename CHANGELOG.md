@@ -29,7 +29,7 @@
 
 ### Changed
 
-- The web client is dark by default. Dark design tokens move into `:root` and light becomes an explicit `data-theme="light"` override, applied before first paint from a stored choice. The model settings dialog gains a theme select that persists to `localStorage`.
+- The web client is light by default, matching opencode-ui. Design tokens live in `:root` and dark becomes an explicit `data-theme="dark"` override, applied before first paint from a stored choice. The model settings dialog gains a theme select that persists to `localStorage`.
 - Rob `opencode` backends now run isolated under `~/.config/my-agent/opencode/<name>/` and receive the configured provider key as its environment variable, so rob sessions stay out of your own opencode data and a key stored with `my-agent setup` authenticates the child without exporting anything.
 - An `opencode` action is exposed as a blanket `allow` only when its rules cannot resolve any subject to something else: a scalar `allow`, or a list of catch-all `allow` entries. A pattern-specific, `deny`, or `ask` entry gates the action as `ask` instead, closing a bypass where `[{ "pattern": "rm *", "action": "deny" }, { "pattern": "*", "action": "allow" }]` was translated to an unconditional allow. `write_file` and `edit_file` share opencode's `edit` action and merge most-restrictively.
 
