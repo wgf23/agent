@@ -223,6 +223,157 @@ describe("runHeadless sessions", () => {
 	});
 });
 
+describe("runHeadless images", () => {
+	let sessionsDir: string;
+	let workspaceRoot: string;
+	const originalSessionsDir = process.env.MY_AGENT_SESSIONS_DIR;
+
+	beforeEach(async () => {
+		sessionsDir = await mkdtemp(path.join(tmpdir(), "my-agent-run-img-"));
+		workspaceRoot = await mkdtemp(path.join(tmpdir(), "my-agent-run-img-ws-"));
+		process.env.MY_AGENT_SESSIONS_DIR = sessionsDir;
+	});
+
+	afterEach(async () => {
+		if (originalSessionsDir === undefined) {
+			delete process.env.MY_AGENT_SESSIONS_DIR;
+		} else {
+			process.env.MY_AGENT_SESSIONS_DIR = originalSessionsDir;
+		}
+		await rm(sessionsDir, { recursive: true, force: true });
+		await rm(workspaceRoot, { recursive: true, force: true });
+	});
+
+	it("sends the image part to the provider as an image content part", async () => {
+		const imagePath = path.join(workspaceRoot, "shot.png");
+		await writeFile(imagePath, "hello", "utf8");
+
+		const provider = createMockProvider([
+			[
+				{ type: "text_delta", text: "it is a png" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		const code = await runHeadless({
+			prompt: "what is this?",
+			imagePaths: [imagePath],
+			provider,
+			workspaceRoot,
+			env: { DEEPSEEK_API_KEY: "test-key" },
+			homeDir: workspaceRoot,
+		});
+
+		expect(code).toBe(0);
+		expect(provider.requests[0].messages).toContainEqual({
+			role: "user",
+			content: "what is this?",
+			images: [{ type: "image", mediaType: "image/png", data: "aGVsbG8=" }],
+		});
+	});
+
+	it("rejects an unsupported extension before calling the provider", async () => {
+		const imagePath = path.join(workspaceRoot, "notes.txt");
+		await writeFile(imagePath, "hello", "utf8");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const provider = createMockProvider([]);
+			const code = await runHeadless({
+				prompt: "hi",
+				imagePaths: [imagePath],
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				`Unsupported image extension ".txt": ${imagePath}`,
+			);
+			expect(provider.requests).toHaveLength(0);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("rejects a missing file before calling the provider", async () => {
+		const imagePath = path.join(workspaceRoot, "missing.png");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const provider = createMockProvider([]);
+			const code = await runHeadless({
+				prompt: "hi",
+				imagePaths: [imagePath],
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				`Image file not found: ${imagePath}`,
+			);
+			expect(provider.requests).toHaveLength(0);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("rejects an oversized file before calling the provider", async () => {
+		const imagePath = path.join(workspaceRoot, "huge.png");
+		await writeFile(imagePath, Buffer.alloc(8 * 1024 * 1024 + 1), "utf8");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const provider = createMockProvider([]);
+			const code = await runHeadless({
+				prompt: "hi",
+				imagePaths: [imagePath],
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				`Image file exceeds the 8 MiB limit: ${imagePath}`,
+			);
+			expect(provider.requests).toHaveLength(0);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("rejects more than 8 images before calling the provider", async () => {
+		const imagePaths: string[] = [];
+		for (let index = 0; index < 9; index += 1) {
+			const imagePath = path.join(workspaceRoot, `shot${index}.png`);
+			await writeFile(imagePath, "x", "utf8");
+			imagePaths.push(imagePath);
+		}
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const provider = createMockProvider([]);
+			const code = await runHeadless({
+				prompt: "hi",
+				imagePaths,
+				provider,
+				workspaceRoot,
+				env: { DEEPSEEK_API_KEY: "test-key" },
+				homeDir: workspaceRoot,
+			});
+
+			expect(code).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith("Too many images: 9 (limit 8)");
+			expect(provider.requests).toHaveLength(0);
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+});
+
 describe("runHeadless with MCP servers", () => {
 	let workspaceRoot: string;
 	const originalSessionsDir = process.env.MY_AGENT_SESSIONS_DIR;

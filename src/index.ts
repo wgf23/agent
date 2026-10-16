@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import { DEFAULT_PORT } from "../shared/protocol.js";
 import { runConfigCommand } from "./cli/config.js";
 import { runHeadless } from "./cli/run.js";
@@ -11,6 +11,7 @@ import { runSkillAdd, runSkillList, runSkillRemove } from "./cli/skill.js";
 import { runTeamCommand } from "./cli/team.js";
 import { runServe } from "./serve/server.js";
 import { runTui } from "./tui/index.js";
+import { MAX_IMAGES_PER_MESSAGE } from "./util/image.js";
 
 // src/ and dist/ both sit one level below package.json, so this resolves from
 // either the tsx source run or the built bundle.
@@ -24,6 +25,7 @@ interface RunOptions {
 	yes?: boolean;
 	continue?: boolean;
 	session?: string;
+	image?: string[];
 }
 
 interface TeamOptions {
@@ -60,9 +62,19 @@ function collect(value: string, previous: string[]): string[] {
 	return [...previous, value];
 }
 
+function collectImage(value: string, previous: string[]): string[] {
+	if (previous.length >= MAX_IMAGES_PER_MESSAGE) {
+		throw new InvalidArgumentError(
+			`at most ${MAX_IMAGES_PER_MESSAGE} images per message`,
+		);
+	}
+	return [...previous, value];
+}
+
 async function run(prompt: string, options: RunOptions): Promise<void> {
 	process.exitCode = await runHeadless({
 		prompt,
+		imagePaths: options.image,
 		model: options.model,
 		maxSteps: parseMaxSteps(options.maxSteps),
 		yesAll: options.yes,
@@ -85,6 +97,12 @@ program
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
+	.option(
+		"--image <path>",
+		"attach an image to the prompt (repeatable)",
+		collectImage,
+		[],
+	)
 	.version(VERSION, "-V, --version")
 	.action(async (prompt: string | undefined, options: RunOptions) => {
 		if (!prompt) {
@@ -109,6 +127,12 @@ program
 	.option("--yes", "auto-approve every tool call")
 	.option("--continue", "resume the latest session for this workspace")
 	.option("--session <id>", "resume a specific session by id")
+	.option(
+		"--image <path>",
+		"attach an image to the prompt (repeatable)",
+		collectImage,
+		[],
+	)
 	.action(async (prompt: string, options: RunOptions) => {
 		await run(prompt, options);
 	});

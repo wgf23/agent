@@ -32,6 +32,7 @@ my-agent            # interactive TUI
 - `--yes` auto-approves every tool call. Without it, headless mode denies any tool that needs approval and keeps going.
 - `-m, --model <spec>` picks a model, for example `deepseek/deepseek-v4-pro` or `openai/gpt-4o`.
 - `--max-steps <n>` caps the agent loop.
+- `--image <path>` attaches an image to the prompt, as a base64 `image_url` content part the model receives alongside your text. Repeatable. Supports `.png`, `.jpg`, `.jpeg`, `.gif`, and `.webp`, and rejects a missing file, an unsupported extension, or a file over 8 MiB before the run starts. A message is capped at 8 images and 20 MiB of base64 data, so an over-cap attachment is rejected before the provider is called.
 - `--continue` resumes the newest saved session for this workspace. `--session <id>` picks a specific one. Sessions are saved after every turn under `~/.local/share/my-agent/sessions/`, and `my-agent sessions list` prints them for the current workspace.
 - `my-agent --version` prints the version.
 - `my-agent config` prints the resolved provider, model, baseURL, maxSteps, and where each value came from. It never prints the key; it prints `set (env)`, `set (credentials)`, or `missing`.
@@ -39,7 +40,7 @@ my-agent            # interactive TUI
 
 ## TUI
 
-Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/allow-all`, `/quit`.
+Slash commands: `/help`, `/clear`, `/compact`, `/model`, `/allow-all`, `/image`, `/quit`.
 
 Keys:
 

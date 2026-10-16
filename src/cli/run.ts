@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 import { runAgent } from "../agent/agent.js";
 import type { AgentDoneReason, AgentEvent } from "../agent/events.js";
 import { createSubagentRunner } from "../agent/subagent.js";
@@ -24,9 +25,11 @@ import {
 	withoutSystem,
 } from "../session/store.js";
 import { createTaskTool } from "../tools/task.js";
+import { readImages } from "../util/image.js";
 
 export interface RunHeadlessOptions {
 	prompt: string;
+	imagePaths?: string[];
 	model?: string;
 	maxSteps?: number;
 	yesAll?: boolean;
@@ -51,6 +54,19 @@ export async function runHeadless(
 	const workspaceRoot = options.workspaceRoot ?? process.cwd();
 	const env = options.env ?? process.env;
 	const homeDir = options.homeDir ?? os.homedir();
+
+	// Attachments are read before any config resolution or provider work so a
+	// bad path fails fast and never reaches the network.
+	const images = await readImages(
+		(options.imagePaths ?? []).map((imagePath) =>
+			path.resolve(workspaceRoot, imagePath),
+		),
+	);
+	if (!images.ok) {
+		console.error(images.error);
+		return 1;
+	}
+
 	const resolved = resolveConfig({
 		cliModel: options.model,
 		cliMaxSteps: options.maxSteps,
@@ -141,6 +157,7 @@ export async function runHeadless(
 			model: settings.model,
 			workspaceRoot,
 			prompt: options.prompt,
+			images: images.images,
 			history: session.messages,
 			maxSteps: settings.maxSteps,
 			thinking,
