@@ -138,4 +138,185 @@ describe("cross-backend DM roundtrip", () => {
 			"Denied by the my-agent approval bridge.",
 		]);
 	}, 30_000);
+
+	it("delivers a pi rob's DM to a claude rob and carries the claude rob's reply back", async () => {
+		const binDir = path.join(workspace, "bin");
+		await mkdir(binDir, { recursive: true });
+		await copyFile(CLAUDE_FIXTURE, path.join(binDir, "claude"));
+		await chmod(path.join(binDir, "claude"), 0o755);
+
+		const alphaCalls = path.join(workspace, "alpha-calls.json");
+		const betaCalls = path.join(workspace, "beta-calls.json");
+		const betaResults = path.join(workspace, "beta-results.json");
+		await writeFile(
+			alphaCalls,
+			JSON.stringify([
+				{ name: "send_message", args: { to: "beta", text: "ping" } },
+			]),
+			"utf8",
+		);
+		await writeFile(
+			betaCalls,
+			JSON.stringify([
+				{ name: "send_message", args: { to: "alpha", text: "pong" } },
+			]),
+			"utf8",
+		);
+
+		process.env.FAKE_PI_SCENARIO = "team";
+		process.env.FAKE_PI_TEAM_CALLS = alphaCalls;
+		process.env.FAKE_CLAUDE_SCENARIO = "team";
+		process.env.FAKE_CLAUDE_TEAM_CALLS = betaCalls;
+		process.env.FAKE_CLAUDE_TEAM_RESULTS = betaResults;
+		process.env.MY_AGENT_CLAUDE_CONFIG_DIR = path.join(
+			workspace,
+			"claude-config",
+		);
+
+		const team = new Team({
+			robs: [
+				{
+					name: "alpha",
+					role: "plan",
+					backend: {
+						kind: "cli",
+						command: PI_FIXTURE,
+						provider: "deepseek",
+						model: "deepseek-v4-flash",
+					},
+				},
+				{
+					name: "beta",
+					role: "work",
+					backend: { kind: "cli", command: "claude" },
+				},
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: () => createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+			providerEnv: {
+				PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+			},
+		});
+		team.start();
+		team.dispatch("alpha", "reach the team");
+
+		await waitFor(
+			() => team.readDms().length >= 1,
+			"alpha's ping to reach the team",
+			20_000,
+		);
+		// alpha reads this file before it sends, so blank it once the ping lands
+		// so beta's reply does not wake alpha into re-sending the same ping.
+		await writeFile(alphaCalls, "[]", "utf8");
+
+		await waitFor(
+			() =>
+				team.readDms().length === 2 &&
+				team.statuses().every((entry) => entry.status === "idle"),
+			"beta's reply and both robs to finish",
+			20_000,
+		);
+		const statuses = team.statuses();
+		await team.stop();
+
+		expect(team.readDms()).toEqual([
+			{ from: "alpha", to: "beta", text: "ping", at: expect.any(Number) },
+			{ from: "beta", to: "alpha", text: "pong", at: expect.any(Number) },
+		]);
+		expect(statuses.map((entry) => entry.status)).toEqual(["idle", "idle"]);
+		expect(JSON.parse(await readFile(betaResults, "utf8"))).toEqual([
+			'Message queued for "alpha".',
+		]);
+	}, 30_000);
+
+	it("delivers a cli rob's DM to a native rob that receives it and replies via send_message", async () => {
+		const binDir = path.join(workspace, "bin");
+		await mkdir(binDir, { recursive: true });
+		await copyFile(CLAUDE_FIXTURE, path.join(binDir, "claude"));
+		await chmod(path.join(binDir, "claude"), 0o755);
+
+		const alphaCalls = path.join(workspace, "alpha-calls.json");
+		await writeFile(
+			alphaCalls,
+			JSON.stringify([
+				{ name: "send_message", args: { to: "beta", text: "ping" } },
+			]),
+			"utf8",
+		);
+
+		const betaProvider = createMockProvider([
+			[
+				{
+					type: "tool_call",
+					id: "call_1",
+					name: "send_message",
+					args: { to: "alpha", text: "pong" },
+				},
+				{ type: "finish", reason: "tool_calls" },
+			],
+			[
+				{ type: "text_delta", text: "beta done" },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+
+		process.env.FAKE_CLAUDE_SCENARIO = "team";
+		process.env.FAKE_CLAUDE_TEAM_CALLS = alphaCalls;
+		process.env.MY_AGENT_CLAUDE_CONFIG_DIR = path.join(
+			workspace,
+			"claude-config",
+		);
+
+		const team = new Team({
+			robs: [
+				{
+					name: "alpha",
+					role: "plan",
+					backend: { kind: "cli", command: "claude" },
+				},
+				{ name: "beta", role: "work" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: (rob) =>
+				rob.name === "beta" ? betaProvider : createMockProvider([]),
+			workspaceRoot: workspace,
+			authorizerFactory: allowAllAuthorizerFactory(),
+			providerEnv: {
+				PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+			},
+		});
+		team.start();
+		team.dispatch("alpha", "reach the team");
+
+		await waitFor(
+			() => team.readDms().length >= 1,
+			"alpha's ping to reach the team",
+			20_000,
+		);
+		// Blank the calls file so the native rob's reply does not wake alpha into
+		// re-sending the same ping.
+		await writeFile(alphaCalls, "[]", "utf8");
+
+		await waitFor(
+			() =>
+				team.readDms().length === 2 &&
+				team.statuses().every((entry) => entry.status === "idle"),
+			"the native rob's reply and both robs to finish",
+			20_000,
+		);
+		const statuses = team.statuses();
+		await team.stop();
+
+		expect(team.readDms()).toEqual([
+			{ from: "alpha", to: "beta", text: "ping", at: expect.any(Number) },
+			{ from: "beta", to: "alpha", text: "pong", at: expect.any(Number) },
+		]);
+		expect(statuses.map((entry) => entry.status)).toEqual(["idle", "idle"]);
+		const betaInbound = betaProvider.requests[0].messages.find(
+			(message) => message.role === "user",
+		);
+		expect(betaInbound?.content).toBe("[from rob:alpha] ping");
+	}, 30_000);
 });
