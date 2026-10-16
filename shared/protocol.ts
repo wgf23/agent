@@ -56,6 +56,12 @@ export interface BotInfo {
 	role: string;
 	model: string;
 	backend: BackendKind;
+	// The cli backend's command, provider, and model, when it has one, so the
+	// edit panel can prefill its fields and round-trip them. The command is a
+	// plain string on the wire; the server validated it against the catalog.
+	command?: string;
+	provider?: string;
+	backendModel?: string;
 	// The configured interval that wakes the bot; absent when it has none.
 	wake?: BotWake | null;
 }

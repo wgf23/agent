@@ -515,6 +515,15 @@ export class TeamHub extends EventBus implements Hub {
 				backend:
 					rob.backend?.kind === "cli" ? ("cli" as const) : ("native" as const),
 			};
+			if (rob.backend?.kind === "cli") {
+				info.command = rob.backend.command;
+				if (rob.backend.provider !== undefined) {
+					info.provider = rob.backend.provider;
+				}
+				if (rob.backend.model !== undefined) {
+					info.backendModel = rob.backend.model;
+				}
+			}
 			const wake = this.team.robWake(rob.name);
 			if (wake !== null) info.wake = wake;
 			return info;

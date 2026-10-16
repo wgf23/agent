@@ -18,13 +18,36 @@ interface Props {
 
 type BackendChoice = "native" | RobCommand;
 
-const BACKEND_CHOICES: readonly { value: BackendChoice; label: string }[] = [
+export type { BackendChoice };
+
+// Shared with the edit panel so create and edit cannot drift on the choices.
+export const BACKEND_CHOICES: readonly {
+	value: BackendChoice;
+	label: string;
+}[] = [
 	{ value: "native", label: "内置" },
 	...ROB_COMMANDS.map((command) => ({
 		value: command,
 		label: agentById(command)?.label ?? command,
 	})),
 ];
+
+// One place turns a chosen backend into the wire draft, so the create dialog
+// and the settings panel send byte-for-byte the same body.
+export function backendDraft(
+	choice: BackendChoice,
+	provider: string,
+	backendModel: string,
+): BotBackendDraft {
+	return choice === "native"
+		? { kind: "native" }
+		: {
+				kind: "cli",
+				command: choice,
+				provider: provider.trim() || undefined,
+				model: backendModel.trim() || undefined,
+			};
+}
 
 export default function NewBotDialog({
 	model,
@@ -65,20 +88,11 @@ export default function NewBotDialog({
 		}
 		setSubmitting(true);
 		setError(null);
-		const backendDraft: BotBackendDraft =
-			backend === "native"
-				? { kind: "native" }
-				: {
-						kind: "cli",
-						command: backend,
-						provider: provider.trim() || undefined,
-						model: backendModel.trim() || undefined,
-					};
 		const draft: BotDraft = {
 			name: name.trim(),
 			role: role.trim(),
 			model: botModel.trim() || undefined,
-			backend: backendDraft,
+			backend: backendDraft(backend, provider, backendModel),
 		};
 		try {
 			await onCreateBot(draft);

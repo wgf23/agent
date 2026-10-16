@@ -10,6 +10,7 @@ import {
 	applyAgentEvent,
 	clientReducer,
 	initialState,
+	robBots,
 	SUBAGENT_FEED_MAX,
 } from "../../web/src/state";
 
@@ -388,6 +389,36 @@ describe("clientReducer", () => {
 		});
 
 		expect(loaded.memory.writer).toEqual(entries);
+	});
+
+	// Deleting a bot makes the server re-emit the roster without it; the reducer
+	// must drop it so the App can no longer resolve the selected name.
+	it("drops a deleted bot on the next bots event so it cannot stay selected", () => {
+		const selected = "reader";
+		const added = apply([
+			hello,
+			{
+				type: "bots",
+				bots: [
+					...hello.bots,
+					{
+						name: selected,
+						kind: "rob",
+						role: "reads docs",
+						model: "deepseek-flash",
+						backend: "native",
+					},
+				],
+				states: hello.states,
+			},
+		]);
+		expect(robBots(added.bots).some((bot) => bot.name === selected)).toBe(true);
+
+		const afterDelete = clientReducer(added, {
+			type: "server",
+			event: { type: "bots", bots: hello.bots, states: hello.states },
+		});
+		expect(afterDelete.bots.some((bot) => bot.name === selected)).toBe(false);
 	});
 });
 
