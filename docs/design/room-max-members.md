@@ -36,10 +36,11 @@
   1. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 **exit 1、不写盘**。理由：脚本裸 `JSON.parse(my-agent.json)`，**不经过** `src/config/project-file.ts:95` 的 `validateRoomMembers`/`validateRoomCoordinator`；而 ledger 一旦写脏，**启动期不会拦住它**——`openRooms()`（`src/rob/team.ts:346`）在 ledger 存在时直接 `new Room({state})` 后 `continue`，**根本不走 `seedState`**（那只在"config 有房间、没有 ledger"的分支，`:367`），而这脚本的前提正是 ledger 已存在。真实后果是**静默降级而非启动失败**：
      - 房间照常启动、team 照常起来，**没有任何 throw**；
      - `hello.rooms[].members` / `Room.view().members` 仍把该名字算作成员 ⇒ **UI 列出一个永远不发言的成员**；
-     - **每次 run**（一次发送/一次队列恢复各一次）`startRun()` 会追加**一条** system 记录 `No longer on the team: @<name>.`（`src/rob/room.ts:681-685` → `room-text.ts:172`，用例见 `test/rob/room.test.ts:947-965`）—— 这是唯一信号，且只在「被 @ 到」或「无 @ 的整房广播」时出现，**每次 run 至多一条**；
+     - **每次 run** 会追加**一次** system 记录 `No longer on the team: @<name>.`（`src/rob/room.ts:681-685` → `room-text.ts:172`，用例见 `test/rob/room.test.ts:947-965`）。`startRun()` 只有两个调用点：`send()`（`room.ts:544`）与队列恢复 `resume()`（`room.ts:568`），**轮次循环在 `runRounds()` 内、`startRun` 在循环之外**，故是「每次 run 至多一条」，不是「每轮一条」。该记录只在 ghost 被 @ 到、或无 @ 的整房广播时出现（`wanted = addressed 或全部 memberNames`，`memberNames()` 来自 ledger 且不过滤 `host.members()`）；定向 @ 了别人的 run 不会出现；
      - `participants()`（`src/rob/room.ts:738-746`）用 `host.members()`（= `this.robs.keys()`，`team.ts:196`）过滤，该名字被**剔除且不报错**，故它永不发言、也无 per-turn 失败；若整轮只 @ 了它，participants 为空 ⇒ `spokeThisRound === 0` ⇒ 该轮直接 `settled`（看起来像"讨论完了"）；
+     - 若 ghost 恰好是 **coordinator**：`shouldWrapUp()`（`src/rob/room.ts:861-870`）要求 `this.host.members().includes(this.coordinator)`，为假 ⇒ **整场 run 不会有交付物**（不写 `docs/deliverables/…`），并且**不报任何错**。这比"少一个发言成员"更严重，也是 `coordinator ∈ members` 必须进前置校验的直接理由；
      - 启动期也没有补救：`configDrift` 不会报（脚本写完后 ledger == config），`setMembers` 走 `validateRoomMembers`（`room.ts:603`）只校验**新的**名单。
-     ⇒ 结论：**写脏的代价不是"炸给你看"，而是"静默少一个人、无人察觉"**，所以校验必须在写 `.bak`/`.tmp` **之前**做（`--dry-run` 同样在早退前跑）。
+     ⇒ 结论：**写脏的代价不是"炸给你看"，而是"安静地少一个人或整场没有交付物"**——唯一信号只有那条 system 记录（且多数 run 里不出现），其余看板与日志一切正常。所以校验必须在写 `.bak`/`.tmp` **之前**做（`--dry-run` 同样在早退前跑）。
   2. **文档写明「必须先停 serve 再跑」**：`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json` 是进程内存态的落盘点，房间任一写盘都会整份覆盖脚本的修改**且不报任何错**。顺序：停 serve → 跑脚本 → 启动。
 - 分工边界：本线实际运维用 `/tmp` 那支脚本自行用 python 重写 ledger，**不调用 `room-members.mjs`**，两者无耦合 —— 改脚本不得去动 `/tmp` 里已冻结的那支。
 - 设计侧不定义 ledger 的删除语义（无 DELETE 接口 = 删文件），也不改 SSE 事件与 `@` mention 规则。
