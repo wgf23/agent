@@ -35,10 +35,17 @@
 
 | AC | 取证方式 |
 |---|---|
-| AC-1/AC-2 | 从 `room.js` 导入常量做边界断言（19/20 通过、21 拒 `reason === "member_count"`、1 拒、2 通过） |
+| AC-1/AC-2 | ① **取值锚**（AC-1 唯一允许的字面值）：`expect(ROOM_MAX_MEMBERS).toBe(20)`，全仓**有且仅有 1 处**；② 边界断言：19/20 通过、21 拒 `reason === "member_count"`、1 拒、2 通过 |
 | AC-3 | **成对**变异探针（单探针无效，见下方注记）：常量改 21 **且** 把 `src` 文案硬编码回旧值 ⇒ 必须红 |
 | AC-4 | `grep -rn "maxMembers" web/src` 无硬编码数字；`GET /api/rooms` 的 `limits.maxMembers === 20` |
-| AC-5 | 测试 fixture `import { ROOM_MAX_MEMBERS }` 派生；`grep -rn "to 6 members\|to 8 members" src test web` 零命中 |
+| AC-5 | 测试 fixture `import { ROOM_MAX_MEMBERS }` 派生；`grep -rn "maxMembers: [0-9]\|to 6 members\|to 8 members" src test web` 零命中 |
+
+> **AC-1 取值锚 vs AC-5「禁裸数字」不是冲突，是白名单**（qa 探针 C 逼出的缺口）：
+> 全仓**只允许 1 行**出现上限字面值 —— `test/rob/room.test.ts` 的 `expect(ROOM_MAX_MEMBERS).toBe(20)`。
+> 理由：fixture 与文案全派生后，把常量静默改回 6 **不会让任何用例红**（探针 C 曾在 `b33a71c` 上 118 全绿）。
+> 取值锚就是把「值」这一维重新钉住；它的存在**不违反 AC-5**，AC-5 禁的是「派生出多条真值」。
+> 判据（三臂，均在隔离目录跑、跑完还原）：A' 常量→21 ⇒ **恰好 1 红**（该锚）；B 常量 21 + 文案硬编码 ⇒ 红（含该锚）；C' 常量→6 ⇒ **恰好 1 红**（该锚）。
+> A'/C' 红超过 1 例 ⇒ 别处还有硬编码，AC-5 未真正达成。
 
 > **通则（本线最容易假绿的一族）**：凡「测试期望值也由同一常量派生」的断言，单变异探针恒绿——常量一动，源码与期望一起动。证明派生必须**成对变异**：常量变异 + 把被测源码改回硬编码。下文 AC-3 是唯一适用点，同类断言以后照此办。
 
@@ -48,14 +55,16 @@
 > 判据：B 绿 ⇒ `member_count` 不是派生的（缺陷在源头，不是测试）；B 红 ⇒ AC-3 有牙。
 > 实测记录（pm，跑完已还原、sha256 前后一致）：A（仅常量 20→21）= 3 文件 69 用例全绿；B（常量 21 + 文案硬编码）= 2 文件 2 用例红。
 
-> AC-5 现存未清点（本次实跑 grep，随代码同步清）：`test/serve/team.test.ts` 的 `error: "A room needs 2 to 6 members."`、`test/rob/room-text.test.ts` 的 `"A room needs 2 to 6 members."`。两处都改成由常量派生（或断言 `renderRoomOutcome` 的输出），不得手改成 `2 to 20` 字面量——否则下次改常量又漂。
+> ~~AC-5 现存未清点：`test/serve/team.test.ts` / `test/rob/room-text.test.ts` 的 `"2 to 6 members"`~~ —— **已由 `ec52ed0` 清为派生态**，`grep -rn "2 to 6 members\|needs 2 to" src test web README.md docs/rnd-team.md` 现零命中。保留此条仅作历史记录。
 
-> **AC-2 的边界用例必须自身可判别（否则测的是 `unknown_member`，不是 `member_count`）**：
-> `validateRoomMembers` 的成员名校验先于人数校验，若 roster 小于被测成员列表，超限用例会先命中 `unknown_member` 而**假红/假绿**。
-> 契约：`const roster = memberNames(ROOM_MAX_MEMBERS + 1)`（**上界 + 1 的超集**），三个断言共用同一个 roster；
-> 且超限断言必须同时钉 `reason === "member_count"`，不得只断言 `status === "rejected"`。
-> 同理，`ROOM_MIN_MEMBERS - 1` 的下界用例其 roster 也只能取 `memberNames(ROOM_MIN_MEMBERS)` 之上的名字。
-> 判据：把常量临时改小/改大，超限用例应随之仍然 `member_count`（不是 `unknown_member`）。
+> **AC-2 的边界用例必须自身可判别**：
+> `validateRoomMembers` 的校验顺序是 **人数 → 保留名 → 重复 → 是否在 roster**（`member_count` 在函数第一行，逐成员再查 reserved/duplicate/unknown）。因此：
+> ① **「满员（`ROOM_MAX_MEMBERS`）判 ok」这条需要上界+1 的超集 roster**（`memberNames(ROOM_MAX_MEMBERS + 1)`），否则名单不全时会被 `unknown_member` 提前打断，造成**假红**；
+> ② **「超限判拒」这条由人数校验先命中，与 roster 大小无关**，故它必须同时钉 `reason === "member_count"` —— 只断言 `status === "rejected"` 是**假绿**（任何拒因都能过）；
+> ③ 下界用例同款：roster 至少覆盖被测名字（`memberNames(ROOM_MIN_MEMBERS)`）。
+> 三断言共用一个 roster，最省心的取法是上界+1 的超集。
+> ⛔ **不得为了对齐这段文字去改 `validateRoomMembers` 的校验顺序**——顺序一变，`member_count` 用例的语义随之翻转（21 人将被 `unknown_member` 抢先）。
+> 实测（qa，隔离目录）：21 个未知名 vs roster `["ui"]` ⇒ `member_count`；8 个（7 真实 + 1 ghost）vs 7 人 roster ⇒ `unknown_member`。
 
 ## 6. 已闭环的三条（此处只留结论，不再讨论）
 
