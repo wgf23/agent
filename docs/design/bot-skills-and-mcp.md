@@ -806,6 +806,12 @@ PARAMS: {"properties":{"token":{"description":"Bearer sk-live-QA-DESC-7b1"}}}  �
    ③ 外部 $ref        mcp <server>: refused by security policy — <where> points outside the schema
    ```
    - **选哪条由拒因决定，不由位置决定**：① `rejectKind = "value"`（有 `<KEY>`）；② `rejectKind = "malformed"`（如 `examples` 非数组，§10 L5）；③ `rejectKind = "external-ref"`（规则 3，`$ref` 非 `#` 开头）。
+   - 🔒 **不变量（三选一的前提，必须由实现保证）**：**一份拒绝只记一个原因，先到先得。**
+     · `rejectKey !== undefined` ⟺ `rejectKind === "value"` —— 两者**要么同时成立、要么同时不成立**；
+     · 一旦已拒绝（`refused === true`），**后续任何命中都不得再改写** `rejectKey`/`rejectWhere`/`rejectKind`。
+     **为什么必须写死**：上面的"由 `rejectKind` 决定"隐含"三个字段彼此一致"。若某条拒因分支少了"已拒绝则立即返回"的守卫，就会出现 `{rejectKey: "API_KEY", rejectKind: "malformed"}` 这种**自相矛盾状态**——通知句按 `rejectKey` 分支输出"repeats the value of env …"、而 `kind` 说"malformed"，**两条证据互相打架，qa 无从判对错**。（实例：`required:["<secret>"]` + `examples:{…}` ⇒ 命中 value 后再进 malformed 分支。）
+     ⇒ **落地要求**：每个"置 `refused = true`"的入口前**必须**有 `if (refused) return …` 守卫；`$ref` 外部引用分支已有，§10 L5 的 `examples` 非数组分支**必须有同样的守卫**。
+   - **`was refused` 类中性兜底属于不可达防御，不是第四种契约措辞**：它只在上述不变量被破坏时才会出现。**用例不得把它当期望值**（除非专门构造不一致状态去证明"不可能发生"）；正常路径的期望值只能是上面三句之一。
    - ⚠️ **②③ 里不得为了"格式统一"补一个 `env "<KEY>"`**：那两种情况**根本没有命中的 env 变量**，编一个键名 = 指向不存在的变量，用户会去查一个不存在的配置项。**"补一个最像的"比缺字段更坏**（与 §11.9「禁止为凑格式编造提交号」同一条原则）。
    - `<where>` 只有三个合法取值：`tool name`（工具名命中）、`tool text`（description 命中）、`tool schema`（schema 契约位置命中）。
    - `<KEY>` 是**被命中的 env 键名**（如 `API_KEY`）。多个键命中时取**字典序第一个**（保证输出确定、用例可断言）。
