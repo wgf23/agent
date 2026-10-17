@@ -23,6 +23,8 @@ import type {
 	RoomConfig,
 	RoomCreateOutcome,
 	RoomSendOutcome,
+	RoomSettingsOutcome,
+	RoomSettingsPatch,
 } from "../rob/room.js";
 import type { Tool } from "../tools/types.js";
 import type {
@@ -98,6 +100,9 @@ export interface Hub {
 	createRoom?(config: RoomConfig): RoomCreateOutcome;
 	sendToRoom?(room: string, text: string): RoomSendOutcome;
 	interruptRoom?(room: string): void;
+	// The one write path for a room's members and coordinator. A hub that does
+	// not manage rooms omits it and the route answers 501.
+	updateRoom?(room: string, patch: RoomSettingsPatch): RoomSettingsOutcome;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;

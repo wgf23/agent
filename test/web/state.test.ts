@@ -515,6 +515,7 @@ describe("rooms", () => {
 					kind: "members",
 					room: "ship-it",
 					members: ["alpha", "beta", "gamma"],
+					coordinator: null,
 				},
 			},
 			{
@@ -591,6 +592,7 @@ describe("rooms", () => {
 					kind: "members",
 					room: "side-room",
 					members: ["alpha", "beta"],
+					coordinator: null,
 				},
 			},
 		]);

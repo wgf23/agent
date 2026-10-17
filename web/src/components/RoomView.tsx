@@ -17,15 +17,22 @@ import {
 import type { BotState, RoomMessageView } from "../protocol";
 import type { ClientRoom, RoomOutcome } from "../state";
 import { formatTime } from "../time";
-import { ArrowDownIcon, ArrowUpIcon, StopIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon, GearIcon, StopIcon } from "./icons";
 import Markdown from "./Markdown";
+import RoomSettingsDrawer from "./RoomSettingsDrawer";
 
 interface Props {
 	room: ClientRoom;
 	configured: boolean;
 	botStates: Record<string, BotState>;
+	/** Every name the server knows, for the settings drawer's member picker. */
+	roster: readonly string[];
 	onSend: (text: string) => Promise<void>;
 	onInterrupt: () => Promise<void>;
+	onSaveSettings: (
+		patch: { members?: string[]; coordinator?: string | null },
+		token: string,
+	) => Promise<void>;
 }
 
 // Within this many pixels of the bottom we treat the reader as "following".
@@ -46,8 +53,10 @@ export default function RoomView({
 	room,
 	configured,
 	botStates,
+	roster,
 	onSend,
 	onInterrupt,
+	onSaveSettings,
 }: Props) {
 	const [value, setValue] = useState("");
 	const [error, setError] = useState<string | null>(null);
@@ -58,6 +67,8 @@ export default function RoomView({
 	const [dismissed, setDismissed] = useState(false);
 	const [index, setIndex] = useState(0);
 	const [rosterOpen, setRosterOpen] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const settingsTriggerRef = useRef<HTMLButtonElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
@@ -215,6 +226,19 @@ export default function RoomView({
 						</div>
 					)}
 				</div>
+				<div className="bot-header-actions">
+					<button
+						ref={settingsTriggerRef}
+						type="button"
+						className="icon-btn"
+						aria-haspopup="dialog"
+						aria-label="房间设置"
+						title="房间设置"
+						onClick={() => setSettingsOpen(true)}
+					>
+						<GearIcon size={16} />
+					</button>
+				</div>
 			</header>
 
 			<div className="message-area">
@@ -363,6 +387,19 @@ export default function RoomView({
 					room={room}
 					botStates={botStates}
 					onClose={() => setRosterOpen(false)}
+				/>
+			)}
+			{settingsOpen && (
+				<RoomSettingsDrawer
+					room={room}
+					roster={roster}
+					onSave={onSaveSettings}
+					// Closing must hand focus back to the gear: without it the
+					// caret lands on <body> and the keyboard user loses the trail.
+					onClose={() => {
+						setSettingsOpen(false);
+						settingsTriggerRef.current?.focus();
+					}}
 				/>
 			)}
 		</section>

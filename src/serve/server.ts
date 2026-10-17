@@ -55,6 +55,7 @@ import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
 import type { Provider } from "../providers/types.js";
+import type { RoomSettingsPatch } from "../rob/room.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
 import { UnknownRobError } from "../rob/team.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
@@ -62,6 +63,11 @@ import { latestSession, listSessions, newSession } from "../session/store.js";
 import { discoverSkills } from "../skills/discover.js";
 import { skillsRoot } from "../skills/paths.js";
 import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
+import {
+	type AdminTokenContext,
+	adminTokenMatches,
+	resolveAdminToken,
+} from "./admin-token.js";
 import { CompositeHub } from "./composite.js";
 import {
 	assertBrowsePath,
@@ -371,6 +377,50 @@ export async function buildServer(
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
 	const uploadFileLimit = upload?.fileSize ?? MAX_UPLOAD_FILE_BYTES;
+
+	// Resolved once, on the first admin request: reading the file at startup
+	// would make every server build depend on `hello()` and would pick up a
+	// token the process may not have needed. The result is memoized, so a token
+	// changed mid-flight is still never picked up by half the requests.
+	// `onNotice` writes one line to stderr for a token file with the wrong mode
+	// and never prints the token itself.
+	let resolvedAdminToken: AdminTokenContext | null = null;
+	const adminToken = (): AdminTokenContext => {
+		if (resolvedAdminToken === null) {
+			resolvedAdminToken = resolveAdminToken({
+				env: process.env,
+				workspaceRoot: hub.hello().workspaceRoot,
+				onNotice: (line) => process.stderr.write(`admin token: ${line}\n`),
+			});
+		}
+		return resolvedAdminToken;
+	};
+
+	/** One audit line per admin attempt (success and refusal alike). Fixed
+	 *  fields only: no token, no hash, no member list, no filesystem path. */
+	const auditAdmin = (input: {
+		action: "patch";
+		room: string;
+		ip: string;
+		result: "ok" | "denied" | "error";
+	}): void => {
+		process.stderr.write(
+			`${new Date().toISOString()} admin action=${input.action} room=${input.room} ip=${input.ip} result=${input.result}\n`,
+		);
+	};
+
+	/** The single token gate. Returns null to let the request through, or the
+	 *  exact 403 body otherwise. Missing and wrong tokens answer identically, so
+	 *  a probe learns nothing (AC-11b). */
+	const requireAdminToken = (
+		request: FastifyRequest,
+	): { code: 403; error: string } | null => {
+		const header = request.headers["x-admin-token"];
+		const presented = Array.isArray(header) ? header[0] : header;
+		return adminTokenMatches(adminToken(), presented)
+			? null
+			: { code: 403, error: "Admin token required." };
+	};
 
 	// The parser is registered before the routes so `request.parts()` is
 	// decorated. A file over the part cap is flagged on its stream rather than
@@ -1153,6 +1203,55 @@ export async function buildServer(
 		return reply.send({ ok: true, room: toRoomInfo(outcome.room) });
 	});
 
+	// The one room write route: members and coordinator in a single atomic
+	// update. Order is fixed (guard -> 501 -> body -> delegate -> map) so a
+	// refusal never writes and a missing token never leaks which half failed.
+	app.patch("/api/rooms/:name", (request, reply) => {
+		const name = roomParam(request);
+		const room = name ?? "?";
+		const denied = requireAdminToken(request);
+		if (denied !== null) {
+			auditAdmin({
+				action: "patch",
+				room,
+				ip: request.ip,
+				result: "denied",
+			});
+			return reply.code(denied.code).send({ error: denied.error });
+		}
+		const updateRoom = hub.updateRoom?.bind(hub);
+		if (updateRoom === undefined) {
+			auditAdmin({ action: "patch", room, ip: request.ip, result: "error" });
+			return reply.code(501).send({ error: "this server cannot manage rooms" });
+		}
+		const patch = parseRoomPatch(request.body);
+		if (name === undefined || patch === null) {
+			auditAdmin({ action: "patch", room, ip: request.ip, result: "error" });
+			return reply.code(400).send({
+				error: "expected {members?, coordinator?} with at least one field",
+			});
+		}
+		try {
+			const outcome = updateRoom(name, patch);
+			if (outcome.status === "rejected") {
+				auditAdmin({ action: "patch", room, ip: request.ip, result: "error" });
+				const error = renderRoomOutcome(outcome, name);
+				if (outcome.reason === "unknown_room") {
+					return reply.code(404).send({ error });
+				}
+				if (outcome.reason === "busy" || outcome.reason === "stopped") {
+					return reply.code(409).send({ error });
+				}
+				return reply.code(400).send({ error });
+			}
+			auditAdmin({ action: "patch", room, ip: request.ip, result: "ok" });
+			return reply.send({ ok: true, room: toRoomInfo(outcome.room) });
+		} catch (error) {
+			auditAdmin({ action: "patch", room, ip: request.ip, result: "error" });
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
 	app.post("/api/rooms/send", (request, reply) => {
 		const sendToRoom = hub.sendToRoom?.bind(hub);
 		if (sendToRoom === undefined) {
@@ -1421,6 +1520,49 @@ function botParam(request: FastifyRequest): string | undefined {
 	return typeof params?.bot === "string" && params.bot !== ""
 		? params.bot
 		: undefined;
+}
+
+function roomParam(request: FastifyRequest): string | undefined {
+	const params = request.params as { name?: unknown } | undefined;
+	return typeof params?.name === "string" && params.name !== ""
+		? params.name
+		: undefined;
+}
+
+/** The PATCH body, narrowed and refused here rather than in Room: the shape is
+ *  a wire concern, the membership rules are not (Room.updateSettings owns
+ *  those). Null means 400. */
+function parseRoomPatch(body: unknown): RoomSettingsPatch | null {
+	if (typeof body !== "object" || body === null || Array.isArray(body)) {
+		return null;
+	}
+	const record = body as Record<string, unknown>;
+	const hasMembers = record.members !== undefined;
+	const hasCoordinator = record.coordinator !== undefined;
+	if (!hasMembers && !hasCoordinator) return null;
+	const members = record.members;
+	const coordinator = record.coordinator;
+	if (
+		hasMembers &&
+		(!Array.isArray(members) ||
+			!members.every((member) => typeof member === "string"))
+	) {
+		return null;
+	}
+	if (
+		hasCoordinator &&
+		coordinator !== null &&
+		typeof coordinator !== "string"
+	) {
+		return null;
+	}
+	const patch: {
+		members?: readonly string[];
+		coordinator?: string | null;
+	} = {};
+	if (hasMembers) patch.members = members as string[];
+	if (hasCoordinator) patch.coordinator = coordinator as string | null;
+	return patch;
 }
 
 // A sentinel so a body that is neither a valid set nor a clear is a 400, never

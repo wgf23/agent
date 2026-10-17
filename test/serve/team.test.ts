@@ -451,6 +451,8 @@ describe("TeamHub", () => {
 				kind: "members",
 				room: "standup",
 				members: ["alpha", "beta"],
+				// The create body names alpha, so the wire event carries it.
+				coordinator: "alpha",
 			},
 		});
 
@@ -481,6 +483,78 @@ describe("TeamHub", () => {
 				),
 			"the interrupted run",
 		);
+
+		await app.close();
+		await hub.dispose();
+	});
+
+	it("guards the room PATCH with the admin token and writes both halves", async () => {
+		const hub = createRoomHub(slowProvider());
+		const app = await buildServer(hub, undefined);
+		await app.listen({ port: 0, host: "127.0.0.1" });
+		const address = app.server.address();
+		const port =
+			typeof address === "object" && address !== null ? address.port : 0;
+		const patch = (route: string, body: unknown, token?: string) =>
+			fetch(`http://127.0.0.1:${port}${route}`, {
+				method: "PATCH",
+				headers: {
+					"content-type": "application/json",
+					...(token === undefined ? {} : { "x-admin-token": token }),
+				},
+				body: JSON.stringify(body),
+			});
+
+		// The gate is resolved on the first admin request, so the env var has to
+		// be in place before that call.
+		const previous = process.env.MY_AGENT_ADMIN_TOKEN;
+		process.env.MY_AGENT_ADMIN_TOKEN = "s3cret";
+		try {
+			// Missing and wrong tokens answer identically and write nothing: a
+			// probe must not learn whether a token exists (AC-11b).
+			for (const call of [
+				patch("/api/rooms/ship-it", { coordinator: "beta" }),
+				patch("/api/rooms/ship-it", { coordinator: "beta" }, "wrong"),
+			]) {
+				const denied = await call;
+				expect(denied.status).toBe(403);
+				expect(await denied.json()).toEqual({
+					error: "Admin token required.",
+				});
+			}
+			expect(hub.hello().rooms[0].coordinator).toBeNull();
+
+			const updated = await patch(
+				"/api/rooms/ship-it",
+				{ members: ["beta", "alpha"], coordinator: "beta" },
+				"s3cret",
+			);
+			expect(updated.status).toBe(200);
+			const body = (await updated.json()) as {
+				ok: boolean;
+				room: { members: string[]; coordinator: string | null };
+			};
+			expect(body.ok).toBe(true);
+			expect(body.room.members).toEqual(["beta", "alpha"]);
+			expect(body.room.coordinator).toBe("beta");
+			expect(hub.hello().rooms[0].coordinator).toBe("beta");
+
+			const empty = await patch("/api/rooms/ship-it", {}, "s3cret");
+			expect(empty.status).toBe(400);
+			expect(await empty.json()).toEqual({
+				error: "expected {members?, coordinator?} with at least one field",
+			});
+
+			const missing = await patch(
+				"/api/rooms/nope",
+				{ coordinator: null },
+				"s3cret",
+			);
+			expect(missing.status).toBe(404);
+		} finally {
+			if (previous === undefined) delete process.env.MY_AGENT_ADMIN_TOKEN;
+			else process.env.MY_AGENT_ADMIN_TOKEN = previous;
+		}
 
 		await app.close();
 		await hub.dispose();

@@ -551,6 +551,9 @@ export function applyRoomEvent(
 			return updateRoom(state, event.room, (room) => ({
 				...room,
 				members: event.members,
+				// An older server has no coordinator on the wire; null keeps the
+				// field defined instead of writing undefined into the room.
+				coordinator: event.coordinator ?? null,
 			}));
 
 		case "entry":
@@ -577,6 +580,12 @@ export function applyRoomEvent(
 		case "turn":
 			// Like the TUI: the run snapshot already names the current speaker,
 			// so a single member's turn outcome adds no state.
+			return state;
+
+		default:
+			// A newer server may name an event this bundle predates. Ignoring it
+			// keeps the tree intact; the catch-all keeps the switch total so a
+			// future kind cannot fall out and blank the app.
 			return state;
 	}
 }

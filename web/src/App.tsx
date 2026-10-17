@@ -331,8 +331,12 @@ export default function App() {
 						room={currentRoom}
 						configured={configured}
 						botStates={state.botStates}
+						roster={robs.map((bot) => bot.name)}
 						onSend={(text) => hub.sendToRoom(currentRoom.name, text)}
 						onInterrupt={() => hub.interruptRoom(currentRoom.name)}
+						onSaveSettings={(patch, token) =>
+							hub.patchRoom(currentRoom.name, patch, token)
+						}
 					/>
 				) : currentBot === null ? (
 					<div className="empty-page">

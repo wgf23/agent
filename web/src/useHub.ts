@@ -46,17 +46,33 @@ async function post(path: string, body: unknown): Promise<void> {
 	await postJson(path, body);
 }
 
-// POST a JSON body and return the parsed response. A rejection throws the
-// server's human-readable error text so a dialog or composer can show it;
-// the fallback only fires when the body is not JSON.
-async function postJson(path: string, body: unknown): Promise<unknown> {
+interface JsonRequest {
+	method: string;
+	body?: unknown;
+	// Extra headers ride on top of the JSON content type; the admin token is
+	// the only caller today and it must never end up in the URL or the query.
+	headers?: Record<string, string>;
+}
+
+// One JSON request path. A rejection throws the server's human-readable error
+// text so a dialog or composer can show it; the fallback only fires when the
+// body is not JSON.
+async function requestJson(
+	path: string,
+	request: JsonRequest,
+): Promise<unknown> {
 	const response = await fetch(path, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(body),
+		method: request.method,
+		headers: {
+			"Content-Type": "application/json",
+			...(request.headers ?? {}),
+		},
+		...(request.body === undefined
+			? {}
+			: { body: JSON.stringify(request.body) }),
 	});
 	if (!response.ok) {
-		let message = `POST ${path} failed: ${response.status}`;
+		let message = `${request.method} ${path} failed: ${response.status}`;
 		try {
 			const payload = (await response.json()) as { error?: string };
 			if (typeof payload.error === "string" && payload.error !== "") {
@@ -68,6 +84,11 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
 		throw new Error(message);
 	}
 	return response.json().catch(() => null);
+}
+
+// The old signature, kept so every existing call site stays untouched.
+async function postJson(path: string, body: unknown): Promise<unknown> {
+	return requestJson(path, { method: "POST", body });
 }
 
 export interface Hub {
@@ -114,6 +135,13 @@ export interface Hub {
 	) => Promise<void>;
 	sendToRoom: (room: string, text: string) => Promise<void>;
 	interruptRoom: (room: string) => Promise<void>;
+	// The room settings write. The token rides in the header only; a refusal
+	// rejects with the server's own wording so the drawer can show it verbatim.
+	patchRoom: (
+		name: string,
+		patch: { members?: string[]; coordinator?: string | null },
+		token: string,
+	) => Promise<void>;
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
 	closeSettings: () => void;
@@ -427,6 +455,21 @@ export function useHub(): Hub {
 		await postJson("/api/rooms/interrupt", { room });
 	}, []);
 
+	const patchRoom = useCallback(
+		async (
+			name: string,
+			patch: { members?: string[]; coordinator?: string | null },
+			token: string,
+		) => {
+			await requestJson(`/api/rooms/${encodeURIComponent(name)}`, {
+				method: "PATCH",
+				body: patch,
+				headers: { "X-Admin-Token": token },
+			});
+		},
+		[],
+	);
+
 	const listFiles = useCallback(
 		(path: string, options?: { showHidden?: boolean; showIgnored?: boolean }) =>
 			api.listFiles(path, options),
@@ -598,6 +641,7 @@ export function useHub(): Hub {
 		createRoom,
 		sendToRoom,
 		interruptRoom,
+		patchRoom,
 		loadSettings,
 		openSettings,
 		closeSettings,

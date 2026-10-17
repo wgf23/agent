@@ -254,6 +254,9 @@ export type RoomEvent =
 			readonly kind: "members";
 			readonly room: RoomName;
 			readonly members: readonly RobName[];
+			/** Required, never optional: an absent field would travel as
+			 *  "no coordinator" and overwrite the phone's real one. */
+			readonly coordinator: RobName | null;
 	  };
 
 /** Machine-readable outcomes, in the shape DeliveryOutcome already uses. Text for
@@ -294,7 +297,11 @@ export type RoomMembershipReason =
 	| "duplicate_member"
 	| "reserved_member"
 	| "unknown_room"
-	| "busy";
+	| "busy"
+	// Both cases already exist in renderRoomOutcome (room-text.ts), which is the
+	// reason these two could be added without touching that file.
+	| "stopped"
+	| "coordinator_not_member";
 
 export type RoomMembershipOutcome =
 	| {
@@ -302,6 +309,22 @@ export type RoomMembershipOutcome =
 			readonly members: readonly RobName[];
 			/** The coordinator after the change; null when none, or when the
 			 *  new list dropped the previous one. */
+			readonly coordinator: RobName | null;
+	  }
+	| { readonly status: "rejected"; readonly reason: RoomMembershipReason };
+
+/** The one write surface for a room's settings. Both fields are optional, but a
+ *  caller that states neither gets a no-op event; the route refuses that before
+ *  it reaches here. */
+export interface RoomSettingsPatch {
+	readonly members?: readonly string[];
+	readonly coordinator?: RobName | null;
+}
+
+export type RoomSettingsOutcome =
+	| {
+			readonly status: "ok";
+			readonly room: RoomView;
 			readonly coordinator: RobName | null;
 	  }
 	| { readonly status: "rejected"; readonly reason: RoomMembershipReason };
@@ -596,36 +619,86 @@ export class Room {
 		return { status: "posted", entry: { ...entry } };
 	}
 
-	/** Replaces membership wholesale (one way, not add/remove). Rejects while a
-	 *  run is live so a round's participant list can never change under it. */
-	setMembers(members: readonly string[]): RoomMembershipOutcome {
+	/** The one write surface for membership and coordinator. Atomic: an invalid
+	 *  field leaves both untouched, so a refusal never writes half a change.
+	 *  One persist and one event, so a phone never sees a between-state.
+	 *  `stopped` is checked before `busy`: a stopped room's run is already gone,
+	 *  yet its instance may still be registered while a delete unwinds, and a
+	 *  late write there would rewrite the ledger the delete just archived. */
+	updateSettings(patch: RoomSettingsPatch): RoomSettingsOutcome {
+		if (this.stopped) return { status: "rejected", reason: "stopped" };
 		if (this.live !== null) return { status: "rejected", reason: "busy" };
-		const validation = validateRoomMembers(members, this.host.members());
-		if (validation.status === "rejected") return validation;
-		const cursors = new Map(
-			this.members.map((member) => [member.name, member.seen]),
-		);
-		this.members = validation.members.map((name) => ({
-			name,
-			seen: cursors.get(name) ?? 0,
-		}));
-		if (
-			this.coordinator !== null &&
-			!validation.members.includes(this.coordinator)
-		) {
-			this.coordinator = null;
+		const validated =
+			patch.members === undefined
+				? null
+				: validateRoomMembers(patch.members, this.host.members());
+		if (validated !== null && validated.status === "rejected") {
+			return validated;
 		}
+		const nextMembers =
+			validated === null ? this.memberNames() : validated.members;
+		// Two cases, deliberately different:
+		//  * the caller *stated* a coordinator  -> it must be in the list that
+		//    will exist, checked against the new list so "set him, then drop
+		//    him" can never leave a dangling name in one write;
+		//  * the caller only changed members    -> dropping the current
+		//    coordinator clears it, which is setMembers' existing semantics
+		//    and must not regress into a rejection.
+		const stated = patch.coordinator !== undefined;
+		let nextCoordinator: RobName | null = stated
+			? (patch.coordinator ?? null)
+			: this.coordinator;
+		if (stated) {
+			const coordCheck = validateRoomCoordinator(
+				nextCoordinator ?? undefined,
+				nextMembers,
+			);
+			if (coordCheck.status === "rejected") return coordCheck;
+		} else if (
+			nextCoordinator !== null &&
+			!nextMembers.includes(nextCoordinator)
+		) {
+			nextCoordinator = null;
+		}
+		if (validated !== null) {
+			// Same cursor carry-over setMembers always had, so changing membership
+			// never makes every member re-read the whole transcript.
+			const cursors = new Map(
+				this.members.map((member) => [member.name, member.seen]),
+			);
+			this.members = validated.members.map((name) => ({
+				name,
+				seen: cursors.get(name) ?? 0,
+			}));
+		}
+		this.coordinator = nextCoordinator;
 		this.emit({
 			kind: "members",
 			room: this.name,
 			members: this.memberNames(),
+			coordinator: this.coordinator,
 		});
 		this.persist();
-		return {
-			status: "ok",
-			members: this.memberNames(),
-			coordinator: this.coordinator,
-		};
+		return { status: "ok", room: this.view(), coordinator: this.coordinator };
+	}
+
+	/** Replaces membership wholesale (one way, not add/remove). Kept as a thin
+	 *  delegate so the TUI path and this one cannot drift. */
+	setMembers(members: readonly string[]): RoomMembershipOutcome {
+		const outcome = this.updateSettings({ members });
+		return outcome.status === "ok"
+			? {
+					status: "ok",
+					members: outcome.room.members,
+					coordinator: outcome.coordinator,
+				}
+			: outcome;
+	}
+
+	/** Sets or clears the coordinator, through the same guards and the same
+	 *  validation as a membership change. */
+	setCoordinator(coordinator: RobName | null): RoomSettingsOutcome {
+		return this.updateSettings({ coordinator });
 	}
 
 	/** Ends the live run with `interrupted`; the room stays usable. */

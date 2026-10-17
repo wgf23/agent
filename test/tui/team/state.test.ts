@@ -312,6 +312,7 @@ describe("teamReducer rooms", () => {
 					kind: "members",
 					room: "ship-it",
 					members: ["planner", "worker"],
+					coordinator: null,
 				},
 			},
 		});

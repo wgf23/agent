@@ -38,6 +38,8 @@ import type {
 	RoomEvent,
 	RoomRun,
 	RoomSendOutcome,
+	RoomSettingsOutcome,
+	RoomSettingsPatch,
 	RoomView,
 } from "../rob/room.js";
 import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
@@ -264,6 +266,10 @@ export class TeamHub extends EventBus implements Hub {
 
 	interruptRoom(room: string): void {
 		this.team.interruptRoom(room);
+	}
+
+	updateRoom(room: string, patch: RoomSettingsPatch): RoomSettingsOutcome {
+		return this.team.updateRoomSettings(room, patch);
 	}
 
 	resolveApproval(id: string, decision: ApprovalChoice): void {
@@ -716,6 +722,7 @@ export function toRoomEventInfo(event: RoomEvent): RoomEventInfo {
 				kind: "members",
 				room: event.room,
 				members: [...event.members],
+				coordinator: event.coordinator,
 			};
 	}
 }

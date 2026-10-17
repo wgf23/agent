@@ -3943,3 +3943,87 @@ button.browser-crumb:hover {
 		flex-wrap: wrap;
 	}
 }
+
+/* ---------- Room settings drawer ---------- */
+
+/* The header's right edge. Pushed out of the info block so a long room name or
+   deliverable path never crowds the button. */
+.bot-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+}
+
+.room-settings:focus {
+	/* The dialog itself takes focus on open so a phone does not pop the
+	   keyboard over the member list; it is a container, not a control, so the
+	   ring around the whole modal would read as an error border. */
+	outline: none;
+}
+
+.room-settings form {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	flex: 1;
+}
+
+.room-settings-members {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 220px;
+	overflow-y: auto;
+	padding: 4px 0;
+}
+
+/* One 44px row per member: this list is the main touch target on a phone. */
+.room-settings-member {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 44px;
+	padding: 0 6px;
+	border-radius: var(--radius-sm);
+	font-size: 13.5px;
+	cursor: pointer;
+}
+
+.room-settings-member:hover {
+	background: var(--surface-2);
+}
+
+.room-settings-notice {
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: var(--radius-sm);
+	background: var(--surface-2);
+	color: var(--text-2);
+	font-size: 12.5px;
+	line-height: 1.5;
+}
+
+.room-settings-error {
+	padding: 8px 10px;
+	border-radius: var(--radius-sm);
+	background: var(--error-soft);
+	color: var(--red);
+	font-size: 12.5px;
+}
+
+@media (max-width: 640px) {
+	/* The footer stays outside the scrolling body, so 保存 is always reachable
+	   with the phone keyboard up. */
+	.room-settings .modal-body {
+		overflow-y: auto;
+	}
+
+	/* One scroll container on a phone: the member list must not scroll inside
+	   an already scrolling body, or a thumb flick hits the inner edge and
+	   stalls with the keyboard up. */
+	.room-settings-members {
+		max-height: none;
+		overflow: visible;
+	}
+}

@@ -1093,6 +1093,7 @@ describe("Room", () => {
 			kind: "members",
 			room: "ship-it",
 			members: ["builder", "reviewer"],
+			coordinator: null,
 		});
 
 		room.send("go");
@@ -1153,6 +1154,133 @@ describe("Room", () => {
 		});
 		expect(room.view().coordinator).toBeNull();
 		expect(room.state().coordinator).toBeNull();
+	});
+
+	it("sets and clears the coordinator through updateSettings", () => {
+		const { room, host, ledger } = makeRoom({
+			members: ["planner", "builder", "reviewer"],
+		});
+
+		expect(room.updateSettings({ coordinator: "builder" })).toMatchObject({
+			status: "ok",
+			coordinator: "builder",
+		});
+		expect(room.view().coordinator).toBe("builder");
+		expect(room.state().coordinator).toBe("builder");
+		// One event and one save per write, never a half-applied pair.
+		expect(host.events.at(-1)).toEqual({
+			kind: "members",
+			room: "ship-it",
+			members: ["planner", "builder", "reviewer"],
+			coordinator: "builder",
+		});
+		expect(ledger.saves.at(-1)?.coordinator).toBe("builder");
+
+		expect(room.updateSettings({ coordinator: null })).toMatchObject({
+			status: "ok",
+			coordinator: null,
+		});
+		expect(room.view().coordinator).toBeNull();
+	});
+
+	it("refuses a coordinator who is not in the room, and writes nothing", () => {
+		const { room, host, ledger } = makeRoom({
+			members: ["planner", "builder"],
+			coordinator: "planner",
+		});
+		const savesBefore = ledger.saves.length;
+		const eventsBefore = host.events.length;
+
+		expect(room.updateSettings({ coordinator: "reviewer" })).toEqual({
+			status: "rejected",
+			reason: "coordinator_not_member",
+		});
+		// A rejected write must leave the ledger and the event stream untouched,
+		// otherwise a phone would see a coordinator that never landed.
+		expect(ledger.saves).toHaveLength(savesBefore);
+		expect(host.events).toHaveLength(eventsBefore);
+		expect(room.state().coordinator).toBe("planner");
+	});
+
+	it("applies members and coordinator together, or neither", () => {
+		const { room, ledger } = makeRoom({
+			members: ["planner", "builder"],
+			roster: ["planner", "builder", "reviewer"],
+		});
+
+		// The coordinator is checked against the list that will exist.
+		expect(
+			room.updateSettings({
+				members: ["planner", "reviewer"],
+				coordinator: "reviewer",
+			}),
+		).toMatchObject({ status: "ok", coordinator: "reviewer" });
+		expect(room.view().members).toEqual(["planner", "reviewer"]);
+		expect(room.view().coordinator).toBe("reviewer");
+
+		const savesBefore = ledger.saves.length;
+		expect(
+			room.updateSettings({
+				members: ["planner"],
+				coordinator: "planner",
+			}),
+		).toEqual({ status: "rejected", reason: "member_count" });
+		expect(ledger.saves).toHaveLength(savesBefore);
+		expect(room.view()).toMatchObject({
+			members: ["planner", "reviewer"],
+			coordinator: "reviewer",
+		});
+	});
+
+	it("rebuilds membership without touching the members already there", () => {
+		const { room } = makeRoom({
+			members: ["planner", "builder"],
+			roster: ["planner", "builder", "reviewer"],
+		});
+
+		expect(
+			room.updateSettings({ members: ["builder", "reviewer"] }),
+		).toMatchObject({ status: "ok" });
+		expect(room.state().members).toEqual(["builder", "reviewer"]);
+		// A single-member list is still refused: the bounds did not move.
+		expect(room.updateSettings({ members: ["builder"] })).toEqual({
+			status: "rejected",
+			reason: "member_count",
+		});
+	});
+
+	it("rejects updateSettings while a run is live and once the room stopped", async () => {
+		const { room, ledger } = makeRoom({
+			roster: ["planner", "builder", "reviewer"],
+			scripts: { planner: [hang] },
+		});
+
+		room.send("go");
+		const savesBefore = ledger.saves.length;
+		expect(room.updateSettings({ members: ["builder", "reviewer"] })).toEqual({
+			status: "rejected",
+			reason: "busy",
+		});
+		expect(room.updateSettings({ coordinator: "builder" })).toEqual({
+			status: "rejected",
+			reason: "busy",
+		});
+		expect(ledger.saves).toHaveLength(savesBefore);
+
+		await room.stop();
+		// stop() itself persists once; only writes after it matter here.
+		const savesAtStop = ledger.saves.length;
+		// `stopped` is checked first: its run is already gone, yet the instance
+		// can still be registered while a delete unwinds.
+		expect(room.updateSettings({ members: ["builder", "reviewer"] })).toEqual({
+			status: "rejected",
+			reason: "stopped",
+		});
+		expect(room.updateSettings({ coordinator: "builder" })).toEqual({
+			status: "rejected",
+			reason: "stopped",
+		});
+		expect(ledger.saves).toHaveLength(savesAtStop);
 	});
 
 	it("asks the coordinator for one deliverable after the run settles", async () => {

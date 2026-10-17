@@ -453,12 +453,26 @@ export type RoomEventInfo =
 			round: number;
 			state: "replied" | "passed" | "timed_out" | "failed";
 	  }
-	| { kind: "members"; room: string; members: string[] };
+	| {
+			kind: "members";
+			room: string;
+			members: string[];
+			// Required, not optional: an absent field would arrive as undefined
+			// and overwrite the client's real coordinator with "none".
+			coordinator: string | null;
+	  };
 
 export interface CreateRoomBody {
 	name: string;
 	members: string[];
 	coordinator?: string;
+}
+
+/** PATCH /api/rooms/:name. Both fields are additive to the model, but at least
+ *  one must be present; a body with neither is a 400 at the route. */
+export interface PatchRoomBody {
+	members?: string[];
+	coordinator?: string | null;
 }
 
 export interface RoomSendBody {

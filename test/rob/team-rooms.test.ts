@@ -122,6 +122,7 @@ describe("Team rooms", () => {
 				kind: "members",
 				room: "ship-it",
 				members: ["planner", "builder"],
+				coordinator: null,
 			},
 		});
 

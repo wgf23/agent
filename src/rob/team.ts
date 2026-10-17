@@ -45,6 +45,8 @@ import {
 	type RoomName,
 	type RoomReplyOutcome,
 	type RoomSendOutcome,
+	type RoomSettingsOutcome,
+	type RoomSettingsPatch,
 	type RoomState,
 	type RoomTurn,
 	type RoomTurnResult,
@@ -595,7 +597,12 @@ export class Team implements TeamPort {
 		this.roomRegistry.set(name, room);
 		this.emit({
 			kind: "room",
-			event: { kind: "members", room: name, members: validation.members },
+			event: {
+				kind: "members",
+				room: name,
+				members: validation.members,
+				coordinator: coordinator ?? null,
+			},
 		});
 		this.offerSeed(room);
 		return { status: "created", room: room.view() };
@@ -622,6 +629,19 @@ export class Team implements TeamPort {
 			return { status: "rejected", reason: "unknown_room" };
 		}
 		return target.setMembers(members);
+	}
+
+	/** The serve path: one atomic write of members and/or coordinator. The
+	 *  membership rules stay in Room; nothing is re-validated here. */
+	updateRoomSettings(
+		room: RoomName,
+		patch: RoomSettingsPatch,
+	): RoomSettingsOutcome {
+		const target = this.roomRegistry.get(room);
+		if (target === undefined) {
+			return { status: "rejected", reason: "unknown_room" };
+		}
+		return target.updateSettings(patch);
 	}
 
 	interruptRoom(room: RoomName): void {
