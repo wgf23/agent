@@ -96,9 +96,13 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - `--dry-run` 走**同一套校验**：非法时 exit ≠ 0（不得 exit 0 + 只打印告警）；合法时 exit 0 且不写任何文件。
   - 校验必须发生在写 `.bak` / `.tmp` **之前**（非法时连 `.bak` 都不产生）。
   - **人数上限/下限必须从 `src/rob/room-limits.ts` 取**（正则读源码或等价单一来源），**禁止在 `.mjs` 里写死 `2`/`20`** —— 否则破坏 AC-5 的单值源。
+  - **解析必须 fail-closed（对语义等价改写免疫）**：从 `src/rob/room.ts` 读 `RESERVED_ROOM_SPEAKERS` 时，把数组排版改成多行并加注释（元素值不变）后，脚本**仍须 exit ≠ 0 且不写盘**；不得因正则跨行匹配而解析出带注释残渣的元素、导致 `has("user")===false` 后放行。判据面：构造 Set 后对每个元素做形状断言（`^[a-z][a-z0-9-]*$`），不合法即 exit 1。
 - **AC-11** `docs/rnd-team.md` **写明迁移时序**（对应 design §4 第 2 条）：
-  - 判据：`grep -n "停 serve\|停止 serve\|先停" docs/rnd-team.md` 命中 ≥1 行，且该行与 `node scripts/room-members.mjs` 的用法**在同一节**（"已有房间需要迁移"）。
-  - 语义要求：必须表达「ledger 是进程内存态的落盘点，房间写盘会整份覆盖脚本结果且不报错」这一因果，而不只是出现"停 serve"四个字。
+  - 判据用**内容级锚**，不锚措辞片段（锚短语 = 下一个人换个说法就误红，2026-10-17 已踩两次）：
+    - `grep -n "systemctl stop my-agent" docs/rnd-team.md` 恰 1 行；
+    - 该行位于「已有房间需要迁移」一节，且与 `node scripts/room-members.mjs` 用法**同节**。
+  - 语义要求：必须表达「ledger 是进程内存态的落盘点，serve 在跑时房间写盘会整份覆盖脚本结果且不报错」这一因果链（覆盖/零报错两要素），而不只是出现「停 serve」几个字。
+  - 取证须带被检文件的 sha 或 HEAD（本节两次结论都因文件在验证过程中被改而翻转过）。
 
 ## 4. 实现约束（防返工）
 

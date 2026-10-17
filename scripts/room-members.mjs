@@ -12,6 +12,10 @@
 // state, so any room write overwrites this script's result with the old member
 // list and reports nothing.
 //
+// The membership rules below are the same rules as validateRoomMembers and
+// validateRoomCoordinator in src/rob/room.ts (restated, not imported). Change
+// one and you must change the other.
+//
 //   node scripts/room-members.mjs rnd          # config -> ledger
 //   node scripts/room-members.mjs rnd --dry-run
 import {
@@ -88,12 +92,25 @@ const reservedList = readSingle(
 	/^export const RESERVED_ROOM_SPEAKERS = \[([^\]]*)\] as const;$/gm,
 	"RESERVED_ROOM_SPEAKERS",
 );
+// `[^\]]*` spans newlines, so reformatting the array (one name per line, a
+// comment beside a name) would otherwise parse into junk and quietly turn the
+// reserved-name check into a no-op -- the one failure mode worse than refusing
+// to run. Any entry that is not a bare name aborts, matching how the bounds
+// above fail closed on a reformatted constant.
 const reserved = new Set(
 	reservedList
 		.split(",")
 		.map((entry) => entry.trim().replace(/^["']|["']$/g, ""))
 		.filter((entry) => entry !== ""),
 );
+for (const entry of reserved) {
+	if (!/^[a-z][a-z0-9-]*$/.test(entry)) {
+		console.error(
+			`Cannot parse RESERVED_ROOM_SPEAKERS from src/rob/room.ts (got ${JSON.stringify(entry)}); refusing to write without its source.`,
+		);
+		process.exit(1);
+	}
+}
 
 // The rules below restate validateRoomMembers/validateRoomCoordinator from
 // src/rob/room.ts (same order, same rejections). It is a stand-alone .mjs, so
@@ -139,10 +156,13 @@ const duplicates = members.filter((name) => {
 if (duplicates.length > 0) {
 	problems.push(`duplicate members: ${[...new Set(duplicates)].join(", ")}`);
 }
-// A member the roster does not carry makes the next start throw while building
-// the team, so the whole room fails to load long after this script printed
-// "written". Name the actual difference: 8 members against 14 robs is not
-// diagnosable from "invalid members".
+// A member the roster does not carry does not stop the room from loading: an
+// existing ledger is restored as-is. Instead that member is skipped in every
+// round -- waitForBetweenTurns finds no rob and the turn is reported "stopped"
+// -- with no error and no notice, and configDrift stays quiet because this
+// script has just made the ledger match the config. Silent wrong beats loud
+// wrong only in the log. Name the actual difference: 8 members against 14 robs
+// is not diagnosable from "invalid members".
 const rosterNames = (config.robs ?? []).map((rob) => rob.name);
 const roster = new Set(rosterNames);
 const unknown = members.filter((name) => !roster.has(name));
