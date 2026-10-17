@@ -583,6 +583,13 @@ export class TeamHub extends EventBus implements Hub {
 					info.backendModel = rob.backend.model;
 				}
 			}
+			// Echoed as stored: a field the config never set stays off the
+			// wire, so the panel can tell "default" from "explicitly empty".
+			if (rob.skills !== undefined) info.skills = [...rob.skills];
+			if (rob.skillsConfigured !== undefined) {
+				info.skillsConfigured = rob.skillsConfigured;
+			}
+			if (rob.mcp !== undefined) info.mcp = [...rob.mcp];
 			const wake = this.team.robWake(rob.name);
 			if (wake !== null) info.wake = wake;
 			return info;

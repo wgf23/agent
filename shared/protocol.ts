@@ -64,6 +64,12 @@ export interface BotInfo {
 	backendModel?: string;
 	// The configured interval that wakes the bot; absent when it has none.
 	wake?: BotWake | null;
+	// The bot's scope, echoed back so the edit panel can prefill it. Absent
+	// means the config never set it, which the panel shows as the default;
+	// it is not the same as an empty list.
+	skills?: string[];
+	skillsConfigured?: boolean;
+	mcp?: string[];
 }
 
 export type BotBackendDraft =

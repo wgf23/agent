@@ -69,6 +69,78 @@ describe("connectMcpServers", () => {
 		}
 	});
 
+	// A server's failure text can quote the environment it was started with.
+	// The notice is user-visible, so the values must be replaced first.
+	it("redacts a secret quoted in a connection error", async () => {
+		const secret = "hunter2-db-password";
+		const result = await connectMcpServers({
+			servers: {
+				db: fake({
+					FAKE_MCP_SCENARIO: "fail-with-secret",
+					MCP_DB_PASSWORD: secret,
+				}),
+			},
+			workspaceRoot: process.cwd(),
+			timeoutMs: 2000,
+		});
+		disposed.push(result.dispose);
+
+		expect(result.notices).toHaveLength(1);
+		expect(result.notices[0]).not.toContain(secret);
+		expect(result.notices[0]).toContain("«redacted»");
+	});
+
+	// The mapper's rejection is built from tool names, not stderr, so it is a
+	// second way a secret reaches the notice.
+	it("redacts a secret quoted in a tool-mapping error", async () => {
+		const secret = "leftover-mcp-token";
+		const result = await connectMcpServers({
+			servers: {
+				dup: fake({
+					FAKE_MCP_SCENARIO: "duplicate-tools",
+					MCP_DB_PASSWORD: secret,
+				}),
+			},
+			workspaceRoot: process.cwd(),
+			timeoutMs: 2000,
+		});
+		disposed.push(result.dispose);
+
+		expect(result.notices).toHaveLength(1);
+		expect(result.notices[0]).not.toContain(secret);
+		expect(result.notices[0]).toContain("«redacted»");
+	});
+
+	// The real client cannot fail on dispose, so a disposable test client is
+	// the only way to reach the redaction branch that guards it.
+	it("redacts a secret quoted in a dispose error", async () => {
+		const secret = "shutdown-db-password";
+		const result = await connectMcpServers({
+			servers: { db: fake({ MCP_DB_PASSWORD: secret }) },
+			workspaceRoot: process.cwd(),
+			timeoutMs: 2000,
+			createClient: () => ({
+				initialize: async () => {},
+				listTools: async () => ({ tools: [] }),
+				callTool: async () => ({}),
+				dispose: async () => {
+					throw new Error(`could not shut down: ${secret}`);
+				},
+			}),
+		});
+
+		// Read before dispose: the connection succeeded, so there is nothing
+		// to report yet.
+		expect(result.notices).toEqual([]);
+		// A failed shutdown is not fatal for callers, so dispose must resolve.
+		await expect(result.dispose()).resolves.toBeUndefined();
+
+		// Same array, appended to after it was handed out.
+		expect(result.notices).toHaveLength(1);
+		expect(result.notices[0]).not.toContain(secret);
+		expect(result.notices[0]).toContain("«redacted»");
+	});
+
 	it("disposes every client", async () => {
 		const dir = await tempDir();
 		const pid1 = path.join(dir, "one.pid");

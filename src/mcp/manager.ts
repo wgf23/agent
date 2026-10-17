@@ -2,7 +2,12 @@ import type { McpServers } from "../config/resolve.js";
 import { tools as builtinTools } from "../tools/registry.js";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
-import { type McpClient, StdioMcpClient } from "./client.js";
+import {
+	type McpClient,
+	type McpClientOptions,
+	StdioMcpClient,
+} from "./client.js";
+import { redactMcpServer } from "./redact.js";
 import { mapServerTools, parseToolList } from "./tools.js";
 
 export interface McpServerSummary {
@@ -28,6 +33,9 @@ export interface ConnectMcpServersInput {
 	servers: McpServers;
 	workspaceRoot: string;
 	timeoutMs?: number;
+	// Test seam: defaults to `new StdioMcpClient(options)`. Only tests supply
+	// it, to drive a failure the real client cannot produce.
+	createClient?: (options: McpClientOptions) => McpClient;
 }
 
 // Starts every configured server, initializes it, and maps its tools. One
@@ -35,7 +43,16 @@ export interface ConnectMcpServersInput {
 export async function connectMcpServers(
 	input: ConnectMcpServersInput,
 ): Promise<ConnectMcpServersResult> {
-	const clients: McpClient[] = [];
+	// Each client keeps its own env so a dispose error can be redacted with the
+	// values that server was started with: the array is the only place the two
+	// are still paired.
+	const createClient =
+		input.createClient ?? ((options) => new StdioMcpClient(options));
+	const clients: Array<{
+		client: McpClient;
+		name: string;
+		env: Readonly<Record<string, string>>;
+	}> = [];
 	const tools: Tool[] = [];
 	const toolsByServer: Record<string, Tool[]> = {};
 	const notices: string[] = [];
@@ -43,14 +60,15 @@ export async function connectMcpServers(
 	const existingNames = new Set(builtinTools.map((tool) => tool.name));
 
 	for (const [name, config] of Object.entries(input.servers)) {
-		const client = new StdioMcpClient({
+		const client = createClient({
 			name,
 			command: config.command,
 			env: config.env,
 			workspaceRoot: input.workspaceRoot,
 			timeoutMs: input.timeoutMs,
 		});
-		clients.push(client);
+		const entry = { client, name, env: config.env ?? {} };
+		clients.push(entry);
 		try {
 			await client.initialize();
 			const mapped = mapServerTools({
@@ -68,7 +86,15 @@ export async function connectMcpServers(
 				tools: mapped.tools.map((tool) => tool.name),
 			});
 		} catch (error) {
-			notices.push(`mcp ${name}: ${errorDetail(name, error)}`);
+			// A spawn or handshake error can quote the environment it was
+			// given, so the text passes through this server's own env values
+			// before it reaches a notice the UI shows.
+			notices.push(
+				redactMcpServer(
+					`mcp ${name}: ${errorDetail(name, error)}`,
+					config.env ?? {},
+				),
+			);
 		}
 	}
 
@@ -77,8 +103,32 @@ export async function connectMcpServers(
 		toolsByServer,
 		notices,
 		servers,
+		// Unlike every other path here, dispose runs after the result object has
+		// been handed out, so it appends to the same live `notices` array rather
+		// than returning a fresh one: a caller that wants shutdown failures must
+		// read that array again afterwards. Errors are recorded instead of
+		// thrown, since callers already treat a failed dispose as non-fatal.
 		dispose: async () => {
-			await Promise.all(clients.map((client) => client.dispose()));
+			await Promise.all(
+				clients.map(async (entry) => {
+					try {
+						await entry.client.dispose();
+					} catch (error) {
+						// StdioMcpClient.dispose() cannot throw (it only kills
+						// and awaits exit), so only a test-supplied client
+						// reaches this branch. It stays because C15 asks for
+						// every path that can surface server text to redact, and
+						// a future dispose that does report something must not do
+						// it raw.
+						notices.push(
+							redactMcpServer(
+								`mcp ${entry.name}: ${errorDetail(entry.name, error)}`,
+								entry.env,
+							),
+						);
+					}
+				}),
+			);
 		},
 	};
 }

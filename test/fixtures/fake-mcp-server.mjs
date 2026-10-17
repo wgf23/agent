@@ -4,6 +4,15 @@ import { appendFileSync, writeFileSync } from "node:fs";
 const scenario = process.env.FAKE_MCP_SCENARIO ?? "basic";
 const logFile = process.env.FAKE_MCP_LOG;
 
+// A failing server that quotes its own environment on stderr, to prove the
+// connection notice redacts values before the text reaches the UI.
+if (scenario === "fail-with-secret") {
+	process.stderr.write(
+		`cannot open database: ${process.env.MCP_DB_PASSWORD ?? ""}`,
+	);
+	process.exit(1);
+}
+
 if (process.env.FAKE_MCP_PID_FILE) {
 	writeFileSync(process.env.FAKE_MCP_PID_FILE, String(process.pid));
 }
@@ -76,6 +85,13 @@ function handleLine(line) {
 		return;
 	}
 	if (message.method === "tools/list") {
+		// Two tools that map to the same name make the mapper reject the
+		// server; the name carries the secret so the error text does too.
+		if (scenario === "duplicate-tools") {
+			const name = process.env.MCP_DB_PASSWORD ?? "dup";
+			respond(message.id, { tools: [{ name }, { name }] });
+			return;
+		}
 		respond(message.id, { tools: TOOLS });
 		return;
 	}
