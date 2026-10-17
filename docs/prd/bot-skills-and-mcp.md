@@ -106,6 +106,13 @@
   - **不得**改 `App`（工作区 solo 对话）那处 `extraTools: [...mcp.tools, ...lsp.tools, ...]` —— 它不是 bot，共享全部工具是正确语义；
   - **不得**改动任何渲染、布局、键位、主题。
   **review 判定**：`src/tui/index.tsx` 的 diff 若超出上述一处（±3 行），**按红线报**。
+- **允许改（2026-10-17 leader 裁定「补白名单而非回退」，逐个核过这 9 个文件均为实现必需）**：
+  - `src/agent/**` —— 理由：**AC-2 注入链的必然消费方**，且**已接线**（`rob.ts:202` 传 `options.skills` → `system-prompt.ts:43`）。与 §12.7「tui/cli 是必然消费方」同理。
+  - `test/serve/**` —— 理由：`src/serve/**` 已允许改，其测试面自然跟随（原白名单有 `src/serve` 却漏了 `test/serve`）。`test/serve/bots-http.test.ts` 本线 +160/−1。
+  - `test/fixtures/**` —— 理由：`test/fixtures/fake-mcp-server.mjs` 是本线**对抗性 MCP fixture**（`fail-with-secret` / `duplicate-tools`），无它无法测脱敏与重名拒绝。
+  - `docs-dist/**` —— 理由：**独立文档归档**（非 `docs/` 镜像，§15.2 已证 13/14 在 `docs/` 无对应文件），单列 `docs:` 笔。
+  - `.gitignore` —— 理由：本地忽略（`a006169` 加 `.pnpm-store/`），**chore 单列**，已 `git check-ignore` 验证生效。
+  **红线不受影响**：这些都是**白名单内的追加**，上面「红字禁止」四项（`screenshots/**`、`src/rob/room-text.ts`、`src/tui/**` 除一处接线、协议变更以外的禁区）**条目不增不减**。
 - **允许改（2026-10-17 pm 裁决，新增）**：`docs/**` —— **仅 .md 文档**。理由：本线的设计文档（`docs/design/bot-skills-and-mcp.md`）、PRD（`docs/prd/bot-skills-and-mcp.md`）**当前全部 untracked**（`git ls-files docs/` 只有 7 个历史 design 文档，PRD 目录零文件），而 AC/红线/§12.9 取证标准全都引用它们 ⇒ **「设计文档与实现一致」没有版本锚点**，§14.1 的规则在文档层面失效。仓库既有先例（`docs/design/rob.md` 等 7 个已 tracked）支持提交。
   **约束**：① 必须**单独一笔** `docs: …` 提交，**不得与源码混提交**（保 review 的代码 diff 干净）；② 只提交 `.md`，不得夹带截图/二进制；③ 提交后 `git ls-files docs/prd/` 必须非空。
 - **红字禁止**（命中即红）：`screenshots/**`、`src/rob/room-text.ts`（后端 @ 语义不得因本线变动）；`src/tui/**` **仅允许** `src/tui/index.tsx` 的 `new Team` MCP 接线（≤2 行），**其余零命中**（2026-10-17 leader 裁决重划，见 §13）。
@@ -127,7 +134,7 @@
 | **AC-7** | 每个 bot 只看到自己启用的 MCP server 的工具；未启用即不可见 | 纯函数（工具过滤）+ 集成 |
 | **AC-8** | 单个 MCP server 启动失败只产生 notice，不阻塞其他 server/bot/serve 启动 | 集成（失败注入） |
 | **AC-9** | 保存后**新实例的下一 turn**生效，无需重启 serve。**已更正（U7/B2）**：保存**会**打断该 bot 正在进行的那一轮（`updateBot` = `stop()` + `denyRob(TURN_INTERRUPTED)` + `createRob()`），属**已知行为、非缺陷**，UI 须在保存处提示；**不得**断言「同一实例」或「不打断」。**范围限定（U1）**：仅 skill 指派与「已配置 server 的按 bot 启用/禁用」；MCP server **定义**的增删改须重启，接口返回 `restartRequired: true` | 集成（用 `updateBot` 返回的新实例跑下一 turn） |
-| **AC-10** | 非 loopback 绑定时，安装 skill / 改 MCP 返回 403 + 可读原因；`env` 密钥不回传浏览器 | 集成 + 纯函数（视图脱敏） |
+| **AC-10** | 非 loopback 绑定时，安装 skill / 改 MCP 返回 403 + 可读原因。**2026-10-17 扩范围（三次追加）：**<br>① **C15 泄漏面 = 5 条路径**（`notices` / `servers[].tools` / `tools[].name` / `tools[].description` / `tools[].parameters`），其中 ②③⑤ 命中即整 server 拒绝、④⑤ 字符串值脱敏后才进 provider 请求；<br>② **`GET /api/mcp` 不回传 argv 原文**：`command` = `config.command[0]`、`argsCount` = `length-1`、`envKeys` 只回键名（§16.4-4）；<br>③ `dir` 不得出现在 `GET /api/skills`（§16.4-6）。<br>**取证面 = design §13.6 的 9–13 条**，见 §16.7 | 集成 + 纯函数 + **HTTP 层负向断言** + **`toolDefinition()` 出参断言** |
 | **AC-11** | 向后兼容：无 `skills` 字段的老 bot 行为与今天一致（可用全部已装）；无 `mcp` 字段 = 不启用任何 server（**U6：属行为变更，须在 UI 可见 + 发布说明写明**） | 纯函数（缺省解析）+ 回归 |
 | **AC-12** | 新增判断逻辑均为纯函数且有单测；测试不引入 jsdom | 审查 + 实跑 |
 | **AC-13** | 前三条线不回归：`test/web/*`、`test/rob/room-text*`、全量测试全绿 | 实跑（干净 HOME） |
@@ -441,9 +448,28 @@ printf 'docs/x.ts\ndocs-dist/y.mjs\nsrc/real.ts' \
 > 本轮已发生 4 起同类错误（按过期快照报缺陷）：`botScope.ts` 缺 `.js`、`file 未创建`、`schema 腿 1/4`、**AC-7「差 4 项」**（后者由 leader 向用户误报，引用的是标着 `HEAD 047dc7f` 的 §12.9 状态表，而实际 HEAD 已是 `ca70bc2` 之后）。
 > **配套硬规则**：状态表标题必须写成「当前状态（**HEAD `<hash>`**）」形式；终判前对每张状态表做一次 HEAD 比对，不一致的表**整表作废重测**，不得逐行挑着用。
 
-> **§12.8b 禁令可执行性（2026-10-17，由 `.file-panel.mobile-open` 事件驱动，pm 立规）**：任何红线/禁令**必须附一条可直接执行的取证命令**，且该命令须**当场验证双向有效** —— 禁令未违反时返回零命中、违反时能命中（可用一次故意违反做阳性对照）。
-> **触发本条的实例**：PRD 曾写"禁止移除 `.file-panel.mobile-open`"，而该选择器**全仓不存在**（实际是 `:3397` 的**否定选择器** `.file-panel:not(.mobile-open)`）。按原文字 grep **恒空** ⇒ 红线自己判"零命中"并给出虚假安全感。
-> **与 §12.8 同类**：都是「取证手段本身没被验证」。前者是快照过期，后者是判据不存在。**判据不成立时，该项按「未取证」处理，不得按"零命中"记绿。**
+> **§12.8b 禁令可执行性（2026-10-17，由 `.file-panel.mobile-open` 事件驱动，pm 立规；review 补第三变种）**：任何红线/禁令**必须附一条可直接执行的取证命令**，且该命令须**当场验证双向有效** —— 禁令未违反时零命中、违反时能命中（用一次故意违反做**阳性对照**）。
+> **三种失效形态（共同点：命令跑得出结果，但结果不蕴含结论）**：
+> | 变种 | 表现 | 实例 |
+> |---|---|---|
+> | **判据不存在** | grep 恒空 ⇒ 虚假安全感 | `.file-panel.mobile-open`（全仓无此选择器，实为 `:3397` 的 `.file-panel:not(.mobile-open)`） |
+> | **判据漏判** | 静默放过 | 前缀法 `grep -v '^docs/'`、"目录豁免"（`docs/x.ts`、`docs-dist/y.mjs` 两条命令都不出现） |
+> | **判据语义错** | 计数代理导致假红/假绿 | `grep -c 'min-height: 44px'`（注释撑数 / 合法重构假红 / 替换选择器假绿），已改用**逐字节比对**（§16.4-1） |
+> **判据不成立时，该项按「未取证」处理，不得按"零命中"记绿。**
+
+> **§12.8c 计数口径必须显式声明（2026-10-17，leader 提出，pm 落文）**：任何「文件数 / 笔数 / 用例数」在报告时必须写明**口径**，至少说明是否含以下项：`.gitignore` 等非代码扩展名文件、docs 面、`.pnpm-store`。
+> **本次实例（pm 实测 `ad3b41a..ea72c40`）**：全量 **77 文件**。
+> - **代码面按扩展名**（`.ts/.tsx/.js/.mjs/.css/.json`）= **30** —— **不含** `.gitignore`（实测 `printf '.gitignore\n' | grep -cE '<ext>$'` = **0**）。
+> - **其余面（补集）** = **47** = 46 个 `docs/**`·`docs-dist/**` 的 `.md` + **`.gitignore`** 1 个。
+> - ⇒ **两种口径都对**：报 **30**（纯代码扩展名）/ 报 **31**（= 30 + `.gitignore`，leader 与 review 用的是这种）。**不写明必然对不上账，本轮已因此产生一次无效争论。**
+> **校验式**：30 + 47 = 77 ✅（补集法必须满足「两段之和 == 全量」，见 §13.4a）。
+> **笔数同理**：`ad3b41a..ea72c40` = **17 笔**（pm 曾误报 16，漏算 `ea72c40`）。**凡报数字必须带 HEAD + 口径，且以实跑为准。**
+
+> **§12.8d 状态中立原则（2026-10-17，pm 立规；由 design `:913` 与 PRD §16.7b ① 同一腐坏模式驱动）**：**契约/设计文档的散文里不得写「当前红 / 当前绿 / 已实现 / 未实现」**，一律写成**条件陈述 + 证据指针**（形如「X 缺失时唯一会红的是 Y；证据 = 测试文件 Z」）。
+> **为什么**：状态句会随 commit 腐坏，而**腐坏的红账比没有账更危险** —— 下一个人只有两种反应：无视它，或据此"修正"回去。**两种都是错的。**
+> **本轮实例**：`design:913` 与 `PRD §16.7b ①` 都曾写「当前实测 `reject=false` ⇒ 现在是红的」，而 dev 实现规则 1 后两侧都成了过期账；**auditor 各自自查后改为条件陈述**（巧合的是两边同一天独立发现，说明这是**结构性**问题、不是笔误）。
+> **配套**：**状态只允许出现在带 HEAD 的表格里**（§12.8a）；散文里出现状态句即视为腐坏源，清理时**改成条件陈述**而不是改数字。
+> **与 §12.8a 的分工**：§12.8a 治「表格 HEAD 漂移」，§12.8d 治「散文状态句腐坏」。
 
 **判定规则（进入终判流程）**：任何 AC 的取证，必须同时核 **①生产路径是否调用该函数/分支；②是否有跨层集成用例经过该路径**。仅「有纯函数 + 有单测」**不得记绿**，一律按「用例空转 / 未实现」报。
 **根因**：设计先冻结了接口，实现方按签名写了函数与单测，但接线是第二步 —— 两个步骤之间没有任何自动检查。**缓解**：AC 表格里区分「单测」与「集成/接线」两列，接线列没有证据即视为未完成（本文 §12.9 已按此写法）。
@@ -492,6 +518,8 @@ printf 'docs/x.ts\ndocs-dist/y.mjs\nsrc/real.ts' \
 
 **用例要求（三条，缺一不算取证）**：
 1. 注入 `dispose()` 抛错的假 client（抛出的 error 文本含 env 值）⇒ `notices` 里出现 `mcp <name>: … «redacted»` 且 **不含原值**；
+   > **与 §16.7 第 9 条区分（别误删）**：**这一条**的 `«redacted»` 来自 `errorDetail()` 复述的**底层错误文本**，那个文本里确实带值，所以 `redactMcpServer` 是**有实功的**，`«redacted»` 必然出现。
+   > 而 **security-policy 拒绝的 notice 是固定句**（`manager.ts:90`：`refused by security policy — tool text repeats the value of env "<键名>"`），**本就不含值** ⇒ 那里**不得**断言 `«redacted»`（architect 指出，见 §16.7 第 9/9b 条）。**两条路径的 notice 措辞不同，用例不要互相套用。**
 2. `await expect(result.dispose()).resolves` —— **dispose 失败不得 reject**（调用方本就按 non-fatal 处理）；
 3. 断言是**读 dispose 之后**的 `notices`（该数组在返回后仍被追加，这是本函数唯一的隐式契约，须有用例钉住）。
 
@@ -616,16 +644,18 @@ printf 'docs/x.ts\ndocs-dist/y.mjs\nsrc/real.ts' \
   # 1) 裸 hunk 位置：任一 hunk 的「- 侧」落在既有媒体查询块附近 → 要求 dev 说明
   git diff -U0 ad3b41a..<b6a-HEAD> -- web/src/styles.css | grep -E '^@@'
   #    禁区区间（`ad3b41a` 实测）：1091 / 3350 / 3360 / 3385 / 3393-3397 / 3837 / 3893-3909 / 3914 / 3920
-  # 2) 44px 触控目标「只增不减」——比人眼扫 4000 行可靠（review 建议，pm 采纳）
-  git show ad3b41a:web/src/styles.css | grep -c '44px'   # 基线 = 5（含 :3891 注释行）
-  grep -c '44px' web/src/styles.css                       # 改动后必须 >= 5
-  # 3) 44px 段的受益选择器列表不得收缩（基线 = 12 条目 / 11 个唯一选择器）
-  sed -n '/@media (pointer: coarse)/,/^}/p' web/src/styles.css | grep -cE '^\s+\.[a-z-]+,?$|^\s+\.[a-z-]+ \{'
+  # 2) 契约区段「逐字节未变」——不用计数代理（review 提出并实测，pm 采纳）
+  git show ad3b41a:web/src/styles.css | sed -n '/@media (pointer: coarse)/,/^}/p' > /tmp/base.css
+  sed -n '/@media (pointer: coarse)/,/^}/p' web/src/styles.css > /tmp/head.css
+  diff /tmp/base.css /tmp/head.css && echo OK          # 必须逐字节相同
   ```
-  **正常形态**：纯新增应以「`+` 侧落在文件尾部的新建媒体查询块」为常态；**任何触及既有块的 `-` 侧改动都必须 dev 逐条说明理由**。
-  ⚠️ **基线口径（`ad3b41a` 与 `be98f24` 实测相同）**：`min-height: 44px` 仅 `:3904` 一处，`min-width: 44px` 仅 `:3909` 一处，另有 `:989/:990` 的 `width/height: 44px` 与 `:3891` **注释行**内的 "44px" ⇒ **`grep -c '44px'` = 5（含注释）**。
-  `@media (pointer: coarse)` 段内选择器 **12 条目 / 11 唯一**（`.session-close` 出现两次）。上面的 `sed+grep` 实测返回 **12**。
-  **断言用「`44px` 计数不下降」+「选择器列表不收缩」，不要只用 `min-height: 44px` 计数**（单条计数太脆，重构到共享类就会假红）；也别忘了注释行会被计入 —— 若 dev 改了那段注释，计数会假降。**跨这条断言前先看 `git diff` 是否只动了注释。**
+  **为什么用字节比对而不是计数**（两次翻车后定稿）：
+  - 计数 `grep -c '44px'` 有三个失效面：① `:3891` **注释行**含 "44px" 会被计入（实测 5 而非 4）；② 合法重构（11 个选择器并进共享类）⇒ **假红**；③ 删一个选择器同时加一个等价选择器 ⇒ 计数不变但覆盖度掉了 ⇒ **假绿**。
+  - **契约本身就是"不许改"**，那么"没改"就是唯一正确判据：既不会因重构假红（重构即违约），也不会因替换选择器假绿。
+  - **仅当将来确实要放开重构**，才退回计数法，且**必须同时**加「每个原选择器名仍存在」的逐项断言，而不是只比总数。
+  **阳性对照（§12.8b 硬要求，必须做一次）**：把 base 或 head 人为改一处（如 `min-height: 44px` → `47px`，或删掉 `.bot-item,` 一行），确认 `diff` **非空**。pm 已在 `ea72c40` 上实测：未改动时 `IDENTICAL`，两处人为改动均被捕获 ⇒ 判据双向有效。
+  **已实测的基线区段（`ad3b41a` vs `ea72c40`）**：`@media (pointer: coarse)` **19 行 == 19 行**、`@media (hover: none)` **10 行 == 10 行**、`@media (max-width: 640px)` 起到文件尾 **586 行 == 586 行**，**全部逐字节相同**。
+  **正常形态**：纯新增应以「`+` 侧落在文件尾部的新建媒体查询块」为常态；**任何触及既有契约块的 `-` 侧改动都必须 dev 逐条说明理由，并按红线报**。
   新增规则必须落在媒体查询之外，或写成**新增的独立媒体查询块**（不得夹进既有块内）。
 - **回归验证**：移动端三态（drawer 开合 / 文件面板开合 / 触控目标 ≥44px）人工或截图复核，**不得只跑单测就判过**。
 
@@ -644,12 +674,240 @@ printf 'docs/x.ts\ndocs-dist/y.mjs\nsrc/real.ts' \
   3. 集成：cli/workspace bot 走一遍 `PATCH /api/bots/:bot`，读回 `my-agent.json` 后 `skills` 仍为 `undefined`（**不是 `[]`**）。
 - **依据**：`BotInfo.kind` 已是 `"workspace" | "rob"`（`shared/protocol.ts:39`），`botScope.ts` 覆盖 backend 维度；本条约定的 `kind` 维度**需在 B-6a 一并加进 `web/src/botScope.ts`**（或在面板内单独判定），并补 `test/rob/bot-scope-consistency.test.ts` 的一致性用例。
 
-### 16.5 两条 non-blocking 记档（review 提出，pm 判定：本线不修，留待后续）
-| # | 现象 | 判定 | 理由 |
+### 16.5 已知边界记档（pm 判定：本线不修，留待后续；**必须写进交付说明**）
+
+> **⚠️ 本节与「未完成」严格区分（architect 提出，pm 采纳）**：本节只收**已评估并明确接受**的残余风险。
+> **「代码还没做」的项（如 `parameters` 深扫在 `ea72c40` 时未实现）不得进本节** —— 那属缺陷/未完成，必须留在缺陷清单里直到修完，否则会被 review 当"已接受的残余风险"放行。
+> **判据**：本节每一条都必须能回答「**为什么不做比做更好**」。答不上来的一律不进本节。
+
+| # | 现象 | 判定 | 理由（为什么不做比做更好） |
 |---|---|---|---|
 | 1 | **脱敏过度替换**：`DEBUG:"true"` 这类普通值也被换成 `«redacted»` | **接受，不修** | 方向是安全侧；代价是可诊断性下降。收敛成「像密钥的值」需要一套启发式规则，本身就会引入漏判风险，**不属本线范围** |
 | 2 | **截断片段泄漏**：若错误文本只回显 env 值的**片段**（如前 8 字符），替换方案不命中 | **接受，不修** | 值替换方案的固有限制；彻底解决要改 `StdioMcpClient` 的错误整形，属连接层改动，与 §3.3「只做可见性过滤」冲突 |
-**两条都不得作为终判阻塞项**；但**必须写进交付说明**，否则等于隐瞒已知限制。
+| 3 | **单字符 env 值不参与扫描**（`scanServerToolText` 的 `if (value.length <= 1) continue`） | **接受，不修** | 1 字符值（如 `"1"`、`"a"`）会匹配到几乎所有文本，替换后**整个工具描述变 `«redacted»`**，等于把可用性打穿。**限制在"防护失效"而非"功能失效"**，方向正确 |
+| 4 | **`command[0]`（argv[0]）不脱敏** | **接受，不修** | 退化配置（`["/opt/x?sig=..."]`）才会含密钥；而 argv[0] 是 `spawn` 的**可执行文件**，写密钥进去本就跑不起来。**脱敏它要动 spawn 路径，收益近零** |
+| 5 | **`«redacted»` 占位符可能与用户真实值碰撞** | **接受，不修** | 用户 env 值恰好等于 `«redacted»` 时，脱敏结果不变（已是占位符），**无新增泄漏**；且该串在 UI 里是保留语义 |
+| 6 | **L4 · MCP 文本注入 = 已接受风险**：`description`/`parameters` 里可含**指令性文本**（prompt injection），会被模型当指令 | **本线不解决** | 本线只承诺「**密钥不进 provider 请求**」；文本注入要的是"untrusted 包裹 + 模型侧指令层级"，是**另一个课题**（需改 provider 请求形状与 prompt 组装）。**⚠️ 不得写成「注入已解决」** |
+| 7 | **`$ref` 的 JSON Pointer 转义变形方向**：env 值是 `a/b`，schema 里写成 `a~1b`，规则 1（字面子串）比不到 | **接受，不修** | 要覆盖就得实现 Pointer 转义解码并与值做双向比对，属**为极边缘情形引入一套新解析器**，本身会带来新漏判。**反方向（env 是 `a~1b`、指针字面含它）不是残余 —— 规则 1 原样命中即拒**，两个方向不得混写。**⚠️ 反方向（本行左侧的"字面逆"）属缺陷面不属本节，见 §16.7b ①**（按 §12.8d 不记状态） |
+| 8 | **L5 · `examples` 非数组**（`{"examples": {"mode": …}}`）⇒ **拒整 server** | **行为必须实现；只拒绝加特例**（⚠️ 读法见下） | **非法 schema 上的 fail-safe 过度拒绝**。**「不修」指的是不给它加「对象也当自由文本递归」的特例** —— 伺候非法输入、收益为负；**不是「不实现拒绝」**。**且不得挪进 §13.7「未做必须修」清单**（见 §16.7b ②） |
+
+**八条都不得作为终判阻塞项**；但**必须写进交付说明**，否则等于隐瞒已知限制。
+**交付说明必写句**：「本线保证 MCP 配置的**密钥**不进入 provider 请求；**不保证** MCP 文本不含指令注入 —— 后者为已知未解决项（L4）。」
 
 ### 16.6 终判前最后一项（pm 自查）
 当前工作区 `M docs/prd/bot-skills-and-mcp.md` = 本节 §13.4a + §16.4 + §16.5 + §16.6 原文（29+ 行）。**这笔 docs 未提交前，HEAD 不是真终版**；提交后再由 ci 跑五步。
+
+**B-6a-4 `GET /api/mcp` 不回传 argv 原文（2026-10-17；review 发现、pm 初裁「连 argsCount 也不给」→ **architect 定稿 `argsCount`，pm 采纳并收回初裁**）**
+**缺陷**：`mcpServerSchema`（`src/config/resolve.ts:117-120`）的 `command` 是 **`z.array(z.string().min(1)).min(1)`**——**整个 argv 数组**，`spawn(command[0], command.slice(1))`（`src/mcp/client.ts:50`）。schema **没有任何规则禁止密钥出现在其中**，`["node","srv.js","--token=ghp_xxx"]` 完全合法。
+design 原 L2 的兜底（"args 里出现**该 server 的 env 值**就替换")**只覆盖边角**：最自然的写法——**密钥只写进 args、不配 env**——恰好**永远匹配不到**。而 `GET /api/mcp` **不做 loopback 限制**（与 `/api/settings` GET 一致），加上 serve **无 HTTP 层鉴权**且可绑 `0.0.0.0` ⇒ 同网段任何客户端可读明文 token。
+
+**定稿契约（以 design §3.4 为准）**：
+```ts
+export interface McpServerInfo {
+  name: string;
+  command: string;      // = config.command[0]，仅可执行文件；**不是**整个数组
+  argsCount: number;    // = config.command.length - 1；不回原文
+  envKeys: string[];    // 只回键名
+}
+```
+**pm 收回初裁**：我原写「连 `argsCount` 也不要」，architect 定稿为 `argsCount`。**采纳理由**：`argsCount` 不含任何用户数据，且 B-6a 要显示"该 server 有几个参数"以区分"忘了填"与"本来就没有"；**零风险、零漏判**，比"零字段"多一点点诊断价值，可接受。
+
+**⚠️ 但 `command` 的取值必须钉死（这是我收回初裁时保留的一条，不许含糊）**：
+- `command` **必须投影成 `config.command[0]`**（单个可执行文件字符串）。**若直接把 `config.command` 数组塞进 `command: string` 字段，等于把 `--token=ghp_xxx` 原样下发，本次修改完全白做。**
+- **取证**：配置 `command: ["node","srv.js","--token=ghp_xxx"]` ⇒ 响应 `command === "node"`、`argsCount === 2`、`JSON.stringify(body)` **不含** `ghp_xxx`、`Object.keys(row)` **不含** `args`。
+- **残余风险（记入 §16.5）**：`config.command[0]` 本身若含密钥（退化配置，如 `["/opt/x?sig=..."]`）仍会下发。**接受**：argv[0] 是 `spawn` 的可执行文件，写密钥进去本就跑不起来。
+
+**B-5 编辑的后果（必须写进 B-5 设计，已由 design §3.4 承担）**：读不回原文 ⇒ **编辑既有 server 必须重新输入命令行**，`command`/`args` **不参与"缺席保留"**；**不得**用 `argsCount` 拼凑回原文。
+
+**B-6a-5 脱敏字段不得参与回写（B-5/B-6b 的前置约束，现在不触发但必须落文）**
+若将来编辑表单用 `GET` 的结果 prefill，**被脱敏成 `«redacted»` / `«set»` 的字段会被当作真实值写回** `my-agent.json`，直接破坏用户配置（且是静默的）。
+- **规则**：**任何脱敏占位符不得进入写请求体**。实现上二选一：① 编辑走 loopback-only 原始值路由；② 脱敏字段在表单里**保持空白 + 标注"已设置（不显示）"**，提交时按"缺席 = 保留"语义**省略该键**（与 §3.4 `env` 写模型一致）。
+- **取证（将来 B-5 必做）**：读回含 `DB_PASSWORD` 的 server → 不修改该字段直接保存 → 断言 `my-agent.json` 里原值**未被 `«redacted»` 覆盖**。
+
+**B-6a-6 `dir` 的断言方式（review 提醒，口径与 §13.3 一致）**
+`GET /api/skills` 的 `dir` 负向断言**必须**用 `expect(Object.keys(row)).not.toContain("dir")`（或逐条 `not.toHaveProperty("dir")`），**不得**用 `JSON.stringify(body).includes("dir")` —— 后者会被 `description` 里的 "directory" 之类的词**误判**，既可能假阳性也可能误导排查方向。
+**补充**：B-4 的 `command`/`args` 负向断言同理 —— 用 `Object.keys` / `not.toHaveProperty`，不要用字符串包含。
+
+### 14.6 终判：AC-14 通过（HEAD `ea72c40`，2026-10-17）
+
+**先做 §12.8a 的 HEAD 比对**：本节所有数字在 **`ea72c40`** 上实测（`origin/main == ea72c40`，ahead 0）。**引用本节时请核 HEAD。**
+
+**结论：AC-14 通过。** `ad3b41a..ea72c40` = **17 笔 / 77 文件**，可交终判。
+（review 独立实跑复核，未抄 pm 数字；pm 与 leader 亦各自实跑，三家结论一致。）
+
+| AC-14 分项 | 实测 | 出处 |
+|---|---|---|
+| 路径集 ⊆ §6 白名单 | 代码面 **30** + 其余面 **47** = **77** ✅ 校验式成立 | pm / review / leader 三方独立 |
+| `screenshots/**`、`src/rob/room-text.ts` | **0** | review |
+| `src/tui/**` 窄口例外 | **2/1**，`-U0` 仅 `@@ -153 +153,2 @@`；`<App>` 的 `...mcp.tools`（`:290`）原样仍在 ✅ | review 逐字看全文 diff |
+| `shared/protocol.ts` 纯加性 | **14/0**，删除行 **0** ✅ | review |
+| 移动端契约整段冻结 | `max-width:640px` 起至尾 sha256 `383a2a89…` 相同；`pointer:coarse` 段 sha256 `2b70bd12…` 相同 ✅ | review 用整段 sha256（非计数） |
+| 门禁（tsc / biome / 全量） | 绿，**锚 `021cef6`** | review |
+
+**门禁锚点说明（重要，防止被当作"未在终版跑过"）**：review 的全量 5 连跑在 `021cef6` 上；此后 4 笔（`a006169`/`f63149a`/`be98f24`/`ea72c40`）**每笔非 `.md` 文件数均为 0**，`git diff --name-only 021cef6..ea72c40 | grep <扩展名>` = 零命中 ⇒ **代码面自 `021cef6` 起逐字节未变**，结论对 `ea72c40` 成立。ci 在隔离 worktree 上重跑只会更稳，两者不矛盾。
+
+**§13.3 终判披露句式（对外必须出现，可整段引用）**：
+> AC-14 经 leader 裁决重划：`src/tui/**` 从「零命中」改为「仅 `new Team` MCP 接线」，实测 `git diff --numstat ad3b41a..ea72c40 -- src/tui/` = **2/1**（单 hunk @153），`<App>` 零命中。
+> 路径集：77 = 代码面 30 + 其余面 47（46 `.md` + `.gitignore`），校验式 30+47==77 成立。
+> 红线四项零命中；`shared/protocol.ts` 14/0 零删除；移动端三段契约整段 sha256 与 `ad3b41a` 逐字节一致。
+
+**本轮修订的一处判据（留痕，勿复用旧法）**：`grep -c "min-height: 44px"` **恒为 1**（组选择器 + 单条声明），删掉 `.bot-item,` 计数**不变** ⇒ 对"选择器清单被裁剪"完全失明。**已定：整段冻结用逐字节/sha256 比对；确需放开重构才退回计数 + 逐选择器存在性断言**（§12.8b「判据语义错」）。
+
+### 14.7 C15 现状披露口径（HEAD `ea72c40`，ci 实测 + pm 复现）
+
+**必须这样写，不得写成「C15 全覆盖」**：
+> notice 面**已脱敏**；**tool 名路径为已知缺口，B-4 处理**。
+
+| 路径 | 状态（`ea72c40`） | 证据 |
+|---|---|---|
+| `notices[]`（连接失败 / 工具映射失败 / dispose 失败） | ✅ 已脱敏 | `manager.ts:93` / `:124` 均走 `redactMcpServer` |
+| `servers[].tools`（工具名列表） | ❌ **缺口** | `manager.ts:86` `tools: mapped.tools.map(t => t.name)` **未过脱敏** |
+| `tools[].name` | ❌ **缺口** | 同上；且 **`test/mcp/manager.test.ts` 无用例覆盖** ⇒ 「缺口 + 无测试」双重 |
+| `tools[].description` | ❌ 缺口（B-4 WIP 已做值脱敏） | `tools.ts:73` `description: info.description ?? ""` |
+| `tools[].parameters`（`inputSchema`） | ❌ **缺口（第 5 条腿，leader/qa 发现，pm 独立复现）** | 见下 |
+
+**第 5 条腿 pm 独立复现（不写测试文件，直接跑 `mapServerTools` + `toolDefinition`）**：
+```
+NAME:             mcp__probe__echo
+DESC:             "plain description"
+PARAMS:           {"type":"object","properties":{"token":{"type":"string",
+                   "description":"Bearer sk-live-QA-DESC-7b1"}}}
+SECRET_IN_NAME:   false
+SECRET_IN_DESC:   false
+SECRET_IN_PARAMS: true      ← 坐实
+```
+**根因链**：`mcp/tools.ts:73` 只设 `parameters: info.inputSchema ?? {…}`、**不设 `schema`** → `tools/registry.ts:30-33` 在 `schema === undefined` 时**原样返回 `parameters`、零清洗** → 进 `ProviderRequest.tools`。
+**注意受害面**：`parameters` 与 `description` 一样**发给模型**（比进浏览器更严重），`name` 还会回给 MCP server 作为 `tools/call`。
+**脱敏双轨（待 architect 定稿，此处只记口径）**：**值递归脱敏**（`description` 类自由文本）+ **键名拒绝**（`name` 与 `parameters` 的键名不能改写，改了就是另一个工具/另一个 schema，只能整 server 拒绝）。
+
+**⚠️ 术语澄清（防止文档混用，ci 指出）**：`src/mcp/tools.ts:27` 的 **`sanitize`/`sanitizeNamePart` 是字符集替换**（`[^A-Za-z0-9_-]` → `_`），**与密钥脱敏无关**，**不是同一个函数**。
+⇒ `«redacted»` 由 `redactMcpServer`（`src/mcp/redact.ts`）产生；`sanitize` 只保证工具名合法。
+**这正是缺口成因**：`sanitize` **不改变合法字符**，所以 `sk-live-abc-123` 这类型值**原样穿透**（全字符合法）。**文档与评审中不得把两者互相代指。**
+
+**AC-10 的 5 条路径措辞：已定稿**（architect 2026-10-17 定稿 design §13.6，见 §16.7）。
+
+### 16.7 AC-10 取证面定稿（design §13.6 第 9–13 条，2026-10-17 architect 定稿后 pm 落文）
+
+**B-4 的验收 = 下面 5 条全部成立，缺一不判过。**（编号沿用 design §13.6，避免两边对不上）
+
+| # | 断言 | 取证位置 | 判定要点 |
+|---|---|---|---|
+| **9** | **name 拒绝闭环** | HTTP 层 + 单测 | 含 secret 的 server **三处皆无**（`servers[]` / `tools[].name` / provider 请求）；notice 含「**security policy**」+ **命中的 env 键名**（如 `"API_KEY"`）；**不含 secret、也不含其 `sanitizeNamePart` 形态**；**正常 server 未被假 collision 波及**（反向用例 `prod`/`docs`）；响应体全量不含 secret |
+| **9b** | **notice 不得复述攻击者可控文本**（单列，architect 定稿、pm 采纳） | 单测 | `API_KEY=sk-live-abc-123` + 工具名 `x_sk_live_abc_123` ⇒ notice **含** `"API_KEY"`、**不含** `sk-live-abc-123`、**不含** `sk_live_abc_123` |
+| **10** | **description 脱敏** | `toolDefinition()` 出参 | 名字干净 + description 内嵌 secret ⇒ **server 被接受**，但 `Tool.description` 与 `toolDefinition(tool)` **都不含 secret**、含 `«redacted»` |
+| **11** | **sanitize 绕过** | 单测 | env 值含非法字符（`abc/def+ghi`）时，命中 `sanitize(v)` 的工具名**同样被拒**；另有一条断言 `sanitizeNamePart` 与 `redact.ts` **同源**（不是两份拷贝） |
+| **12** | **parameters 深扫（按「是否参与 `tools/call` 构造」分两支，见 §16.7a）** | `toolDefinition()` 出参 | ① 自由文本位置（4 项：`description`/`title`/`$comment`/`examples[]`）命中 ⇒ **被接受 + 替换**；② **契约位置**（**10 项**）命中 ⇒ **整 server 拒**；③ **10 项逐一**，`propertyNames`/`dependentRequired`/`patternProperties` **键**各至少一条；④ 嵌套 `properties.a.properties.b` 深扫；⑤ 被接受时契约**逐一原样** |
+| **13** | **args 不回显** | HTTP 层 | `Object.keys(row)` **不含 `args`**、**含 `argsCount`**；`command === config.command[0]`；配置 `--token=ghp_xxx` 时 `JSON.stringify(body)` **不含该串** |
+
+**`$ref` 一项独立处置（**10 项计数不变**；2026-10-17 二次定稿：architect 原写"判定冗余"，被 leader 反例推翻 ⇒ 改为 3 条规则）**
+
+`$ref` 的值**参与 schema 解析，被替换即引用断裂 ⇒ 工具静默不可用**，**严禁脱敏**；但"不脱敏"**不等于"不判定"**。原稿「`$ref` 含 env ⇒ 指向的键名必含 ⇒ 判定冗余」**只对内部指针成立**，两个反例：
+
+| 反例 | schema | 后果（旧口径下） |
+|---|---|---|
+| **外部引用** | `{"$ref":"https://user:sk-live-abc-123@host/s.json"}` | **没有"指向的键名"** ⇒ 10 项全不命中 ⇒ **整串原样进 provider** |
+| **JSON Pointer 转义** | `$defs` 键为 `a/b`，**env 值恰为 `a~1b`** ⇒ `$ref` 是 `#/$defs/a~1b` | **指针字面含 env 值、键名不含** ⇒ 10 项全不命中 |
+
+**定稿 3 条（依次判定）**：
+```
+1. 字符串 $ref 含任一 env 值（或其 sanitize 形态）  ⇒ 整 server 拒绝
+2. 否则以 "#" 开头（内部 JSON Pointer）              ⇒ 原样保留（严禁脱敏）
+3. 否则（非 "#" 开头 = 外部引用）                    ⇒ 整 server 拒绝
+```
+**为什么"外部引用直接拒"零损失**：provider 本来也不会去 fetch 外部 `$ref`，拒掉不减少任何可用能力；而 `$ref` 又不能脱敏（替换即断链）⇒ 按契约轴唯一选择就是拒。
+
+**取证三条（替换原来的单条取证）**：
+- **4c-2 内部指针**：`$defs` + `$ref:"#/$defs/foo"`，secret 只在 `$comment` ⇒ server **被接受**、`$comment` 已脱敏、**`$ref` 与 `$defs` 键名逐字未变**；
+- **4c-3 外部引用** ⇒ **整 server 被拒**（只做 10 项判定必漏——这条就是抓旧口径的）；
+- **4c-4 `$ref` 字面命中 env 值**（键名不含、指针字面含）⇒ **整 server 被拒**。
+
+**已知边界（§16.5 口径）**：残余只剩**变形方向**——env 是 `a/b`、指针写成 `a~1b` ⇒ 规则 1 比不到。**已接受**。
+**反方向不是残余**：env 是 `a~1b`、指针字面含它 ⇒ **规则 1 原样命中 ⇒ 拒**。**两个方向不得混写。**
+- **禁止实现**：`JSON.stringify(schema)` 全局 replace —— 会把引用一起改坏。**必须按关键字递归、逐节点判断。**
+
+**三条硬性取证纪律（PM 追加，防止"测了个假的东西"）**：
+1. **9–12 必须至少有一条断言落在 `toolDefinition()` 的出参上** —— 那是模型**真正看到**的形状。只在 `mapServerTools()` 的中间产物上断言，就是 §14.1「纯函数绿 ≠ 生产已接」。
+2. **13 必须在 HTTP 层**（`test/serve/*`）跑，**不能只在 `src/mcp/*` 纯函数里测**。理由同 §16.4-2。
+3. **负向断言用 `Object.keys` / `not.toHaveProperty`，不用字符串包含**（§16.4-6）：`JSON.stringify(body).includes("args")` 会被 `argsCount` 自身命中而**假红**，也会被 description 里的词**假绿**。
+
+**必须存在的反向用例（防止"拒绝一切"也算过）**：配置一个**完全干净**的 server（无 secret 的 name/description/parameters）⇒ 必须**被接受且工具可用**。缺这条，把 `reject` 写成 `return true` 也能让 9–12 全绿。
+
+### 16.8 L3 / L4 两条明账（architect 提出，pm 落文，必须进验收材料）
+
+| 编号 | 内容 | 归属 | 验收口径 |
+|---|---|---|---|
+| **L3** | **脱敏字段不可回写**：`«redacted»` 若被 B-5 当真实值预填回写，会**静默破坏用户配置** | **B-5 前置约束**（见 §16.4-5） | 只在 B-5 验收时才可关闭；**B-4/B-6a 不涉及**，但**必须写在 B-5 的 AC 里**，不得遗漏 |
+| **L4** | **MCP 文本注入 = 已接受风险**：`description`/`parameters` 可含指令性文本，会被模型当指令执行 | **本线不解决**（§16.5 第 6 条） | **任何材料不得写「注入已解决」**；只可写「本线保证密钥不进 provider 请求」 |
+
+**⚠️ 与「未完成」的区分（architect 特别指出，pm 同意并写死）**：
+- 「`parameters` 未做（在 `ea72c40` 时）」= **未完成** ⇒ **留在缺陷清单**，修完才移出；
+- 「变形/片段密钥抓不到（§16.5 #2）」= **已接受的残余风险** ⇒ 可以进 §16.5。
+- **两者不得并列在同一张表里**，否则 review 会把"没做"当"已接受"放行 —— 这正是本线 §14.1 反复出现的模式。
+
+### 16.7a AC-10 第 12 项细则：`inputSchema` 按「是否参与 `tools/call` 构造」分两支（architect 2026-10-17 定稿，pm 落文）
+
+> **为什么改了这一版**：上一版按「键名/值」分，会把 `enum`/`const`/`default`/`pattern` 也"脱敏"。结果是 **schema 语法仍合法、但唯一合法取值消失** ⇒ 模型发不出成功参数、工具**静默不可用且无 notice**。
+> **这比"拒绝"更糟**：拒绝会 push notice（用户看得见）；静默弄坏只是"这个工具怎么老是失败"。**故分类轴改为「这个字段是否参与调用契约的构造」。**
+
+| 处置 | 字段 | 为什么 |
+|---|---|---|
+| **整 server 拒绝**（**共 10 项**，与 design §13.3.1 分类表逐字对齐） | 工具 `name`、`properties` 的**键名**、`required[]`、`enum[]`、`const`、`default`、`pattern`、`$defs`/`definitions` 的**键名**、`propertyNames`、`dependentRequired`、**`patternProperties` 的键** | 全是**调用契约**：模型必须从中挑合法值/键名去构造 args。替换后**唯一合法取值消失** |
+| **递归脱敏（只换字符串叶子）** | `description`、`title`、`$comment`、`examples[]`（**4 项**） | 自由文本，不参与路由；**不脱敏就是把密钥发给模型**，脱敏不改变可调用性 |
+| **`patternProperties` 键/值分离** | **键 = 正则 ⇒ 契约位置（拒整 server）**；**值 = 子 schema ⇒ 继续递归**（其内部 `description` 仍脱敏） | 键参与参数匹配；值只是又一个 schema。**混成一句写，实现方必然只做一半** |
+
+**验收断言（5 条，缺一不判过）**：
+1. **只**把 secret 写进自由文本位置 ⇒ server **被接受**、这些位置变 `«redacted»`、`toolDefinition(tool).parameters` 无 secret；
+2. 写进**契约位置**（10 项任一）⇒ **整 server 拒绝**（notice 含「security policy」+ 命中的 env 键名，其余 server 不受影响）；
+3. **10 项逐一覆盖**（design §13.6 第 12 项枚举，与 §16.7 第 12 条一致）：`properties` 键名 / `required[]` / `enum[]` / `const` / `default` / `pattern` / `$defs`·`definitions` 键名 / **`propertyNames`** / **`dependentRequired`** / **`patternProperties` 键**；
+   **`propertyNames`、`dependentRequired`、`patternProperties` 键各至少一条** —— **旧口径（历史，勿作验收依据）是 8 种**，只写那 8 种属**合法漏测**；
+4. **嵌套深扫**（`properties.a.properties.b`）—— `inputSchema` 无形状约束，**只扫顶层等于没做**；
+5. **被接受时契约逐一原样**：`Object.keys(properties)`、`required[]`、`enum[]` **逐项相等**（证明没静默弄坏契约）。
+
+**⚠️ 反向证伪（写进 AC-10 的「不得」）**：`enum`/`const`/`default` **永不得出现在「被接受且已被替换」的状态** —— 它们只有两种结果：**整体拒绝**，或**原样保留**。**谁把它改成"脱敏后继续可用"，测试必须红。**
+
+**禁止的实现方式**：**不得**对 `JSON.stringify(schema)` 整串 split/join 再 parse 回去 —— 会破坏结构、`required` 对不上（工具直接不可用），且替换后可能不再是合法 JSON。
+
+**范围定性（必须写进验收材料）**：`parameters` 泄漏**先于本线存在**（`ad3b41a` 就如此），**不是本线引入的回归**；但本线新增的 `servers[].tools` 让它从"潜在"变"必须处理"。
+**推荐措辞**：「**先于本线存在，由本线闭环**」—— 既不能读成"本线引入的回归"，也不能读成"可以先不管"。
+
+### 16.7b B-4 的两条「不能混进已知边界」项（architect 2026-10-17 提出，pm 落文）
+
+> 依据 §16.5 的判据：**「代码还没做」不得进「已接受的残余风险」**。以下两条都必须留在**缺陷/未完成清单**，直到真的修完或明确接受。
+
+**① `$ref` 正向用例**（**B-4 必须覆盖的一条；按 §12.8d 不写状态**）
+- **用例**：`$defs` 键为 `a/b` + env 值 `a~1b` + `$ref: "#/$defs/a~1b"` ⇒ **10 项契约规则全不命中**，唯一能挡住它的是**规则 1（全串字面子串扫描）**。
+- **条件陈述**：**规则 1 缺失时，唯一会红的就是这一条**（其余 4c-2/4c-3 由内部指针保留、外部引用拒绝各自覆盖）。
+- **证据指针**：`test/mcp/redaction-parameters.test.ts` 的 `4c-4` 条目；实测 **25/25 绿**（`redact.ts` sha256 `3a30cfd9…`，pm 独立复跑）。
+- **归类（不随状态变）**：**属缺陷/未完成面，永不进 §16.5 已知边界** —— 即使将来转绿也不改变分类，因为"没做"与"做了"是状态，"必须做"是契约。
+- **对照组（不得写进通过条件）**：`$defs` 键**直接写成 `a~1b`** 时会被「`$defs` 键名」规则拒 —— 那是**另一条规则**在起作用。**把对照组当主用例 = 假用例**（用例"绿了"但根本没验到规则 1），与 §12.8b「用例存在但抓不到要防的缺陷」同类。
+- **与 §16.5 #7 区分（两个方向，别混写）**：
+  - **env = `a/b`、schema 字面写 `a~1b`** ⇒ 字面子串比不到 ⇒ **已接受残余**（§16.5 #7）；
+  - **env = `a~1b`、schema 字面写 `a~1b`** ⇒ **规则 1 原样命中即拒** ⇒ **必须成立**（本节 ①）。
+
+**② L5：`examples` 非数组（`{"examples": {"mode": …}}`）**
+- **定性**：**非法 schema 上的 fail-safe 过度拒绝** —— **接受的是"多拒一个本来就不合法的 server"这个代价**。
+
+> **⚠️ 措辞澄清（2026-10-17，qa 据此提过问，说明这处有歧义，必须写死）**
+> §16.5 #8 的「**不修**」= **不给它加"对象也当自由文本递归"的特例**；
+> **绝不等于「不实现拒绝」**。**拒绝本身是必须实现的**（`examples` 非数组 ⇒ 整 server 拒）。
+> 两种读法会导致完全相反的实现：
+> - 读成"不实现" ⇒ server 被**静默接受**，`toolDefinition().parameters` 里带着非法 schema 发给模型（**错**）；
+> - 读成"不加特例" ⇒ 拒整 server + notice（**对**，与 design §13.6 · §10 L5 一致）。
+> **判据措辞规范**：本节所有「不修 / 接受」，一律指**不做额外处理**，**不是不做这件处理**。凡易混处必须写成「**X 必须实现；只是不加 Y**」。
+
+- **两条边界（写死）**：
+  1. **不得挪进 §13.7「未做必须修」清单**；
+  2. **不得**为它加「对象也当自由文本递归」的特例 —— **伺候非法输入、收益为负**。
+- **取证**：断言「非法 schema ⇒ 拒」；**另配**「合法数组 `examples` ⇒ 只脱敏不拒」的**对照**（否则无法区分"守卫起作用"与"一律拒绝"）。
+
+**③ 对 B-4 验收基线的确认（architect 与 pm 已对齐，再变须先发声）**
+> **契约位置 10 项 + 自由文本 4 项 + `$ref` 3 条**。
+> - **契约位置 10 项**（命中 ⇒ 拒整 server）：`properties` 键名 / `required[]` / `enum[]` / `const` / `default` / `pattern` / `$defs`·`definitions` 键名 / `propertyNames` / `dependentRequired` / `patternProperties` **键**
+> - **自由文本 4 项**（命中 ⇒ 只替换，不拒）：`description` / `title` / `$comment` / `examples[]`
+> - **`$ref` 3 条独立规则**：见 design §13.3.1；`$ref` **严禁脱敏**（替换即断链、工具静默不可用），只能"留"或"拒"
+> 即：`scanServerToolText` 的判定面 = 10 项契约（命中⇒拒整 server）+ 4 项自由文本（命中⇒脱敏）+ `$ref` 的字面子串扫描（规则 1）；`manager.ts` **只消费 `scan.tools[]` 的结果，不得再算一遍 `redactMcpServer`**（两处各算一次，迟早只改一处 —— architects 已把规则 6 的措辞改成「换成 `scan.tools[i].description`」）。
+
+**④ 责任边界（design §13.3.1 五段表，pm 采纳）**
+`scan` 只判定/算文本；`manager` 负责拒绝与覆盖；`mapServerTools` **职责不变、不判定不脱敏**；`toolDefinition` **不做兜底脱敏**。
+**三条硬约束**：**顺序不可倒**（先映后拒会被共享 `existingNames` 假 collision 干掉）；**判拒/脱敏不得塞进 `mapServerTools`**（安全策略藏进纯映射函数，且单测无法在不建 client 下覆盖）；**下标对齐必须显式断言或走 name Map**。
+**另**：**拒绝不能改成"先过滤 `infos` 再继续"** —— `mapServerTools` 对 `infos` 位置敏感，过滤后下标与 `scan.tools[]` 立刻错位（正是 12b 要防的静默错位）。
