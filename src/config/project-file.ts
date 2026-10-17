@@ -485,6 +485,25 @@ async function writeRobUpdate(
 				prompt: incoming.wake.prompt,
 			};
 		}
+		// Skill scope and MCP opt-in. Absent fields are left untouched, so a
+		// caller that only edits role/model keeps the bot's current scope.
+		//
+		// A confirmed-but-listless update (`skillsConfigured: true` with no
+		// `skills`) means "explicitly allow nothing". Deleting `skills` here
+		// would instead mean "never configured", which resolves to every
+		// installed skill — the exact opposite of what the caller asked for.
+		if (
+			incoming.skills !== undefined ||
+			incoming.skillsConfigured !== undefined
+		) {
+			if (incoming.skills !== undefined) merged.skills = incoming.skills;
+			else if (incoming.skillsConfigured === true) merged.skills = [];
+			else delete merged.skills;
+			if (incoming.skillsConfigured === undefined)
+				delete merged.skillsConfigured;
+			else merged.skillsConfigured = incoming.skillsConfigured;
+		}
+		if (incoming.mcp !== undefined) merged.mcp = incoming.mcp;
 		return merged;
 	});
 	if (!found) return { ok: false, error: `Unknown rob: ${name}` };

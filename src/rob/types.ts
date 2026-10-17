@@ -61,6 +61,14 @@ export const robConfigSchema = z
 		permissions: permissionRulesSchema.optional(),
 		backend: robBackendSchema.optional(),
 		wake: wakeConfigSchema.optional(),
+		// Skill names this bot may load (see skills/scope.ts for the default
+		// truth table). `skillsConfigured` distinguishes "never configured"
+		// from "explicitly unchecked everything", which are both [].
+		skills: z.array(z.string().min(1)).optional(),
+		skillsConfigured: z.boolean().optional(),
+		// MCP server names this bot may use. Absent means none, deliberately
+		// asymmetric with skills (design §10 U6).
+		mcp: z.array(z.string().min(1)).optional(),
 	})
 	.superRefine((rob, ctx) => {
 		if (rob.name === WORKSPACE_BOT) {

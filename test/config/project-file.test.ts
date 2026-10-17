@@ -314,6 +314,113 @@ describe("updateRob", () => {
 
 		expect(result.ok).toBe(false);
 	});
+
+	it("keeps the stored skill and MCP scope when the replacement omits both", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify(
+				{
+					robs: [
+						{
+							name: "atlas",
+							role: "old",
+							skills: ["alpha"],
+							skillsConfigured: true,
+							mcp: ["github"],
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const result = await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "new",
+		});
+
+		expect(result).toEqual({ ok: true });
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		// Editing only the role must not silently widen or narrow the bot's
+		// scope — the panel sends these fields only when it actually changed
+		// them.
+		expect(written.robs[0]).toEqual({
+			name: "atlas",
+			role: "new",
+			skills: ["alpha"],
+			skillsConfigured: true,
+			mcp: ["github"],
+		});
+	});
+
+	it("writes a confirmed empty skill list, which is not the same as absent", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
+			"utf8",
+		);
+
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skills: [],
+			skillsConfigured: true,
+		});
+
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skills).toEqual([]);
+		expect(written.robs[0].skillsConfigured).toBe(true);
+	});
+
+	it("treats skillsConfigured alone as an explicit empty allowlist", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
+			"utf8",
+		);
+
+		// Confirming "nothing allowed" without sending a list must not fall
+		// back to "never configured" (= every installed skill, the inverse).
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skillsConfigured: true,
+		});
+
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skills).toEqual([]);
+		expect(written.robs[0].skillsConfigured).toBe(true);
+	});
+
+	it("round-trips a skill whitelist and MCP selection through the file", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
+			"utf8",
+		);
+
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skills: ["alpha", "beta"],
+			skillsConfigured: true,
+			mcp: ["docs"],
+		});
+
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skills).toEqual(["alpha", "beta"]);
+		expect(written.robs[0].mcp).toEqual(["docs"]);
+	});
 });
 
 describe("removeRob", () => {
