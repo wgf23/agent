@@ -44,11 +44,11 @@
 {
   "name": "rnd",
   "members": ["manager","pm","architect","ui","dev","qa","review","ci"],
-  "coordinator": "manager"
+  "coordinator": "pm"
 }
 ```
 
-你只对 `manager` 说话。消息按成员顺序经过每个 bot：`manager → pm → architect → ui → dev → qa → review → ci`，成员用 `room_reply` 发言、不发言即跳过，最多 3 轮。安静后由 coordinator（`manager`）收尾，它这一轮的回复就是交付物，写到 `docs/deliverables/<UTC 时间戳>-<slug>.md`。
+你可以直接对房间说话；`@manager` 让它汇总调度。消息按成员顺序经过每个 bot：`manager → pm → architect → ui → dev → qa → review → ci`，成员用 `room_reply` 发言、不发言即跳过，最多 3 轮。安静后由 coordinator（`pm`）收尾，它这一轮的回复就是交付物，写到 `docs/deliverables/<UTC 时间戳>-<slug>.md`。
 
 - 直接说需求：由全员依次过一遍。
 - 只想让某个环节发言：`@ui 把设置页的层级理一下`、`@dev @qa 按这个方案实现并补测试`。

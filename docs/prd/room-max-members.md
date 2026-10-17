@@ -53,8 +53,14 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
 - **AC-5** 测试 fixture 一律 `import { ROOM_MAX_MEMBERS }` 派生，禁止写死数字；机械判据（review 执行）：
   - `grep -rn "ROOM_MAX_MEMBERS" src test web` 是唯一数字源；
   - `grep -rn "maxMembers: [0-9]\|to 6 members\|to 8 members\|to 20 members" src test web` 无命中；
-  - **白名单（唯一例外）**：`test/rob/room.test.ts` 中 AC-1 取值锚那一行 `expect(ROOM_MAX_MEMBERS).toBe(20)`。评审时该行命中 grep 属预期，其它任何字面量命中均判红。
+  - **该 grep 不豁免任何行**：AC-1 取值锚写作 `expect(ROOM_MAX_MEMBERS).toBe(20)`，**不匹配**上述模式，故上述 grep 必须**零命中**（dev 实跑确认）。白名单条款作废。
+  - 取值锚另用独立判据：`grep -rn "toBe(20)" test` 应**恰 1 行**（`test/rob/room.test.ts` 的 `pins the member cap`）；2 行以上说明又冒出硬编码。
 - **AC-6** `README.md` 与 `docs/rnd-team.md` 中房间人数表述与 20 一致；`docs/rnd-team.md` 中「上限从 6 提到 8」「新的 8 人成员表」「rnd 之前是 6 个成员」三句假话必须消除。**改这三句即可，不得顺手删改 ui/manager 的其它成果**（review 在 diff 里核）。
+- **AC-6c** `docs/rnd-team.md` 房间 `rnd` 小节必须与 FR-4 口径一致（coordinator = `pm`）：
+  - JSON 示例 `"coordinator": "manager"` → `"pm"`；
+  - 「由 coordinator（`manager`）收尾」→ `pm`；
+  - 「你只对 `manager` 说话」与实际不符（用户直接对房间说话，全员按序回复）→ 改为「你可以直接对房间说话；`@manager` 让它汇总调度」。**保留 manager 的调度定位，不删其成果。**
+  - 判据：`grep -n "coordinator" docs/rnd-team.md` 不得出现 `"manager"`；全文不得残留「只对 `manager` 说话」。
 - **AC-6b** 两处文案断言（`test/serve/team.test.ts` 的 `error: "A room needs 2 to 6 members."`、`test/rob/room-text.test.ts` 同一串）必须改为常量派生，**不得手改成 `"2 to 20"`**（否则下次改常量再次漂移）。
 - **AC-7** 运维动作可回滚：执行前把 `my-agent.json`、`~/.local/share/my-agent/rooms/-home-heiwa-my-agent/ppp.json`、`~/.local/share/my-agent/bots/{test,pi-test,opencode,dmtest,aaa,leader}.json` 备份到 `~/.local/share/my-agent/backup-<ts>/`；备份存在且非空。
 - **AC-8** 重启后只读核对（不接受「改文件时说没问题」）：
