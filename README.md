@@ -313,7 +313,7 @@ A `pi`, `opencode`, or `claude` cli rob is a full team member: it can send priva
 
 ## Rooms
 
-A room is a named group chat over 2 to 6 of your robs. Define rooms next to your robs in `my-agent.json`:
+A room is a named group chat over 2 to 20 of your robs. Define rooms next to your robs in `my-agent.json`:
 
 ```jsonc
 {
