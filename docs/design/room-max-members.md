@@ -57,11 +57,15 @@
 > 同理，`ROOM_MIN_MEMBERS - 1` 的下界用例其 roster 也只能取 `memberNames(ROOM_MIN_MEMBERS)` 之上的名字。
 > 判据：把常量临时改小/改大，超限用例应随之仍然 `member_count`（不是 `unknown_member`）。
 
-## 6. 已闭环的两条（pm 已裁，此处只留结论）
+## 6. 已闭环的三条（此处只留结论，不再讨论）
 
-- **coordinator 保持 `pm`**（pm 终裁）：本次授权是「加人」，不是换协调者；`rnd.json` 8 人 + coordinator=`pm`，`my-agent.json` 种子同口径。设计侧不另立规则。
-- **`docs/rnd-team.md` 的三句假话由 dev 按 AC-6 改**（如「上限从 6 提到 8」），属文档同步，不是设计决策。
+- **coordinator = `manager`**（**2026-10-17 用户改判，覆盖 pm 早前「coordinator 保持 pm」的裁决，该裁决作废**）。
+  用户原话：「现在需要领导变成 manager，pm 只需要拆封需求，判断需求是否合理之类的产品工作即可」。
+  ⇒ rnd 8 人、coordinator=`manager`；`my-agent.json` 种子与 `rnd.json` ledger **必须在同一次运维里对齐到 `manager`**，禁止两个口径（PRD FR-4/FR-7）。
+- **角色边界**：`manager` = 对外接口 + 调度 + 汇总 + 房间 coordinator；`pm` = 需求与产品（澄清、判断合理性、写 PRD/AC），**不再当协调者**。`leader` 随 ppp 删除，领导职能归 `manager`。
+- **`docs/rnd-team.md` 的假话由 dev 按 AC-6/AC-6c 改**（「上限从 6 提到 8」类文案 + `"coordinator"` 目标值为 `manager`），属文档同步，不是设计决策。
+  ⚠️ `178f052` 曾按旧裁决把它写成 `pm`，**本线需改回 `manager`**；复核按 `manager` 判，不按历史提交判。
 
 ## 7. 未闭合边界
 
-- 删 bot 不可逆（含 `leader` 的 memory/usage/seq），是否保留 `leader` 待用户一句话；未定前不动数据。设计侧不裁运维取舍，只要求按 PRD AC-7 备份、AC-8 重启后只读核对。
+- **已清空**（`leader` 去留已裁定：删，随 ppp 一并处理）。仅留一条运维提醒：删 bot 不可逆（含 `leader` 的 memory/usage/seq），取回路径 = PRD AC-7 的 `~/.local/share/my-agent/backup-<ts>/`；执行前须确认备份非空，重启后按 AC-8 只读核对。

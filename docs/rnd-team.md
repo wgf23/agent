@@ -6,7 +6,7 @@
 
 | bot | 阶段 | 职责 | 关键权限 |
 | --- | --- | --- | --- |
-| `manager` | 入口/调度 | 只接你的任务，判断该谁做，拆分后分派给其他 bot，汇总回复给出结论与风险 | **只读**：`write_file`/`edit_file` 为 `deny`，不碰代码 |
+| `manager` | 入口/调度 | **rnd 的 coordinator**（收尾写交付物）；只接你的任务，判断该谁做，拆分后分派给其他 bot，汇总回复给出结论与风险 | **只读**：`write_file`/`edit_file` 为 `deny`，不碰代码 |
 | `pm` | 需求 | 澄清目标与范围、写 PRD 与验收标准到 `docs/prd/` | 只读代码；只写 `docs/prd/*` |
 | `architect` | 架构设计 | 技术选型、模块/接口/数据模型、任务拆分到 `docs/design/` | 只读代码；只写 `docs/design/*` |
 | `ui` | **UI/UX 设计** | 界面视觉、布局、配色、层级、动效、交互流程；先开浏览器看现状，改完再回浏览器验证 | 写 `web/*`、`docs/design/ui/*`；Playwright 浏览器工具 |
@@ -44,11 +44,11 @@
 {
   "name": "rnd",
   "members": ["manager","pm","architect","ui","dev","qa","review","ci"],
-  "coordinator": "pm"
+  "coordinator": "manager"
 }
 ```
 
-你可以直接对房间说话；`@manager` 让它汇总调度。消息按成员顺序经过每个 bot：`manager → pm → architect → ui → dev → qa → review → ci`，成员用 `room_reply` 发言、不发言即跳过，最多 3 轮。安静后由 coordinator（`pm`）收尾，它这一轮的回复就是交付物，写到 `docs/deliverables/<UTC 时间戳>-<slug>.md`。
+你可以直接对房间说话；`@manager` 让它汇总调度。消息按成员顺序经过每个 bot：`manager → pm → architect → ui → dev → qa → review → ci`，成员用 `room_reply` 发言、不发言即跳过，最多 3 轮。安静后由 coordinator（`manager`）收尾，它这一轮的回复就是交付物，写到 `docs/deliverables/<UTC 时间戳>-<slug>.md`。
 
 - 直接说需求：由全员依次过一遍。
 - 只想让某个环节发言：`@ui 把设置页的层级理一下`、`@dev @qa 按这个方案实现并补测试`。
@@ -67,7 +67,7 @@ MCP 服务器的环境也做了隔离：`HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME
 
 ## 已有房间需要迁移
 
-房间一旦有 ledger（`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json`）就以 ledger 为准，改 `my-agent.json` 不会改一个已经跑过的房间。要让 `my-agent.json` 里新的成员表（8 人，coordinator 为 `pm`）对一个已经跑过的房间生效，执行一次：
+房间一旦有 ledger（`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json`）就以 ledger 为准，改 `my-agent.json` 不会改一个已经跑过的房间。要让 `my-agent.json` 里新的成员表（8 人，coordinator 为 `manager`）对一个已经跑过的房间生效，执行一次：
 
 ```bash
 node scripts/room-members.mjs rnd            # 会先写 .bak 备份

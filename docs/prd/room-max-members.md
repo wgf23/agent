@@ -22,14 +22,26 @@
 ### FR-3 暴露面不变
 `RoomView.limits.maxMembers` 继续由常量派生；web 端不得硬编码上限，UI 展示继续走 API 值。
 
-### FR-4 rnd 扩员
-rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人），**coordinator 保持 `pm` 不变**。
+### FR-4 rnd 扩员 + 协调者改为 manager（2026-10-17 用户改判）
+rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人），**coordinator = `manager`**。
 
-裁决理由（2026-10-17 pm）：用户诉求是「把 ui 和 manager 拉进来」，属**加人**，未要求更换协调者。协调者决定谁在轮次间收尾写交付物，是行为变更，不在本次授权内。当前保存的房间状态 coordinator = `pm`，保持不变；`my-agent.json` 的种子须同步改成 `coordinator: "pm"`，避免 config 与 ledger 两个口径。若后续要让 manager 接管调度，另开需求。
+用户原话：「现在需要领导变成 manager，pm 只需要拆封需求，判断需求是否合理之类的产品工作即可」。
+
+⇒ **本条推翻此前 pm 的裁决（coordinator 保持 pm）**。变更理由：
+1. 用户明确要求「领导」= manager，coordinator 就是房间里的领导角色（决定发言顺序收尾、写交付物）；
+2. pm 职责收窄为**需求/产品**：拆解需求、判断合理性、写 PRD 与 AC、访谈用户；**不承担调度、不汇总团队结论、不决定谁做什么**；
+3. `my-agent.json` 种子（coordinator=manager）与 ledger（当前 pm）必须在同一次运维里对齐到 `manager`，禁止两个口径。
+
+### FR-7 角色边界（随 FR-4 生效）
+- `manager`：对外接口、调度、汇总团队结论与风险、给用户下一步。**新增：房间 coordinator**。
+- `pm`：需求阶段 —— 澄清目标与范围、判断需求是否合理、写 PRD 与验收标准到 `docs/prd/`；**不再承担协调者职能**，不写代码、不推代码。
+- 两者职责不重叠：manager 决定「谁做」，pm 决定「要做什么、做到什么程度算完成」。
 
 ### FR-5 ppp 解散 + 清 bot
 删除 ppp（ledger 无 DELETE 接口，只能删 ledger 文件）与其中 6 个 bot 的持久化状态（`test`、`pi-test`、`opencode`、`dmtest`、`aaa`、`leader`），并从 `my-agent.json` 的 `robs` 中移除。
 **删除前必须备份**（见 AC-7）。
+
+**`leader` 去留裁定（2026-10-17，随 FR-4 生效）**：**删**。理由：用户已把「领导」角色交给 `manager`，`leader` bot 与 `manager` 功能重叠且只在待解散的 ppp 里；保留会造出两个「领导」。其 memory/usage 靠 AC-7 备份保全，需要时可从 `backup-<ts>/` 取回。
 
 ### FR-6 时序硬约束
 房间每次变更都会把内存状态整份写回 ledger。顺序固定为：
@@ -56,15 +68,15 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - **该 grep 不豁免任何行**：AC-1 取值锚写作 `expect(ROOM_MAX_MEMBERS).toBe(20)`，**不匹配**上述模式，故上述 grep 必须**零命中**（dev 实跑确认）。白名单条款作废。
   - 取值锚另用独立判据：`grep -rn "toBe(20)" test` 应**恰 1 行**（`test/rob/room.test.ts` 的 `pins the member cap`）；2 行以上说明又冒出硬编码。
 - **AC-6** `README.md` 与 `docs/rnd-team.md` 中房间人数表述与 20 一致；`docs/rnd-team.md` 中「上限从 6 提到 8」「新的 8 人成员表」「rnd 之前是 6 个成员」三句假话必须消除。**改这三句即可，不得顺手删改 ui/manager 的其它成果**（review 在 diff 里核）。
-- **AC-6c** `docs/rnd-team.md` 房间 `rnd` 小节必须与 FR-4 口径一致（coordinator = `pm`）：
-  - JSON 示例 `"coordinator": "manager"` → `"pm"`；
-  - 「由 coordinator（`manager`）收尾」→ `pm`；
-  - 「你只对 `manager` 说话」与实际不符（用户直接对房间说话，全员按序回复）→ 改为「你可以直接对房间说话；`@manager` 让它汇总调度」。**保留 manager 的调度定位，不删其成果。**
-  - 判据：`grep -n "coordinator" docs/rnd-team.md` 不得出现 `"manager"`；全文不得残留「只对 `manager` 说话」。
-- **AC-6b** 两处文案断言（`test/serve/team.test.ts` 的 `error: "A room needs 2 to 6 members."`、`test/rob/room-text.test.ts` 同一串）必须改为常量派生，**不得手改成 `"2 to 20"`**（否则下次改常量再次漂移）。
+- **AC-6c** `docs/rnd-team.md` 房间 `rnd` 小节必须与 FR-4 口径一致（coordinator = **`manager`**）：
+  - JSON 示例 `"coordinator": "pm"` → **`"manager"`**（注意：`178f052` 曾按旧裁决改成 pm，本次需改回）；
+  - 「安静后由 coordinator（`pm`）收尾」→ `manager`；
+  - 「你可以直接对房间说话；`@manager` 让它汇总调度」保留；
+  - 发言顺序 `manager → pm → architect → ui → dev → qa → review → ci` 保留；`manager` 的入口/调度定位与权限约束**一字不删**。
+  - **判据（带引号，避免误红）**：`grep -n '"coordinator"' docs/rnd-team.md` 必须是 `"manager"`；`grep -n 'coordinator（`manager`）' docs/rnd-team.md` 命中 1 行。裸词 `manager` 出现在发言顺序/`@manager` 属预期，**不判红**（dev 提醒的精度问题，采纳）。
 - **AC-7** 运维动作可回滚：执行前把 `my-agent.json`、`~/.local/share/my-agent/rooms/-home-heiwa-my-agent/ppp.json`、`~/.local/share/my-agent/bots/{test,pi-test,opencode,dmtest,aaa,leader}.json` 备份到 `~/.local/share/my-agent/backup-<ts>/`；备份存在且非空。
 - **AC-8** 重启后只读核对（不接受「改文件时说没问题」）：
-  - `rnd.json.members` = 8 人且 coordinator = `pm`（未变）；API `GET /api/rooms` 的 `limits.maxMembers` = 20；
+  - `rnd.json.members` = 8 人且 coordinator = **`manager`**；API `GET /api/rooms` 的 `limits.maxMembers` = 20；
   - `ppp.json` 不存在；6 个 bot 的 `bots/*.json` 不存在；`my-agent.json.robs` 不再含这 6 个；
   - `rnd.json` 能正常新增/移除成员（不再是只读死胡同）。
 - **AC-9** 回归：`test/rob/room-text.test.ts`、`test/rob/room.test.ts`、`test/rob/team-rooms.test.ts`、`test/serve/team.test.ts`、`test/serve/search.test.ts`、`test/web/state.test.ts` 全绿；全量 CI 由 ci 实跑报数。
@@ -79,5 +91,5 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
 ## 5. 风险与已知行为
 
 - 删除 bot 会连带删除其 `bots/<name>.json`（含 memory/usage/seq），**不可从 git 恢复**；仅能靠 AC-7 的备份。
-- `leader` 也在 ppp 中，删除后团队不再有 leader 角色；如仍需 leader 请在执行前明示保留。
+- `leader` 随 ppp 一并删除（已裁定），领导职能由 `manager` 承担；删除不可逆，只能靠 AC-7 备份取回 memory/usage。
 - 上限提升只放宽校验，不改变任何在跑房间的行为；已存在的超限房间（若有）不会自动收敛。
