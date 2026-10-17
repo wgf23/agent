@@ -22,15 +22,21 @@
 >
 > **授权面双向核对（两段输出都必须为空；只查一半等于没查）**
 > ```sh
-> # 两段都必须带 --no-renames（原因见下条）
+> # 两段都必须带 `--no-renames` 与 `-z | xargs -0`（原因见下两条）
 > # 正向：改动集里每个非 .md 文件都必须被清单覆盖；未覆盖记为 UNCOVERED
-> git diff --name-only --no-renames A..B | grep -vE '\.md$' | while read -r f; do …; done
+> git diff --name-only --no-renames -z A..B | xargs -0 -n1 | grep -vE '\.md$' | while read -r f; do …; done
 > # 负向：「正文声明零命中 / 归其他设计线」的文件一律不得出现在改动集里；出现记为 MUST-NOT-COVER
-> git diff --name-only --no-renames A..B | grep -E '^(src/tools/web\.ts|src/rob/room-text\.ts|screenshots/.*)$'   # 必须为空
+> git diff --name-only --no-renames -z A..B | xargs -0 -n1 | grep -E '^(src/tools/web\.ts|src/rob/room-text\.ts|screenshots/.*)$'   # 必须为空
 > ```
+> （`-z | xargs -0 -n1` 也可换成 `git -c core.quotePath=false diff --name-only …`；前者不依赖任何用户配置。）
 > - 🔴 **必须带 `--no-renames`，否则改名会双绿**：`--name-only` 对 rename **只输出目标路径**，旧路径消失 ⇒ 负向段看不见"红线文件被搬走"；而搬迁的目标通常仍在同一棵授权树里（`src/rob/**`、`src/mcp/**`、`test/rob/**`），**正向段也照样绿**。
 >   实测（`git mv src/rob/room-text.ts →`）：`src/rob/room_text_v2.ts`、`src/mcp/room_text_v2.ts`、`test/rob/room_text_v2.ts` **三处全双绿**；只有搬出授权树（如 `src/other/…`）才会被正向抓到。
 >   加 `--no-renames` 后，旧路径以"删除"身份回到改动集 ⇒ **负向段三处全拦**。**这不是"让报错说得更准"，而是补一个真洞。**
+> - 🔴 **必须带 `-z | xargs -0`，否则非 ASCII 路径会让判据失明**：`core.quotePath` 默认 `true`，git 把非 ASCII 路径输出成 `"screenshots/\346\210\252\345\233\276.png"` —— **以引号 + 八进制转义开头**，`^screenshots/`、`^src/` 一律匹配不到（**名字是内容的一部分，它同样能被用来绕过**）。
+>   实测（`--no-renames` 已在，只新增 `screenshots/截图.png`）：默认 **负向段为空（漏）**；加 `-z | xargs -0` 后命中 `screenshots/截图.png`。
+>   **两段失效方向不对称，别混记**：**正向段**对带引号的路径会**报假 UNCOVERED**（`"src/rob/截图.ts"` 不匹配 `src/rob/**`）—— **吵，但安全**；**负向段**则**静默放行** —— **这才是洞**。
+>   与 `--no-renames` 同族：**命令形状正确，但 git 的输出编码让判据看不见目标**。
+>   ⚠️ 今天非 ASCII 截图仍被**正向**兜住（报假红而非漏）⇒ 不会静默放行；**但一旦有人为放截图把 `screenshots/**` 加进授权面，正向变绿、负向对非 ASCII 失明 ⇒ 双绿** —— 与下面「今天能兜住不是判据成立」是同一个场景。
 > - **为什么必须有负向段**：**漏写会让检查红，过宽不会红、只会悄悄扩权**。只做正向，等于允许"顺手多改一个文件"。
 > - **负向清单的入选判据**：**凡正文出现「零命中 / 不得改 / 归 X 线」的文件，都必须进负向清单**（判据落在**改动集**上，不是落在 glob 覆盖关系上）。
 >   ⚠️ **"可机械执行"≠"自动生成"**：命令形状是机械的，但**清单成员仍是人工从正文抄下来的** ⇒ 正文新增一处"零命中"而清单没跟，检查依旧全绿。缩小的只是漂移面，不是消除。**所以「同步义务」那条是必需的，不是补充。**
