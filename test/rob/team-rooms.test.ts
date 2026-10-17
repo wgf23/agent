@@ -23,7 +23,7 @@ import {
 	type MockProvider,
 } from "../helpers/mock-provider.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
-import { waitFor } from "./helpers.js";
+import { memberNames, waitFor } from "./helpers.js";
 
 let workspace: string;
 
@@ -262,6 +262,33 @@ describe("Team rooms", () => {
 			content: "[from user] hello",
 		});
 		await team.stop();
+	});
+
+	it("creates a room at the full member cap", () => {
+		// The user-facing promise of AC-2: raising ROOM_MAX_MEMBERS must
+		// actually let a room of that size be created, not just validate.
+		const names = memberNames(ROOM_MAX_MEMBERS);
+		const provider = createMockProvider([]);
+		const team = new Team({
+			robs: names.map((name) => ({ name, role: "build" })),
+			defaultModel: "deepseek-flash",
+			providerFactory: () => provider,
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+		});
+		expect(team.createRoom({ name: "full-house", members: names })).toEqual({
+			status: "created",
+			room: {
+				name: "full-house",
+				members: names,
+				coordinator: null,
+				transcript: [],
+				run: { phase: "idle" },
+				pending: 0,
+				deliverable: null,
+				limits: ROOM_LIMITS,
+			},
+		});
 	});
 
 	it("validates creation and membership at the team boundary", () => {

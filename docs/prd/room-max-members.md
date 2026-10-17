@@ -56,7 +56,9 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - **取值锚（裁决 ①）**：必须有**且仅有**一条字面量断言钉死取值，放在 `test/rob/room.test.ts`，形如 `expect(ROOM_MAX_MEMBERS).toBe(20)`，注释写明「AC-1 取值锚：此处故意写字面量；单靠派生会让改回 6 静默通过」。
   - 理由：其余用例全部由常量派生 ⇒ 谁把常量改回 6，全量仍绿（qa 探针 C 实证），「单一真值」在取值上是空的。
   - **因此变异探针 A 的期望改为：常量 20→21 时，只有取值锚这 1 例红**；若红的不止 1 例，说明别处仍有硬编码字面量，判红。
-- **AC-2** 边界：19 人通过、20 人通过、21 人拒绝且 `reason === "member_count"`；1 人拒绝、2 人通过。同时覆盖 `createRoom` / `setMembers` / API 三条入口中至少两条。
+- **AC-2** 边界：19 人通过、20 人通过、21 人拒绝且 `reason === "member_count"`；1 人拒绝、2 人通过。
+  - **入口覆盖（2026-10-17 终裁）**：`createRoom` / `setMembers` / API 三条入口共用 `validateRoomMembers` 同一校验器，边界判定以该函数为准（不在每个入口重复断言 19/20/21）。
+  - **另需一条 `createRoom` 20 人正例**：证明「上限提升后真的能建出 20 人房间」，即用户价值端到端成立。评审实测（review @89e9a12）：20-过/21-拒目前只在 `validateRoomMembers` 一级，`createRoom`/`setMembers` 只有 too-few 侧，故补此一条。本条**非阻塞**，可与运维动作并行。
 - **AC-3** `member_count` 提示串由常量派生（`` `A room needs ${ROOM_MIN_MEMBERS} to ${ROOM_MAX_MEMBERS} members.` ``），当前取值 = `"A room needs 2 to 20 members."`。
   - **取证必须成对**：① 单改常量 20→21 ⇒ 全绿（测试期望也派生，会一起移动，**单臂恒绿，不构成证据**）；② 常量 21 **且** 把源码分支改回不含 `${}` 的字面量 ⇒ **必须红**（qa 实测 2 files / 2 failed）。B 绿 ⇒ `member_count` 未派生，缺陷在源头。
 - **AC-4** `RoomView.limits.maxMembers` 由常量派生（`src/rob/room.ts:507`），经 API 透传。
