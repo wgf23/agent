@@ -175,6 +175,22 @@ describe("Team.removeRoom", () => {
 		);
 	});
 
+	// The window this pins is `await instance.stop()`: the registry entry is
+	// the only guard during it (the tombstone is not set until archive()), so
+	// dropping the instance before the stop settles lets a createRoom through
+	// and the following archive() then swallows every save of that new room.
+	it("keeps the name taken while the instance is still stopping", async () => {
+		const team = makeTeam([{ name: "standup", members: [...MEMBERS] }]);
+
+		// Not awaited: removeRoomNow runs synchronously up to `await stop()`.
+		const deleting = team.removeRoom("standup");
+		expect(team.createRoom({ name: "standup", members: [...MEMBERS] })).toEqual(
+			{ status: "rejected", reason: "duplicate" },
+		);
+
+		expect(await deleting).toMatchObject({ status: "removed" });
+	});
+
 	it("runs two concurrent deletes as one archive", async () => {
 		const team = makeTeam([{ name: "standup", members: [...MEMBERS] }]);
 		await seedLedger(

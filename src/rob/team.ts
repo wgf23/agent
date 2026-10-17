@@ -682,8 +682,10 @@ export class Team implements TeamPort {
 		const active = this.roomRemovals.get(room);
 		if (active !== undefined) return active;
 		const task = this.removeRoomNow(room).finally(() => {
-			// Identity, not presence: a later delete of a re-liveable name must
-			// not have its entry removed by an earlier task's cleanup.
+			// Defensive, not load-bearing: nothing else inserts a task for this
+			// name while one is in flight, so today this is equivalent to an
+			// unconditional delete. The identity check only starts mattering if
+			// a future caller makes the entry replaceable mid-flight.
 			if (this.roomRemovals.get(room) === task) this.roomRemovals.delete(room);
 		});
 		this.roomRemovals.set(room, task);
@@ -741,14 +743,23 @@ export class Team implements TeamPort {
 					error: errorMessage(error),
 				};
 			}
-			// Drop the instance before touching files: anything still holding it
-			// would otherwise keep persisting into an archived room.
+			// Order is load-bearing: `await stop()` above is a real window, and
+			// while the entry is still registered createRoom answers duplicate.
+			// Deleting it first would let a room be created mid-stop, which
+			// archive() then tombstones — a live room whose every save is
+			// dropped without a word. Drop it only once the stop has settled.
 			this.roomRegistry.delete(room);
 		}
 
-		// Recheck for the same reason as the branch above: a createRoom that won
-		// the window would be tombstoned by archive() and then lose every save.
-		// Stopping here leaves the new instance and its ledger alone.
+		// Unreachable today: between the delete above and here there is no
+		// await, and both statements are synchronous, so nothing can register a
+		// room in the gap. It is kept as a tripwire for the day an await is
+		// inserted in between — the create-during-delete window is real (the
+		// config branch has one, see the test), and a room that appears in it
+		// would be tombstoned by archive() and then lose every save silently.
+		// What actually closes this window today: the registry entry survives
+		// `await instance.stop()` (see the comment above), archive() pins the
+		// name synchronously on entry, and createRoom consults isDeleted.
 		if (this.roomRegistry.has(room)) {
 			// Nothing was archived and the config entry is untouched, so the
 			// archive stage's promise ("disk unchanged, back after restart")
