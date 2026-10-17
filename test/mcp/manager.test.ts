@@ -350,6 +350,40 @@ describe("connectMcpServers", () => {
 		expect(outcome.ok).toBe(true);
 	});
 
+	// The notice is the only trace a refused server leaves, so it has to say
+	// which problem occurred. Asserting each wording *and* denying the other
+	// is what stops the two being swapped for one another while both cases
+	// still pass.
+	it("says a schema was malformed, and does not call it a pointer", async () => {
+		const result = await connectMcpServers({
+			servers: { bad: fake({ FAKE_MCP_SCENARIO: "malformed-schema" }) },
+			workspaceRoot: process.cwd(),
+			timeoutMs: 2000,
+		});
+		disposed.push(result.dispose);
+
+		expect(result.servers).toEqual([]);
+		const notices = result.notices.join("\n");
+		expect(notices).toContain("security policy");
+		expect(notices).toContain("is malformed");
+		expect(notices).not.toContain("points outside the schema");
+	});
+
+	it("says a pointer left the schema, and does not call it malformed", async () => {
+		const result = await connectMcpServers({
+			servers: { bad: fake({ FAKE_MCP_SCENARIO: "external-ref" }) },
+			workspaceRoot: process.cwd(),
+			timeoutMs: 2000,
+		});
+		disposed.push(result.dispose);
+
+		expect(result.servers).toEqual([]);
+		const notices = result.notices.join("\n");
+		expect(notices).toContain("security policy");
+		expect(notices).toContain("points outside the schema");
+		expect(notices).not.toContain("is malformed");
+	});
+
 	// A tool without `inputSchema` is legal, and the fallback has to match the
 	// one the mapper used before the scan rewrote parameters. `{}` accepts any
 	// value; this shape says the tool takes an object. Sending the wrong one

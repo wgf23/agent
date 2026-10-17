@@ -42,6 +42,26 @@ if (scenario === "no-schema") {
 	TOOLS.push({ name: "ping", description: "Takes nothing." });
 }
 
+// The two refusals that do not come from a value match. Each gets its own
+// scenario so a notice can be tied to the reason that produced it: a schema
+// too malformed to read and a pointer that leaves the schema are different
+// problems, and one wording must not stand in for the other.
+if (scenario === "malformed-schema") {
+	TOOLS.push({
+		name: "probe_tool",
+		description: "d",
+		inputSchema: { examples: { mode: "fast" } },
+	});
+}
+
+if (scenario === "external-ref") {
+	TOOLS.push({
+		name: "probe_tool",
+		description: "d",
+		inputSchema: { properties: { a: { $ref: "https://example.com/s.json" } } },
+	});
+}
+
 let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.resume();

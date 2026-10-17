@@ -52,6 +52,122 @@ describe("scanServerToolText", () => {
 		expect(result.rejectKey).toBe("API_KEY");
 	});
 
+	// A key literally named `__proto__` is legal JSON and shows up in schemas
+	// written by other tools. Rebuilding the object must keep it a property:
+	// assigning it would set the prototype instead, which drops the key from
+	// the schema sent on and makes its contents readable through the
+	// prototype. Only JSON.parse can build an own key with that name.
+	it("keeps a key named __proto__ as a property, not a prototype", () => {
+		const schema = JSON.parse(
+			'{"type":"object","properties":{"__proto__":{"type":"string"},"ok":{"type":"string"}}}',
+		);
+		const result = scanServerToolText({
+			infos: [{ name: "clean_tool", inputSchema: schema }],
+			env: { API_KEY: secret },
+		});
+		expect(result.reject).toBe(false);
+		const parameters = result.tools[0]?.parameters as {
+			properties: Record<string, unknown>;
+		};
+		const properties = parameters.properties;
+		expect(Object.hasOwn(properties, "__proto__")).toBe(true);
+		expect(Object.keys(properties)).toEqual(["__proto__", "ok"]);
+		expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+	});
+
+	// Two variables can both match the same text. The notice names one key, so
+	// which one has to be decided by something stable: order of the variables
+	// in the environment would make the same server report differently on two
+	// machines.
+	it("names the first key in order when several values match", () => {
+		const result = scanServerToolText({
+			infos: [{ name: "x_alpha_beta_y" }],
+			env: { Z: "alpha", A: "beta" },
+		});
+		expect(result.reject).toBe(true);
+		expect(result.rejectKey).toBe("A");
+	});
+
+	// The same rebuild runs at every depth, so a nested object gets the same
+	// treatment. Rebuilding only the top level would leave this key turning
+	// into a prototype one level down, where it is harder to notice.
+	it("keeps a __proto__ key at depth, not just on the top level", () => {
+		const schema = JSON.parse(
+			'{"type":"object","properties":{"x":{"__proto__":{"type":"string"},"ok":{"type":"string"}}}}',
+		);
+		const result = scanServerToolText({
+			infos: [{ name: "clean_tool", inputSchema: schema }],
+			env: { API_KEY: secret },
+		});
+		expect(result.reject).toBe(false);
+		const parameters = result.tools[0]?.parameters as {
+			properties: Record<string, { properties: Record<string, unknown> }>;
+		};
+		const nested = parameters.properties.x;
+		expect(Object.hasOwn(nested, "__proto__")).toBe(true);
+		expect(Object.keys(nested)).toEqual(["__proto__", "ok"]);
+		expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
+	});
+
+	// A dropped key and a poisoned global look the same from the schema's side
+	// if only the key is checked, so the shared prototype is asserted directly.
+	it("does not pollute Object.prototype", () => {
+		const schema = JSON.parse(
+			'{"type":"object","properties":{"__proto__":{"type":"string","polluted":"yes"}}}',
+		);
+		scanServerToolText({
+			infos: [{ name: "t", inputSchema: schema }],
+			env: { K: secret },
+		});
+		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+	});
+
+	// One server gets one reason. A schema can be both malformed and carry a
+	// configured value, and which of the two is noticed first depends on the
+	// order the keys are visited -- the design does not promise that order, so
+	// this asserts the invariant instead: a key without a "value" kind is a
+	// result that contradicts itself. Checking both orders keeps the case
+	// honest without pinning the traversal.
+	it("never reports a key alongside a cause other than a value hit", () => {
+		for (const schema of [
+			{ required: [secret], examples: { mode: "fast" } },
+			{ examples: { mode: "fast" }, required: [secret] },
+		]) {
+			const result = scanServerToolText({
+				infos: [{ name: "t", inputSchema: schema }],
+				env: { API_KEY: secret },
+			});
+			expect(result.reject).toBe(true);
+			expect(result.rejectKey !== undefined).toBe(
+				result.rejectKind === "value",
+			);
+		}
+	});
+
+	// Keys that differ only in case sort differently under locale collation,
+	// which would make the notice depend on the machine running it. Code-unit
+	// order puts "I" before "i" on every host.
+	it("orders keys by code unit so the notice does not vary by locale", () => {
+		const result = scanServerToolText({
+			infos: [{ name: "x_alpha_y" }],
+			env: { i: "alpha", I: "alpha" },
+		});
+		expect(result.reject).toBe(true);
+		expect(result.rejectKey).toBe("I");
+	});
+
+	// The same needle can be claimed twice: one variable's name-shaped form can
+	// equal another variable's literal value. Spelling decides which entry is
+	// reached first, so the earlier key has to keep the claim.
+	it("keeps the first key when two variables claim the same needle", () => {
+		const result = scanServerToolText({
+			infos: [{ name: "x_abc_def" }],
+			env: { K1: "abc/def", K2: "abc_def" },
+		});
+		expect(result.reject).toBe(true);
+		expect(result.rejectKey).toBe("K1");
+	});
+
 	it("refuses a server whose name only matches after sanitising", () => {
 		// "abc/def+ghi" cannot appear in a tool name; it becomes abc_def_ghi.
 		const dotted = scanServerToolText({

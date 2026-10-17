@@ -89,11 +89,24 @@ export function scanServerToolText(
 	input: ToolTextScanInput,
 ): ToolTextScanResult {
 	// Value -> the env key it came from, so a refusal can name the variable.
+	// Sorted by key, because more than one variable can match the same text and
+	// the notice has to be the same on every run: report the first key in
+	// order, not whichever the environment happened to list first. A variable
+	// can also reach a text through its name-shaped form, so two entries may
+	// claim the same needle -- the first key keeps it, since a later one
+	// overwriting would decide the notice by spelling rather than by order.
 	const needles = new Map<string, string>();
-	for (const [key, value] of Object.entries(input.env)) {
+	const variables = Object.entries(input.env).sort(([a], [b]) =>
+		// Code-unit order, not `localeCompare`: collation depends on the
+		// machine's locale, so two hosts would disagree about which key to
+		// name in the notice.
+		a < b ? -1 : a > b ? 1 : 0,
+	);
+	for (const [key, value] of variables) {
 		if (value.length <= 1) continue;
-		needles.set(value, key);
-		needles.set(sanitizeNamePart(value), key);
+		for (const needle of [value, sanitizeNamePart(value)]) {
+			if (!needles.has(needle)) needles.set(needle, key);
+		}
 	}
 	const find = (text: string): string | undefined => {
 		for (const [needle, key] of needles) {
@@ -138,7 +151,16 @@ export function scanServerToolText(
 			// schema this code cannot interpret, and guessing at the author's
 			// intent is how a special case ends up serving malformed input. It
 			// is refused whether or not it carries a configured value.
-			if (!inProse && keyword === "examples" && !Array.isArray(value)) {
+			// `!refused` keeps a refusal that was already decided: one server
+			// gets one reason, and the first one found is the one a notice can
+			// explain. Without it a later shape problem rewrites the kind while
+			// leaving the key in place, so the result contradicts itself.
+			if (
+				!refused &&
+				!inProse &&
+				keyword === "examples" &&
+				!Array.isArray(value)
+			) {
 				refused = true;
 				rejectWhere = "tool schema";
 				rejectKind = "malformed";
@@ -181,15 +203,20 @@ export function scanServerToolText(
 				);
 			}
 			if (typeof value === "object" && value !== null) {
-				const out: Record<string, unknown> = {};
+				const entries: Array<[string, unknown]> = [];
 				for (const [key, entry] of Object.entries(value)) {
 					// Keys name properties and keywords; a model sends them back
 					// verbatim, so they are checked in every position except
 					// inside an example, where they are only sample data.
 					if (!inProse) refuseIfHit(key, "tool schema");
-					out[key] = walk(entry, key, inProse);
+					entries.push([key, walk(entry, key, inProse)]);
 				}
-				return out;
+				// `Object.fromEntries` defines own properties. Assigning through
+				// `out[key] =` would make a key literally named `__proto__`
+				// replace the object's prototype: the key vanishes from the
+				// schema sent on, narrowing the contract, and whatever it held
+				// becomes readable through the prototype instead.
+				return Object.fromEntries(entries);
 			}
 			return value;
 		};

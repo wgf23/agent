@@ -103,8 +103,14 @@ export async function connectMcpServers(
 					reason = `${where} repeats the value of env "${scan.rejectKey}"`;
 				} else if (scan.rejectKind === "malformed") {
 					reason = `${where} is malformed`;
-				} else {
+				} else if (scan.rejectKind === "external-ref") {
 					reason = `${where} points outside the schema`;
+				} else {
+					// Named branch by branch rather than defaulting the last
+					// case: a fallback would silently hand a future rejectKind
+					// this explanation, and telling the user the wrong reason
+					// to look for is worse than telling them none.
+					reason = `${where} was refused`;
 				}
 				notices.push(
 					redactMcpServer(
