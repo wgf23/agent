@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { errorMessage } from "../util/errors.js";
+import { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS } from "./room-limits.js";
 import {
 	parseRoomMentions,
 	ROOM_PASS_SENTINEL,
@@ -21,8 +22,9 @@ export type RoomName = RobName;
 
 // The Hermes defaults, declared once. They travel to surfaces inside
 // RoomView.limits, so no TUI or web module re-declares them.
-export const ROOM_MIN_MEMBERS = 2;
-export const ROOM_MAX_MEMBERS = 6;
+// The membership bounds live in room-limits.ts so room-text.ts can render them
+// without importing this module back; re-exported here for existing importers.
+export { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS };
 export const ROOM_MAX_ROUNDS = 3;
 export const ROOM_MAX_MESSAGES_PER_RUN = 10;
 export const ROOM_MAX_QUEUED_SENDS = 5;

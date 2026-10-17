@@ -7,6 +7,7 @@ import type {
 	RoomSendOutcome,
 	RunOutcome,
 } from "./room.js";
+import { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS } from "./room-limits.js";
 import type { RobName } from "./types.js";
 
 /** The literal a member may send through room_reply instead of staying silent;
@@ -220,7 +221,7 @@ export function renderRoomOutcome(
 		case "message_cap":
 			return `Room "${room}" reached its message cap.`;
 		case "member_count":
-			return "A room needs 2 to 6 members.";
+			return `A room needs ${ROOM_MIN_MEMBERS} to ${ROOM_MAX_MEMBERS} members.`;
 		case "unknown_member":
 			return "A listed member is not on the team.";
 		case "duplicate_member":
