@@ -4,7 +4,7 @@
 上游输入：用户 2026-10-18 需求「room 现在没有管理的地方，无法设置内容、删除 room」
 适用范围：**web 一期的房间设置抽屉**。TUI 二期。
 
-> **行号约定**：本文件引用一律**符号为准、行号兜底**。行号取自 2026-10-18 工作树（A 笔已应用），A/B 两笔提交后仍可能位移；**以符号名核对，行号仅作导航**。
+> **行号约定**：`src/rob/**` 为 A 笔后实测值；`src/serve/server.ts` 与 `web/src/**` 为 A 笔前基线，**仅供导航，以符号为准**。
 
 ## 0. 背景与问题
 
@@ -15,7 +15,7 @@
 | 建房间 | `POST /api/rooms`（`server.ts` 的 `app.post("/api/rooms")`，`src/serve/server.ts:1164`）+ web 新建对话框（`web/src/useHub.ts:406`） |
 | 发消息 / 中断 | `POST /api/rooms/send`（`:1156`）、`POST /api/rooms/interrupt`（`:1176`） |
 | 改成员 | **web 无入口**；仅 TUI `/room <name> <members...>` → `team.setRoomMembers`（`src/rob/team.ts:623`）→ `Room.setMembers`（`src/rob/room.ts:687`） |
-| 改 coordinator | **全仓无 setter**。`Room` 只在构造时读（`room.ts:499`）；`setMembers` 仅在该 coordinator 被移出成员时清空为 `null`（`room.ts:657-662`） |
+| 改 coordinator | **A 笔前**：全仓无 setter（`Room` 只在构造时读 `room.ts:499`）；`setMembers` 仅在该 coordinator 被移出成员时清空为 `null`（`room.ts:657-662`）。**A 笔已实现** `Room.setCoordinator`（`room.ts:698-700`，见 FR-2.1）；本条描述的是改造前现状 |
 | 删除房间 | **完全没有**。服务端无 `DELETE`，`RoomStore`（`src/rob/room-store.ts`）只有 `read`/`readAll`/`save`/`flush`，**无 delete/unlink** |
 
 ⇒ 用户必须「改 config → 停 serve → 跑脚本 → 重启」才能改成员，且**无法在 UI 里删除房间**。
@@ -184,10 +184,11 @@
 
 - **AC-14a 正向**：对**存在且空闲**的房间发合法 PATCH ⇒ **200**，响应体 `{ok:true, room:{…}}`。（缺这档，「三档全拒」的空实现也能伪绿。）
 - **AC-14b 未知房间 ⇒ 404**：PATCH 一个**不存在**的房间名（含「已被删除、且已从 registry 摘除」的名字）⇒ **404**，响应体带可读错误（`Unknown room "<name>".` 的等价文案，复用 `renderRoomOutcome`，界面不得自造）。
-- **AC-14c 忙碌 ⇒ 409**：运行中（`live !== null`）PATCH ⇒ **409**，文案含 `busy`；**零写入**（ledger `members`/`coordinator`/`transcript` 长度与请求前相同）。
+- **AC-14c 忙碌 ⇒ 409**：运行中（`live !== null`）PATCH ⇒ **409**，文案含 `busy`；**零写入**的判据是：ledger 的 `members`/`coordinator` **不变**、且**不产生 `members` 事件**。`transcript` **不得断言长度不变**（运行中它本来就在增长，断言长度必假红）；`transcript` 只断言**请求前的前缀仍完整保留**（不截断、不重写）。
 - **AC-14d 已停止 ⇒ 409（域层契约，非端到端可达）**：对**已 `stop()` 但仍在 registry 中的实例** PATCH ⇒ **409**，文案含 `stopped`。`Room.updateSettings` 先判 `stopped` 再判 `busy`（`src/rob/room.ts:629-630`），但删除路径的第 3 步就把实例摘出 registry ⇒ 端到端只会走 `unknown_room` ⇒ 404，**本条构造不出真实请求**，因此**载体是域层单测**：直接 `Room.stop()` 后调 `setMembers`/`setCoordinator` ⇒ `{status:"rejected", reason:"stopped"}`。**qa 不得为此去伪造 e2e 场景，也不得因「e2e 拿不到 409」报缺陷。**
-- **AC-14e 其余拒绝 ⇒ 400**：`member_count` / `unknown_member` / `duplicate_member` / `reserved_member` / `coordinator_not_member`、以及 body 形状非法（无 `members` 也无 `coordinator`、字段类型不对）⇒ **400**，ledger 与 `my-agent.json` 的 sha 前后不变。
+- **AC-14e 其余拒绝 ⇒ 400**：`member_count` / `unknown_member` / `duplicate_member` / `reserved_member` / `coordinator_not_member`、以及 body 形状非法（无 `members` 也无 `coordinator`、字段类型不对、**未知键/多余字段（body 按 `.strict()` 处理）**）⇒ **400**，ledger 与 `my-agent.json` 的 sha 前后不变。
 - **AC-14f 鉴权优先**：以上各档在**未带/带错** `X-Admin-Token` 时**一律 403**，不泄露房间是否存在（403 先于 404 判定，避免把 404 当房间存在性探测的旁路）。
+- **（完整性声明，非可测项）**：hub 不实现 `updateRoom` 时返回 **501**（如 solo 无房间场景）；本条实际不可达，仅作契约完整性声明，**不要求 qa 构造用例**。
 
 ## 6. 已裁决事项（manager 2026-10-18，原为未决冲突）
 
