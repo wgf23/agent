@@ -70,7 +70,8 @@ function readSingle(file, pattern, what) {
 		);
 		process.exit(1);
 	}
-	return hits[0][1];
+	const line = source.slice(0, hits[0].index).split("\n").length;
+	return { value: hits[0][1], line };
 }
 
 const minMembers = Number(
@@ -78,38 +79,44 @@ const minMembers = Number(
 		"src/rob/room-limits.ts",
 		/^export const ROOM_MIN_MEMBERS = (\d+);$/gm,
 		"ROOM_MIN_MEMBERS",
-	),
+	).value,
 );
 const maxMembers = Number(
 	readSingle(
 		"src/rob/room-limits.ts",
 		/^export const ROOM_MAX_MEMBERS = (\d+);$/gm,
 		"ROOM_MAX_MEMBERS",
-	),
+	).value,
 );
-const reservedList = readSingle(
+if (!Number.isInteger(minMembers) || !Number.isInteger(maxMembers)) {
+	console.error(
+		`ROOM_MIN_MEMBERS/ROOM_MAX_MEMBERS in src/rob/room-limits.ts are not integers (got ${minMembers}/${maxMembers}); refusing to write.`,
+	);
+	process.exit(1);
+}
+const reservedSource = readSingle(
 	"src/rob/room.ts",
 	/^export const RESERVED_ROOM_SPEAKERS = \[([^\]]*)\] as const;$/gm,
 	"RESERVED_ROOM_SPEAKERS",
 );
-// `[^\]]*` spans newlines, so reformatting the array (one name per line, a
-// comment beside a name) would otherwise parse into junk and quietly turn the
-// reserved-name check into a no-op -- the one failure mode worse than refusing
-// to run. Any entry that is not a bare name aborts, matching how the bounds
-// above fail closed on a reformatted constant.
-const reserved = new Set(
-	reservedList
-		.split(",")
-		.map((entry) => entry.trim().replace(/^["']|["']$/g, ""))
-		.filter((entry) => entry !== ""),
-);
-for (const entry of reserved) {
+const reservedList = reservedSource.value;
+const reserved = new Set();
+for (const entry of reservedList
+	.split(",")
+	.map((item) => item.trim().replace(/^["']|["']$/g, ""))
+	.filter((item) => item !== "")) {
+	// A bare name and nothing else. `[^\]]*` spans newlines, so reformatting
+	// the array (one name per line, a comment beside a name) would otherwise
+	// parse into junk and turn the reserved-name check into a silent no-op --
+	// the one failure mode worse than refusing to run. A blacklist of comment
+	// shapes cannot cover every rewrite; a name shape can.
 	if (!/^[a-z][a-z0-9-]*$/.test(entry)) {
 		console.error(
-			`Cannot parse RESERVED_ROOM_SPEAKERS from src/rob/room.ts (got ${JSON.stringify(entry)}); refusing to write without its source.`,
+			`Cannot parse RESERVED_ROOM_SPEAKERS from src/rob/room.ts:${reservedSource.line} (got ${JSON.stringify(entry)}); refusing to write without its source.`,
 		);
 		process.exit(1);
 	}
+	reserved.add(entry);
 }
 
 // The rules below restate validateRoomMembers/validateRoomCoordinator from
@@ -157,12 +164,15 @@ if (duplicates.length > 0) {
 	problems.push(`duplicate members: ${[...new Set(duplicates)].join(", ")}`);
 }
 // A member the roster does not carry does not stop the room from loading: an
-// existing ledger is restored as-is. Instead that member is skipped in every
-// round -- waitForBetweenTurns finds no rob and the turn is reported "stopped"
-// -- with no error and no notice, and configDrift stays quiet because this
-// script has just made the ledger match the config. Silent wrong beats loud
-// wrong only in the log. Name the actual difference: 8 members against 14 robs
-// is not diagnosable from "invalid members".
+// existing ledger is restored as-is, so seedState never runs. It is quieter
+// than a throw: the name stays in view().members (and in hello.rooms[]),
+// participants() filters it out of every round, and the only signal is one
+// system line -- "No longer on the team: @<name>." -- appended by startRun
+// when the message addresses nobody in particular or names that member. No
+// error, no per-turn event, no configDrift. If the coordinator itself is the
+// ghost, shouldWrapUp silently skips the deliverable. See
+// docs/design/room-max-members.md §4. Name the actual difference: 8 members
+// against 14 robs is not diagnosable from "invalid members".
 const rosterNames = (config.robs ?? []).map((rob) => rob.name);
 const roster = new Set(rosterNames);
 const unknown = members.filter((name) => !roster.has(name));

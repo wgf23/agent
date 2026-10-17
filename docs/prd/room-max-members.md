@@ -96,7 +96,9 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - `--dry-run` 走**同一套校验**：非法时 exit ≠ 0（不得 exit 0 + 只打印告警）；合法时 exit 0 且不写任何文件。
   - 校验必须发生在写 `.bak` / `.tmp` **之前**（非法时连 `.bak` 都不产生）。
   - **人数上限/下限必须从 `src/rob/room-limits.ts` 取**（正则读源码或等价单一来源），**禁止在 `.mjs` 里写死 `2`/`20`** —— 否则破坏 AC-5 的单值源。
-  - **解析必须 fail-closed（对语义等价改写免疫）**：从 `src/rob/room.ts` 读 `RESERVED_ROOM_SPEAKERS` 时，把数组排版改成多行并加注释（元素值不变）后，脚本**仍须 exit ≠ 0 且不写盘**；不得因正则跨行匹配而解析出带注释残渣的元素、导致 `has("user")===false` 后放行。判据面：构造 Set 后对每个元素做形状断言（`^[a-z][a-z0-9-]*$`），不合法即 exit 1。
+  - **解析必须 fail-closed（对语义等价改写免疫）**：从 `src/rob/room.ts` 读 `RESERVED_ROOM_SPEAKERS` 时，把数组排版改成多行并加注释（元素值不变）后，脚本**仍须 exit ≠ 0 且不写盘**；不得因正则跨行匹配而解析出带注释残渣的元素、导致 `has("user")===false` 后放行。判据面：**切分之后、建 Set 之前**对每个元素做**白名单**形状断言 `^[a-z][a-z0-9-]*$`（= `robNameSchema` 的字符面），不合法即 exit 1。
+    - **必须是白名单，不得用「排除注释」这类黑名单**：任何让元素带前缀/后缀的改写（多行+注释、`"user" /* 注释 */`、末尾逗号后注释、未来换 `satisfies`）都应退化为 fail-closed。
+    - `ROOM_MIN_MEMBERS`/`ROOM_MAX_MEMBERS` 的解析值同样做 `Number.isInteger` 检查（`(\d+)` 目前只在 0 命中时 fail-closed，值被改坏没有护栏）。
 - **AC-11** `docs/rnd-team.md` **写明迁移时序**（对应 design §4 第 2 条）：
   - 判据用**内容级锚**，不锚措辞片段（锚短语 = 下一个人换个说法就误红，2026-10-17 已踩两次）：
     - `grep -n "systemctl stop my-agent" docs/rnd-team.md` 恰 1 行；
@@ -113,7 +115,7 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
    - **真正的一次性破坏性运维脚本不入库**：本线实际执行的那支（备份 + 删 ppp + 删 6 个 bot store + kill serve）只在本地 `/tmp` 存在，不进 commit。
    - **`my-agent.json` / `*.bak-*` / `.playwright-mcp/` / `scripts/self-dev/` 永不入库**（本地运行态与工具残留）。
    - **`scripts/room-members.mjs` 入库前必须补两条**（2026-10-17 裁决，architect 提出、我核实成立）：
-     a. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 exit 1、不写盘。理由：该脚本裸 `JSON.parse(my-agent.json)`，**不过** `src/config/project-file.ts:95` 的 `validateRoomMembers`，若把 roster 外成员写进 ledger，下次启动会在 `src/rob/team.ts` 的 `seedState` 直接 `throw`（房间起不来），而脚本已经打印 `written`。**状态是权威的，写坏的代价远高于早退。**
+     a. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 exit 1、不写盘。理由：该脚本裸 `JSON.parse(my-agent.json)`，**不过** `src/config/project-file.ts:95` 的 `validateRoomMembers`。写坏的代价**不是炸，是安静地坏** —— `openRooms()`（`src/rob/team.ts:340-353`）在 ledger 存在时直接 `new Room({state})` 后 `continue`，**根本不走 `seedState`**（那只在「config 有房间、无 ledger」的分支 `:367`，而本脚本的前提正是 ledger 已存在）；于是房间照常起、team 照常起，但 `waitForBetweenTurns`（`:962`）查不到该 rob ⇒ `runRoomTurn` 返回 `stopped` ⇒ `participants()`（`room.ts:738-746`）已把它从轮次里滤掉 ⇒ **该成员每轮不发言；唯一信号是每次 run 一条 `No longer on the team: @<name>.`（仅在整房广播或正好 @ 到它时出现，见 `test/rob/room.test.ts:947-965`），无 error、无 per-turn 事件、无 configDrift，UI 里仍被列为成员**；若写坏的是 `coordinator`，`shouldWrapUp`（`room.ts:861-870`）的 `host.members().includes(coordinator)` 直接为假 ⇒ **交付物环节静默不执行**。且 `configDrift` 也不报（脚本写完 ledger == config，漂移提示消失）——**除那一条 system 记录外，其余信号同时消失**。所以必须 fail loud，写盘前 exit 1。
      b. **`docs/rnd-team.md` 迁移段必须写明「先停 serve 再跑」**。理由：ledger 是进程内存态的落盘点，房间任一写盘会**整份覆盖**脚本结果且**无任何报错**——与 FR-6 的时序硬约束同源，不写就是文档级假绿。
 4. **提交拆分**：代码与测试一个 commit（可再拆 room/ 与 fixtures），运维动作不进 commit。
 

@@ -33,7 +33,13 @@
 - **永不入库（本地运行态/工具残留）**：`my-agent.json`、`my-agent.json.bak-*`、`.playwright-mcp/`、`scripts/self-dev/`。
 - 时序按 PRD FR-6：`build` → 停 serve → 改 config / ledger / 备份并删 `bots/*.json` → 启动 → 只读核对。
 - **`room-members.mjs` 入库前须补两条（现脚本没有，属真缺口）**：
-  1. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 **exit 1、不写盘**。理由：脚本裸 `JSON.parse(my-agent.json)`，**不经过** `src/config/project-file.ts:95` 的 `validateRoomMembers`/`validateRoomCoordinator`；把 roster 外成员写进 ledger 后，下次启动会在 `src/rob/team.ts` 的 `seedState` 直接 `throw` —— 那是 `TeamOptions` **构造期**的异常，整个 team 起不来（不只是那个房间），而脚本早已自报 `written`。校验须在写 `.bak`/`.tmp` **之前**做。
+  1. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 **exit 1、不写盘**。理由：脚本裸 `JSON.parse(my-agent.json)`，**不经过** `src/config/project-file.ts:95` 的 `validateRoomMembers`/`validateRoomCoordinator`；而 ledger 一旦写脏，**启动期不会拦住它**——`openRooms()`（`src/rob/team.ts:346`）在 ledger 存在时直接 `new Room({state})` 后 `continue`，**根本不走 `seedState`**（那只在"config 有房间、没有 ledger"的分支，`:367`），而这脚本的前提正是 ledger 已存在。真实后果是**静默降级而非启动失败**：
+     - 房间照常启动、team 照常起来，**没有任何 throw**；
+     - `hello.rooms[].members` / `Room.view().members` 仍把该名字算作成员 ⇒ **UI 列出一个永远不发言的成员**；
+     - **每次 run**（一次发送/一次队列恢复各一次）`startRun()` 会追加**一条** system 记录 `No longer on the team: @<name>.`（`src/rob/room.ts:681-685` → `room-text.ts:172`，用例见 `test/rob/room.test.ts:947-965`）—— 这是唯一信号，且只在「被 @ 到」或「无 @ 的整房广播」时出现，**每次 run 至多一条**；
+     - `participants()`（`src/rob/room.ts:738-746`）用 `host.members()`（= `this.robs.keys()`，`team.ts:196`）过滤，该名字被**剔除且不报错**，故它永不发言、也无 per-turn 失败；若整轮只 @ 了它，participants 为空 ⇒ `spokeThisRound === 0` ⇒ 该轮直接 `settled`（看起来像"讨论完了"）；
+     - 启动期也没有补救：`configDrift` 不会报（脚本写完后 ledger == config），`setMembers` 走 `validateRoomMembers`（`room.ts:603`）只校验**新的**名单。
+     ⇒ 结论：**写脏的代价不是"炸给你看"，而是"静默少一个人、无人察觉"**，所以校验必须在写 `.bak`/`.tmp` **之前**做（`--dry-run` 同样在早退前跑）。
   2. **文档写明「必须先停 serve 再跑」**：`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json` 是进程内存态的落盘点，房间任一写盘都会整份覆盖脚本的修改**且不报任何错**。顺序：停 serve → 跑脚本 → 启动。
 - 分工边界：本线实际运维用 `/tmp` 那支脚本自行用 python 重写 ledger，**不调用 `room-members.mjs`**，两者无耦合 —— 改脚本不得去动 `/tmp` 里已冻结的那支。
 - 设计侧不定义 ledger 的删除语义（无 DELETE 接口 = 删文件），也不改 SSE 事件与 `@` mention 规则。
