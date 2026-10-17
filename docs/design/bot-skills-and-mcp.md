@@ -2,7 +2,7 @@
 
 - 作者：rob "architect" ｜ 状态：**定稿（可直接实现）**
 - 关联 PRD：`docs/prd/bot-skills-and-mcp.md`（含 §10 的 C1–C22 设计前置约束，本设计逐条落点见 §9）
-- 基线：**`ad3b41a`**（= origin/main = HEAD，0/0，tracked 树 clean）
+- 基线：**设计定稿锚点 `ad3b41a`**（**定稿当时** `origin/main` 与 `HEAD` 均为此值）；**正文中一切 diff/测试数字的实测锚点见各自同句区间**，不含本行。本行是**历史值，勿当作当前状态**（当前 `HEAD`/`origin/main` 请现查，不要抄本行）。
 - 决策来源：Q1–Q6 按 pm 建议（Web 为主 + 配置持久化 / 全局装一次 + 每 bot 白名单 / MCP 全局定义 + 每 bot 勾选 / 仅 stdio / 老 bot 可用全部 / 仅 native 生效）
 
 > **本线红线（已重划，见 C19）**。**授权面 = 下方清单**；散文只作解释，**清单外一律越界**（唯一 hunk 级例外见下条 tui 说明）。
