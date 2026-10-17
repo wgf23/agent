@@ -26,12 +26,12 @@ import { errorMessage } from "../util/errors.js";
 
 export const PROJECT_FILE_NAME = "my-agent.json";
 
-type SkillScopeFields = {
+export type SkillScopeFields = {
 	skills?: readonly string[] | undefined;
 	skillsConfigured?: boolean | undefined;
 };
 
-type NormalizedSkillScope =
+export type NormalizedSkillScope =
 	| { ok: true; skills?: string[]; skillsConfigured?: boolean }
 	| { ok: false; error: string };
 
@@ -46,7 +46,9 @@ type NormalizedSkillScope =
 // stays the only way to say "leave the scope alone", and an explicit
 // `skillsConfigured: false` is the way back to the default. A flag with no
 // list means nothing on its own, so it is refused rather than guessed at.
-function normalizeSkillScope(incoming: SkillScopeFields): NormalizedSkillScope {
+export function normalizeSkillScope(
+	incoming: SkillScopeFields,
+): NormalizedSkillScope {
 	if (
 		incoming.skillsConfigured !== undefined &&
 		incoming.skills === undefined

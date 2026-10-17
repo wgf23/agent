@@ -274,6 +274,24 @@ describe("addRob skill scope", () => {
 		expect(written.robs).toEqual([]);
 	});
 
+	it("refuses a flag with no list before creating the file at all", async () => {
+		// No my-agent.json yet: the refusal must come from validation, not
+		// from reading an existing file, so nothing is created.
+		const result = await addRob(workspace, {
+			name: "newbot",
+			role: "x",
+			skillsConfigured: true,
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			error: "skillsConfigured requires skills",
+		});
+		await expect(
+			readFile(join(workspace, "my-agent.json"), "utf8"),
+		).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	it("leaves a bot with no skill fields unscoped", async () => {
 		await writeFile(
 			join(workspace, "my-agent.json"),
@@ -526,6 +544,14 @@ describe("updateRob", () => {
 		);
 		expect(written.robs[0].skills).toEqual(["alpha"]);
 		expect(written.robs[0].skillsConfigured).toBe(true);
+		expect(visibleSkills(installed, written.robs[0])).toEqual([installed[0]]);
+		// The stored file has to survive the schema on the way back in, not
+		// just the assertions above: a field the reader drops is still a bug.
+		const reread = await readProjectConfig(workspace);
+		expect(reread.ok).toBe(true);
+		if (!reread.ok) return;
+		expect(reread.config.robs?.[0]?.skills).toEqual(["alpha"]);
+		expect(reread.config.robs?.[0]?.skillsConfigured).toBe(true);
 	});
 
 	it("keeps an explicit skillsConfigured:false as the way back to the default", async () => {
