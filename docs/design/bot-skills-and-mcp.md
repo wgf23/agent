@@ -594,7 +594,7 @@ bot 的创建与保存路径上，字段会被**逐字段白名单式重建**。
 
   **定性**：JSON Schema 规定 `examples` **必须是数组**，非数组本身就是**非法 schema**；对非法输入 fail-safe 地拒绝，方向安全（多拒一个本来就不合法的 server，零误伤合法 server）。
   **两条边界**：① 这是**非法输入按契约位处理（fail-safe）**，**不是**"脱敏漏做"——别把它挪进 §13.7 的"未做必须修"清单；② **不加**"对象也当自由文本递归脱敏"的特例——那会引入一个新分支去伺候非法输入，收益为负。
-  **取证**：`redact.ts` 的守卫（`!inProse && keyword === "examples" && !Array.isArray(value)` ⇒ `refused`）落地于 `test/mcp/redaction-parameters.test.ts`；**变异探针**（删守卫）应**只有 L5 那条红**，其余全绿 —— 这是"用例不空转"的证据。
+  **取证**：`redact.ts` 的守卫（`!inProse && keyword === "examples" && !Array.isArray(value)` ⇒ `refused`）落地于 `test/mcp/redaction-parameters.test.ts`；**变异探针**（删守卫）**只有 L5 那条应当失败**，其余用例不受影响 —— 这是"用例不空转"的证据（条件陈述，不记结果）。
   **取证口径**：若写用例，断言的是"**非法 schema ⇒ 拒**"这一行为（不是"脱敏正确"）；并配一条对照：`examples` 为**合法数组**时只脱敏、不拒绝。
 
 ---
@@ -622,18 +622,24 @@ bot 的创建与保存路径上，字段会被**逐字段白名单式重建**。
 
 ## 11.9 文档约定：状态中立（**写给所有维护本文档的人，包括我自己**）
 
-**契约/设计文档的散文里不得写「当前红 / 当前绿 / 已实现 / 未实现」。** 一律写成 **条件陈述 + 证据指针**。
-- ✅ 正确：「**规则 1 缺失时**，唯一会红的是 4c-4 那条；证据源 = `test/mcp/redaction-parameters.test.ts` 的 4c-4 条目。」
+**契约/设计文档的散文里不得写四类会随 commit 腐坏的东西：红/绿、已实现/未实现、文件哈希、用例计数。** 一律写成 **条件陈述 + 证据指针**。
+- ✅ 正确：「**规则 1 缺失时**，唯一会红的是 4c-4 那条；证据源 = `test/mcp/redaction-parameters.test.ts` 的用例 `refuses an internal pointer whose text contains the value literally`。」
 - ❌ 禁止：「当前实测 `reject=false` ⇒ 这条现在是红的。」
-- **状态只允许出现在带 `HEAD`/范围的两处**：§12 的落地核对清单（带提交号）、§13.6 的验收表（引用用例名而非结果）。
-- **为什么**：散文里的状态句会随 commit 腐坏，而**腐坏的状态比没有状态更危险**——下一个人要么习惯性无视它（真红也会被忽略），要么据此"修正"回去（把已修好的判成没修）。本线已实际踩到两次：4c-4 与 `examples` 守卫（qa 据旧快照报假缺陷）。
+- ❌ 同样禁止：「`redact.ts` sha256 `9d244ccd…`」「实测 **25/25** 绿」——**哈希当天就会过期，用例数改一行测试就变**。要指证据就指**用例名**（名字是契约，数不是）。
+- **状态只允许出现在带 `HEAD`/范围的两处**：§12 的落地核对清单（**表头必须带核对基线提交号**）、§13.6 的验收表（引用用例名而非结果）。
+- **为什么**：散文里的状态句会随 commit 腐坏，而**腐坏的状态比没有状态更危险**——下一个人要么习惯性无视它（真红也会被忽略），要么据此"修正"回去（把已修好的判成没修）。本线已实际踩到**三次**：① 4c-4 的"当前红"；② `examples` 守卫（qa 据旧快照报假缺陷）；③ **立本条的同一段里写了 sha256 + 用例计数**（pm 实测哈希当天已变）——**在立规矩的地方犯这个病，说明它不是粗心而是默认习惯**，所以四类一起禁。
 - **§12.8a 管"状态表 HEAD 漂移"，本条管"散文里的状态句"**；两者互补，缺一个都会腐坏。
+- **例外只有一种**：引用**属性**而非**状态**的数字（如"契约位置 10 项"）可以写——那是契约本身，不随 commit 变。判别法：**这个数字会不会因为别人跑了一次测试/提交了一次代码而变？** 会 ⇒ 禁止。
+- **追加约束（第 5 起，leader 核出）："某提交是红/绿"必须在 `git status` 干净下测得**，否则必须显式声明"含未提交文件"。否则会出现**锚点不成立但缺陷为真**的混合态结论（实例：把未提交的测试文件与旧提交的源码一起跑，报"某提交红"，而该用例当时根本不在那个提交里）。⇒ 写证据时**锚点 = 提交 + 工作区状态**，缺一个就不算锚点；**缺陷为真不等于锚点成立**，两者要分开陈述。
 
 ---
 
 ## 12. 落地核对清单（只读复核用，architect 维护）
 
-复核时**逐条打勾**，每条给出"怎么验"的机械判据（不靠读感受）。状态基于最近一次实地核对。
+复核时**逐条打勾**，每条给出"怎么验"的机械判据（不靠读感受）。
+
+> **核对基线（§11.9 要求，缺了这张表就是腐坏源）**：基线 = **本文件最后一次提交**（`git log -1 -- docs/design/bot-skills-and-mcp.md` 给出），表内状态**不晚于**该提交，**未提交的 WIP 一律不纳入**。
+> ⇒ 复核时**先跑这条命令**：与表内判据列不符就以判据列为准重跑，**不要相信"当前状态"列**。（刻意不写死哈希：写死的那份必然过期，见 §11.9。）
 
 | # | 检查项 | 判据 | 当前状态 |
 |---|---|---|---|
@@ -822,7 +828,10 @@ PARAMS: {"properties":{"token":{"description":"Bearer sk-live-QA-DESC-7b1"}}}  �
      另需一条正常用例：`{"$defs":{"foo":{…}},"properties":{"a":{"$ref":"#/$defs/foo"}},"$comment":"uses sk-live-abc-123"}` ⇒ server **被接受**、`$comment` 已脱敏、**`$ref` 逐字仍为 `"#/$defs/foo"`**、`$defs` 键仍为 `foo`。
    - **反过来也禁止"对整串做替换"**：`JSON.stringify(schema)` 全局 replace 会把 `"$ref": "#/$defs/x"` 这类引用一起改坏（与 `required` 对不上同理）。**必须按关键字递归、逐节点判断。**
    - **递归是强制项**：`inputSchema` 的类型是 `z.record(z.string(), z.unknown())`（`tools.ts:7`）——**任意深度、无形状约束**，`properties.foo.items.properties.bar` 这种嵌套今天一样泄漏。**只扫顶层 `properties` 等于没做。**
-   - **结构保持**：只替换自由文本位置的字符串叶子，对象/数组/布尔/数字原样，`required` 与 `properties` 的对应关系**不变**。**禁止**对 `JSON.stringify(schema)` 整串做 split/join 再 parse 回去：会破坏结构、`required` 对不上（工具直接不可用），且替换后可能不再是合法 JSON。
+   - **结构保持**：只替换自由文本位置的字符串叶子，对象/数组/布尔/数字**逐值相等**，`required` 与 `properties` 的对应关系**不变**。**禁止**对 `JSON.stringify(schema)` 整串做 split/join 再 parse 回去：会破坏结构、`required` 对不上（工具直接不可用），且替换后可能不再是合法 JSON。
+   - **"原样"= 值相等，不是同一个对象引用**（**共享可变对象是本条线已实际踩过的坑**）：每个 tool 的 `parameters` 必须是**独立对象树**，任何容器（`properties`/`items`/`$defs`/`enum` 数组）**不得**在 tool 之间、或与模块级常量之间共用引用。判别法：**拿到 `parameters` 的人可以随意改它，且只能影响这一个 tool。**
+     具体到空 schema 兜底：**必须每次返回新对象**（工厂函数，如 `src/tools/types.ts:14` 的 `emptyInputSchema()`），**禁止** `{ ...EMPTY_INPUT_SCHEMA }` 这类浅展开或直接复用模块常量——浅展开只复制了顶层、`properties` 仍是同一个对象，一个 tool 改了 `properties` 会污染所有后续 tool。
+     这条与「三个调用点必须给同一个答案」不冲突：**形状一致（都答"对象、无属性"）而引用独立**，两件事都要满足。
    - 处理点：**`scan` 一次算完**（判拒 + 脱敏后的 description/parameters），**结果的"应用"**放在 `mapServerTools` 之后、交给 `Rob`/`backend` 之前。
 
 **调用顺序与责任边界（pm 点名；写死，别让 dev 两处各改一半）**
@@ -928,6 +937,7 @@ servers: { leaky: fake({ API_KEY: "sk-live-abc-123", DSN: "abc/def+ghi" }) }
 2b. **sanitize 变体命中的专项用例（review/leader 点名，必须单列）**：`API_KEY=sk-live-abc-123` + 工具名 `x_sk_live_abc_123` ⇒ notice **含 `"API_KEY"`**、**不含 `sk-live-abc-123`**、**不含 `sk_live_abc_123`**。三者写在同一条用例里，缺一条不算过。
 3. 同批的**正常 server 仍完整出现**，且**没有**假 `tool name collision`（规则 1 的反证）；
 4. 单独一个"名字干净、description 内嵌 secret"的 server：**被接受**，但其 `Tool.description` 已含 `«redacted»`、不含 secret——并断言它进 provider 请求的形态（`toolDefinition(tool)`）同样不含 secret（规则 6）；
+4a-2. **对象独立性**（防共享可变容器；证据用例 `gives each tool its own properties object` in `test/mcp/redaction-parameters.test.ts`）：两个工具都没有 `inputSchema`，或一个没有、一个有 ⇒ 断言二者 `parameters !== parameters`、`parameters.properties !== parameters.properties`（**引用不等，不是只比 `toEqual`**），且改 A 的 `properties` 后 B 不受影响。**只断言 `toEqual` 抓不到本缺陷**（浅展开下值相等、引用相同）。
 4b. **单独一个"name 与 description 都干净、只有 `inputSchema` 的自由文本位置内嵌 secret"的 server**：**被接受**，`Tool.parameters` 里 `description`/`title`/`$comment`/`examples[]` 均替换为 `«redacted»`，`toolDefinition(tool).parameters` 序列化后不含 secret。**结构断言必做**：`Object.keys(parameters.properties)`、`required` 数组、`enum` 数组**逐一保持不变**（证明结构保持、未整串替换）；
 4c. **契约位置命中**（**10 项逐一**，`propertyNames`/`dependentRequired`/`patternProperties` 各至少一条用例，否则按旧口径逐项验收会合法漏测）：`properties` 键名 / `required[]` / `enum[]` / `const` / `default` / `pattern` / `$defs` 键名 / `propertyNames` / `dependentRequired` / `patternProperties` 键任一含 env 值 ⇒ **整 server 被拒**，notice 含「security policy」+ 命中的 **env 键名**，其余 server 不受影响；
 4c-2. **内部 `$ref` 原样保留**：schema 含 `$defs` + `$ref:"#/$defs/foo"`，且 secret 只出现在 `$comment` ⇒ server **被接受**，`$comment` 已脱敏，而 **`$ref` 与 `$defs` 键名逐字未变**（证明递归没把引用改坏）；
@@ -991,13 +1001,14 @@ servers: { leaky: fake({ API_KEY: "sk-live-abc-123", DSN: "abc/def+ghi" }) }
 | 4 | 取消全部勾选 ≠ 恢复默认 | 前者 `{skills:[],skillsConfigured:true}`，后者 `{skills:[],skillsConfigured:false}` |
 | 5 | 未动 Skill 即保存 → 省略 | 只改 role，断言 draft 无三字段（§6.1 的 dirty 标记） |
 | 6 | 安装/移除控件在 B-6a 为禁用 | 断言 `disabled` 为真 + 说明文案存在 |
-| 7 | 无新 `@media`、无既有移动端规则改动 | `git diff web/src/styles.css` 不命中 `@media (max-width: 640px)` 内行；`.file-panel.mobile-open`/`.sidebar.drawer-open`/`pointer: coarse` 仍在。**范围核对用补集法**（两段并集 = 全部改动）：`git diff --name-only A..B \| grep -E '\.(ts\|tsx\|js\|mjs\|css\|json)$'` 与 `… \| grep -vE`（后者**必须为空**） |
+| 7 | 无新 `@media`、无既有移动端规则改动 | `git diff web/src/styles.css` 不命中 `@media (max-width: 640px)` 内行；`.file-panel.mobile-open`/`.sidebar.drawer-open`/`pointer: coarse` 仍在。**范围核对不在本项重写**：一律按 **§12 第 12 条（补集法，含已定案合法面 `.md`/`.gitignore`）** 执行 —— 同一判据只写一处，写两遍就是下一次漂移的入口 |
 | 8 | 保存提示存在 | 断言存在「保存会重建该 Bot，正在进行的一轮会被打断」 |
-| 9 | **B-4 name 拒绝闭环** | §13.3.1 断言 1–3、5、6 全绿：含 secret 的 server 三处皆无、notice 含「security policy」+ 命中的 **env 键名**且不含 secret（含 `sanitize` 形态）、正常 server 未被假 collision 波及、响应体全量不含 secret、反向用例（`prod`/`docs`）结论正确 |
+| 9 | **B-4 name 拒绝闭环** | §13.3.1 断言 1–3、5、6 **逐一成立**（判据，非结果）：含 secret 的 server 三处皆无、notice 含「security policy」+ 命中的 **env 键名**且不含 secret（含 `sanitize` 形态）、正常 server 未被假 collision 波及、响应体全量不含 secret、反向用例（`prod`/`docs`）结论正确 |
 | 10 | **B-4 description 脱敏** | §13.3.1 断言 4：名字干净 + description 内嵌 secret ⇒ server 被接受，但 `Tool.description` 与 `toolDefinition(tool)` 都不含 secret、含 `«redacted»` |
 | 11 | **sanitize 绕过** | 单测：env 值含非法字符（`abc/def+ghi`）时，命中 `sanitize(v)` 的工具名同样被拒；并有一条 `sanitizeNamePart` 与 `redact.ts` 比对实现同源的用例 |
 | 12 | **parameters 深扫（C15 第 5 条）** | ① 仅**自由文本 4 项**（`description`/`title`/`$comment`/`examples[]`）内嵌 secret ⇒ 被接受、这些位置全变 `«redacted»`、`toolDefinition(tool).parameters` 无 secret；② **契约位置 10 项逐一**命中 ⇒ **整 server 拒**（与 §13.3.1 分类表逐字对齐）；③ **嵌套深扫**（`properties.a.properties.b`）；④ 被接受时 `Object.keys(properties)`、`required`、`enum` **逐一原样**（证明未静默弄坏契约）；⑤ **`$ref` 三规则**：内部指针逐字未变、外部引用 ⇒ 拒、`$ref` 字面命中 env 值 ⇒ 拒（4c-2/4c-3/4c-4） |
 | 12b | **下标对齐** | 取用点有 `result.tools.length === infos.length && mapped.tools.length === infos.length` 断言，或按 name 建 `Map` 取（不得依赖隐式下标） |
+| 12c | **对象独立性（不得共享可变容器）** | 同一 server 的多个工具（含无 `inputSchema` 的兜底）⇒ `a.parameters !== b.parameters` 且 `a.parameters.properties !== b.parameters.properties`（**引用比较**）；改 A 的 `properties` 后 B 与模块常量均不变。判据来源：`test/mcp/redaction-parameters.test.ts` 的 `gives each tool its own properties object`。**注意**：这是**契约属性**（永远成立），不是状态 |
 | 13 | **args 不回显** | `GET /api/mcp` 响应里**无 `args` 键**（`Object.keys(row)` 不含 `args`）、有 `argsCount`；配置 `["node","srv.js","--token=ghp_xxx"]` ⇒ `command === "node"`、`argsCount === 2`、响应体不含 `ghp_xxx`。<br>⚠️ **假红坑**：断"不含 args"**不能用** `JSON.stringify(body).includes("args")`——`argsCount` 自身就含子串 `args`；用 `Object.keys` / `not.toHaveProperty`。同理，若实现把整个 `config.command` 数组塞进 `command: string`（`String(cmd)`/`cmd.join(" ")`），类型检查照样过、但 token 原样下发 ⇒ 必须靠 `command === "node"` 这条断言抓 |
 
 ### 13.7 未闭合边界
