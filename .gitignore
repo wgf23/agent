@@ -3,3 +3,12 @@ dist
 .env
 .my-agent/
 .pnpm-store/
+.playwright-mcp/
+
+# The workspace config holds permissions, env and MCP allowlists; an example
+# file must be named my-agent.example.json so it is not caught by this rule.
+my-agent.json
+my-agent.json.bak-*
+
+# Local run-time helpers, not source.
+scripts/self-dev/
