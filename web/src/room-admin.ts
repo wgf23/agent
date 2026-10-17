@@ -89,6 +89,21 @@ export function settingsChanged(
 	);
 }
 
+/** Whether the create button may be pressed. Same shape as canSaveSettings:
+ *  the server refuses a member count outside min..max (src/rob/room.ts), so
+ *  both bounds are checked here rather than only the lower one. */
+export function canCreateRoom(input: {
+	nameValid: boolean;
+	memberCount: number;
+	submitting: boolean;
+	minMembers: number;
+	maxMembers: number;
+}): boolean {
+	const { nameValid, memberCount, submitting, minMembers, maxMembers } = input;
+	if (!nameValid || submitting) return false;
+	return memberCount >= minMembers && memberCount <= maxMembers;
+}
+
 /** The members half is closed while a run is live (the server would answer 409
  *  anyway) and while a request is in flight. `minMembers` mirrors the server
  *  rule so the button is disabled before a round-trip that must fail. */

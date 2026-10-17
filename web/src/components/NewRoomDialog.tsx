@@ -1,7 +1,11 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { NAME_RULE } from "../names";
 import type { BotInfo } from "../protocol";
-import { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS } from "../room-admin";
+import {
+	canCreateRoom,
+	ROOM_MAX_MEMBERS,
+	ROOM_MIN_MEMBERS,
+} from "../room-admin";
 
 interface Props {
 	robs: BotInfo[];
@@ -27,23 +31,32 @@ export default function NewRoomDialog({
 	const [error, setError] = useState<string | null>(null);
 
 	const nameValid = NAME_RULE.test(name);
-	// The server refuses a member count outside ROOM_MIN_MEMBERS..ROOM_MAX_MEMBERS
-	// (src/rob/room.ts), so the button must be disabled at both bounds; otherwise
-	// the click goes through and the submit dies on a red error line. Kept in
-	// step with canSaveSettings in room-admin.ts, which checks both.
-	const memberCountValid =
-		members.length >= ROOM_MIN_MEMBERS && members.length <= ROOM_MAX_MEMBERS;
-	const canCreate = nameValid && memberCountValid && !submitting;
+	// Both bounds live in canCreateRoom so a unit test can guard them; the
+	// server refuses a count outside min..max (src/rob/room.ts).
+	const canCreate = canCreateRoom({
+		nameValid,
+		memberCount: members.length,
+		submitting,
+		minMembers: ROOM_MIN_MEMBERS,
+		maxMembers: ROOM_MAX_MEMBERS,
+	});
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			// An IME uses Escape to cancel candidate selection; closing the
-			// dialog there would throw away everything typed so far.
-			if (event.key === "Escape" && !event.isComposing) onClose();
+			// dialog there would throw away everything typed so far. While a
+			// create is in flight, dismissing would hide the only place the
+			// eventual error can appear.
+			if (event.key === "Escape" && !event.isComposing && !submitting) {
+				onClose();
+			}
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [onClose]);
+		// submitting belongs here: the handler closes over it, and the parent
+		// does not re-render this component when it changes, so without the
+		// dependency the guard would read the first render's false forever.
+	}, [onClose, submitting]);
 
 	const toggle = (member: string) => {
 		if (members.includes(member)) {
@@ -74,7 +87,9 @@ export default function NewRoomDialog({
 		<div
 			className="modal-backdrop"
 			onClick={(event) => {
-				if (event.target === event.currentTarget) onClose();
+				// Same guard as Escape: a create in flight must stay visible so
+				// its error can be read.
+				if (event.target === event.currentTarget && !submitting) onClose();
 			}}
 		>
 			<div
