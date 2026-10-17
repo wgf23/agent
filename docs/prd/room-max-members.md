@@ -99,6 +99,7 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - **解析必须 fail-closed（对语义等价改写免疫）**：从 `src/rob/room.ts` 读 `RESERVED_ROOM_SPEAKERS` 时，把数组排版改成多行并加注释（元素值不变）后，脚本**仍须 exit ≠ 0 且不写盘**；不得因正则跨行匹配而解析出带注释残渣的元素、导致 `has("user")===false` 后放行。判据面：**切分之后、建 Set 之前**对每个元素做**白名单**形状断言 `^[a-z][a-z0-9-]*$`（= `robNameSchema` 的字符面），不合法即 exit 1。
     - **必须是白名单，不得用「排除注释」这类黑名单**：任何让元素带前缀/后缀的改写（多行+注释、`"user" /* 注释 */`、末尾逗号后注释、未来换 `satisfies`）都应退化为 fail-closed。
     - `ROOM_MIN_MEMBERS`/`ROOM_MAX_MEMBERS` 的解析值同样做 `Number.isInteger` 检查（`(\d+)` 目前只在 0 命中时 fail-closed，值被改坏没有护栏）。
+    - **「免疫」的定义 = fail-closed（拒绝运行并说明原因），不是「解析更聪明」**。实现取「解析不干净就 exit 1，打印 `Cannot parse RESERVED_ROOM_SPEAKERS …`」，**不是**剥掉注释后仍认出 `user`。两者都满足本条，但后果不同：对数组做合法维护（加注释、折行）会让脚本**整体不可用** —— 这是**有意的取舍**（安全侧优先，宁可拒绝也不猜）；错误文案必须指明「解析失败」而非「房间非法」，避免被误读成脚本损坏。
 - **AC-11** `docs/rnd-team.md` **写明迁移时序**（对应 design §4 第 2 条）：
   - 判据用**内容级锚**，不锚措辞片段（锚短语 = 下一个人换个说法就误红，2026-10-17 已踩两次）：
     - `grep -n "systemctl stop my-agent" docs/rnd-team.md` 恰 1 行；
