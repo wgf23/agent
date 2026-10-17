@@ -26,6 +26,41 @@ import { errorMessage } from "../util/errors.js";
 
 export const PROJECT_FILE_NAME = "my-agent.json";
 
+type SkillScopeFields = {
+	skills?: readonly string[] | undefined;
+	skillsConfigured?: boolean | undefined;
+};
+
+type NormalizedSkillScope =
+	| { ok: true; skills?: string[]; skillsConfigured?: boolean }
+	| { ok: false; error: string };
+
+// Both write paths (create and update) funnel through this, so the invariant
+// has exactly one implementation. A skill scope is a list plus a confirmation
+// flag, and the pair must never reach storage in a shape that means other than
+// what was sent: a bare list with no flag is truth table row 2 — "never
+// configured" — which resolves to *every* installed skill. Persisting "no
+// skills" that way would widen a bot's scope instead of narrowing it.
+//
+// A list without a flag is therefore taken as confirmed. Omitting both fields
+// stays the only way to say "leave the scope alone", and an explicit
+// `skillsConfigured: false` is the way back to the default. A flag with no
+// list means nothing on its own, so it is refused rather than guessed at.
+function normalizeSkillScope(incoming: SkillScopeFields): NormalizedSkillScope {
+	if (
+		incoming.skillsConfigured !== undefined &&
+		incoming.skills === undefined
+	) {
+		return { ok: false, error: "skillsConfigured requires skills" };
+	}
+	if (incoming.skills === undefined) return { ok: true };
+	return {
+		ok: true,
+		skills: [...incoming.skills],
+		skillsConfigured: incoming.skillsConfigured ?? true,
+	};
+}
+
 export const robsSchema = z.array(robConfigSchema);
 export const roomsSchema = z.array(roomConfigSchema);
 
@@ -264,6 +299,18 @@ async function writeRob(
 	if (!parsedRob.success) {
 		return { ok: false, error: z.prettifyError(parsedRob.error) };
 	}
+	const scope = normalizeSkillScope(parsedRob.data);
+	if (!scope.ok) return { ok: false, error: scope.error };
+	// A new bot stores its scope exactly as normalized, so a bare list cannot
+	// land on disk meaning "all installed".
+	const created: RobConfig =
+		scope.skills === undefined
+			? parsedRob.data
+			: {
+					...parsedRob.data,
+					skills: scope.skills,
+					skillsConfigured: scope.skillsConfigured ?? true,
+				};
 
 	const filePath = projectFilePath(workspaceRoot);
 	let raw: Record<string, unknown> = {};
@@ -300,14 +347,14 @@ async function writeRob(
 			? { ok: true as const, robs: [] }
 			: parseRobs(raw.robs);
 	if (!existing.ok) return { ok: false, error: existing.error };
-	if (duplicateRobName([...existing.robs, parsedRob.data]) !== undefined) {
+	if (duplicateRobName([...existing.robs, created]) !== undefined) {
 		return { ok: false, error: `A rob named "${rob.name}" already exists.` };
 	}
 
 	try {
 		await writeFile(
 			filePath,
-			`${JSON.stringify({ ...raw, robs: [...existing.robs, parsedRob.data] }, null, 2)}\n`,
+			`${JSON.stringify({ ...raw, robs: [...existing.robs, created] }, null, 2)}\n`,
 			"utf8",
 		);
 	} catch (error) {
@@ -432,19 +479,8 @@ async function writeRobUpdate(
 		return { ok: false, error: z.prettifyError(parsedNext.error) };
 	}
 	const incoming = parsedNext.data;
-
-	// Confirming a scope without saying what it is has no coherent meaning:
-	// the flag only qualifies a list. Refuse it here, before the file is read,
-	// because the merge below cannot report an error from its callback.
-	if (
-		incoming.skillsConfigured !== undefined &&
-		incoming.skills === undefined
-	) {
-		return {
-			ok: false,
-			error: "skillsConfigured requires skills",
-		};
-	}
+	const scope = normalizeSkillScope(incoming);
+	if (!scope.ok) return { ok: false, error: scope.error };
 
 	const filePath = projectFilePath(workspaceRoot);
 
@@ -499,17 +535,12 @@ async function writeRobUpdate(
 			};
 		}
 		// Skill scope and MCP opt-in. Absent fields are left untouched, so a
-		// caller that only edits role/model keeps the bot's current scope.
-		//
-		// A list without the flag is taken as confirmed, not as "never
-		// configured": storing `skills: []` beside a missing flag would read
-		// back as *every* installed skill, the inverse of what was asked, and
-		// a scope that widens on save is worse than one that narrows.
-		// Omission is how a caller leaves the scope alone; an explicit
-		// `skillsConfigured: false` is how it goes back to the default.
-		if (incoming.skills !== undefined) {
-			merged.skills = incoming.skills;
-			merged.skillsConfigured = incoming.skillsConfigured ?? true;
+		// caller that only edits role/model keeps the bot's current scope;
+		// `scope` above already rejected a flag with no list and confirmed a
+		// list sent without one.
+		if (scope.skills !== undefined) {
+			merged.skills = scope.skills;
+			merged.skillsConfigured = scope.skillsConfigured ?? true;
 		}
 		// MCP is a patch: absent on create means "no servers", absent on
 		// update means "leave the selection alone".

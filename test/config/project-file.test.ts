@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	addPermissionRule,
+	addRob,
 	readProjectConfig,
 	removeRob,
 	updateRob,
@@ -219,6 +220,74 @@ describe("addPermissionRule", () => {
 		);
 
 		expect(result.ok).toBe(false);
+	});
+});
+
+describe("addRob skill scope", () => {
+	// Creating a bot is the second write path, so it must enforce the same
+	// invariant the update path does; guarding only one leaves a way to
+	// persist the scope-widening shape.
+	it("confirms a bare skill list so a new bot does not grant every skill", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [] })}\n`,
+			"utf8",
+		);
+
+		const result = await addRob(workspace, {
+			name: "newbot",
+			role: "x",
+			skills: [],
+		});
+
+		expect(result).toEqual({ ok: true });
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skills).toEqual([]);
+		expect(written.robs[0].skillsConfigured).toBe(true);
+		// The point of the flag: this reads back as "no skills", not as the
+		// truth table row that hands over everything installed.
+		expect(visibleSkills(installed, written.robs[0])).toEqual([]);
+	});
+
+	it("refuses a skillsConfigured flag without a list", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [] })}\n`,
+			"utf8",
+		);
+
+		const result = await addRob(workspace, {
+			name: "newbot",
+			role: "x",
+			skillsConfigured: true,
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			error: "skillsConfigured requires skills",
+		});
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs).toEqual([]);
+	});
+
+	it("leaves a bot with no skill fields unscoped", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [] })}\n`,
+			"utf8",
+		);
+
+		await addRob(workspace, { name: "newbot", role: "x" });
+
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skills).toBeUndefined();
+		expect(written.robs[0].skillsConfigured).toBeUndefined();
 	});
 });
 
