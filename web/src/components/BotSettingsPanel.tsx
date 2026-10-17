@@ -40,6 +40,9 @@ function asBackendChoice(command: string | undefined): BackendChoice {
 	return found?.value ?? "native";
 }
 
+// A bot's stored scope, in the shape `scopeKey` round-trips through JSON.
+type ScopeSnapshot = [string, string[] | null, boolean | null, string[] | null];
+
 export default function BotSettingsPanel({
 	bot,
 	onUpdateBot,
@@ -85,6 +88,18 @@ export default function BotSettingsPanel({
 	const valid = roleValid && providerValid && backendModelValid;
 	const busy = saving || removing;
 
+	// The roster sends a fresh bot object on every status/usage event, so the
+	// seeding effect keys off the scope *values*: keying off the object would
+	// re-seed the ticks mid-edit and silently drop what the user just ticked.
+	const scopeKey = JSON.stringify([
+		bot.name,
+		bot.skills ?? null,
+		bot.skillsConfigured ?? null,
+		bot.mcp ?? null,
+	]);
+
+	// The candidate lists do not depend on the bot, so they are fetched once per
+	// mount rather than on every config echo.
 	useEffect(() => {
 		if (!scoped) return;
 		let live = true;
@@ -93,19 +108,32 @@ export default function BotSettingsPanel({
 				if (!live) return;
 				setInstalled(skillList);
 				setServers(serverList);
-				// Seed the ticks from the bot's config. A failed load leaves both
-				// lists null: the section then says so instead of inventing rows.
-				setPickedSkills(skillSelection(skillList, bot).selected);
-				setPickedServers(mcpSelection(serverList, bot));
 			})
 			.catch((cause) => {
 				if (!live) return;
+				// No sample rows stand in for a failed read: the section says so.
 				setScopeError(cause instanceof Error ? cause.message : String(cause));
 			});
 		return () => {
 			live = false;
 		};
-	}, [scoped, loadSkills, loadMcpServers, bot]);
+	}, [scoped, loadSkills, loadMcpServers]);
+
+	// Seed the ticks from the bot once both sides are known. Until then the
+	// section shows "reading…", so an empty list is never mistaken for "none".
+	useEffect(() => {
+		if (installed === null || servers === null) return;
+		const [, skills, skillsConfigured, mcp] = JSON.parse(
+			scopeKey,
+		) as ScopeSnapshot;
+		setPickedSkills(
+			skillSelection(installed, {
+				skills: skills ?? undefined,
+				skillsConfigured: skillsConfigured ?? undefined,
+			}).selected,
+		);
+		setPickedServers(mcpSelection(servers, { mcp: mcp ?? undefined }));
+	}, [installed, servers, scopeKey]);
 
 	const toggleSkill = (name: string, on: boolean) => {
 		setSkillsTouched(true);
