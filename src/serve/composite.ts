@@ -276,6 +276,13 @@ export class CompositeHub extends EventBus implements Hub {
 function toRobConfig(draft: BotDraft): RobConfig {
 	const config: RobConfig = { name: draft.name, role: draft.role };
 	if (draft.model !== undefined) config.model = draft.model;
+	// Passed straight through, absent stays absent: the write layer owns the
+	// scope's meaning, and re-deciding it here would be a second policy.
+	if (draft.skills !== undefined) config.skills = draft.skills;
+	if (draft.skillsConfigured !== undefined) {
+		config.skillsConfigured = draft.skillsConfigured;
+	}
+	if (draft.mcp !== undefined) config.mcp = draft.mcp;
 	if (draft.backend !== undefined) {
 		config.backend =
 			draft.backend.kind === "native"

@@ -80,6 +80,14 @@ export interface BotDraft {
 	role: string;
 	model?: string;
 	backend?: BotBackendDraft;
+	// The bot's skill whitelist and its confirmation flag. They travel
+	// together-or-absent: the write layer is what reconciles them, so this
+	// type only has to carry what the panel sent.
+	skills?: string[];
+	skillsConfigured?: boolean;
+	// The MCP servers this bot may use. Absent means none, unlike skills
+	// (design §10 U6).
+	mcp?: string[];
 }
 
 export type ProviderPresetName = "deepseek" | "openai";

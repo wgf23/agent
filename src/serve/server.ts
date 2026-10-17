@@ -902,11 +902,17 @@ export async function buildServer(
 			return reply.code(400).send({ error: "expected {name, role}" });
 		}
 		try {
+			// The scope fields pass through as sent. Absent stays absent: the
+			// write layer reconciles the flag, and deciding it here would be a
+			// second policy for the same rule.
 			const bot = await createBot({
 				name: body.name,
 				role: body.role,
 				model: typeof body.model === "string" ? body.model : undefined,
 				backend: body.backend as BotDraft["backend"],
+				skills: body.skills,
+				skillsConfigured: body.skillsConfigured,
+				mcp: body.mcp,
 			});
 			return reply.send({ ok: true, bot });
 		} catch (error) {
@@ -953,6 +959,9 @@ export async function buildServer(
 				role: body.role,
 				model: typeof body.model === "string" ? body.model : undefined,
 				backend: body.backend as BotDraft["backend"],
+				skills: body.skills,
+				skillsConfigured: body.skillsConfigured,
+				mcp: body.mcp,
 			});
 			return reply.send({ ok: true, bot: updated });
 		} catch (error) {
