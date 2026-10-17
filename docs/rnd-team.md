@@ -102,3 +102,23 @@ my-agent team --dispatch manager="把设置页的交互重做一版" --wait-ms 3
 - 截图是给**你**看的：MCP 的 image content 在 `src/mcp/tools.ts` 里只被映射为文本，所以 bot 判断界面靠的是 snapshot、计算样式、控制台与网络日志，而不是像素。
 - 房间成员上限是 20（`ROOM_MAX_MEMBERS`，`src/rob/room-limits.ts` 是唯一数字源）；`rnd` 有 8 个成员，离上限还有余量。
 - `my-agent.json` 里原有的 `test`/`pi-test`/`opencode`/`dmtest`/`aaa`/`leader` 是早期测试用 bot，与这支流程团队无关，可按需删除。
+
+## 管理令牌（房间管理的破坏性操作）
+
+改成员 / 改 coordinator / 删除房间需要 `X-Admin-Token`。未配置 ⇒ 一律 403（fail-closed，无本机例外）。
+
+**位置**：`<workspace root>/.my-agent/admin-token`（本机 `/home/heiwa/my-agent/.my-agent/admin-token`），
+**不是** `~/.my-agent/`。优先级：`MY_AGENT_ADMIN_TOKEN` env > 该文件。
+
+**首次生成**（只在本机终端执行，令牌绝不贴进房间/日志/提交）：
+    cd /home/heiwa/my-agent && mkdir -p .my-agent
+    ( umask 077; node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex")+"\n")' > .my-agent/admin-token )
+    chmod 600 .my-agent/admin-token
+    stat -c %a .my-agent/admin-token    # 必须是 600
+
+**生效**：令牌在**首个管理请求时**读取一次并缓存 ⇒ **改/删令牌后必须 `systemctl restart my-agent`**。
+权限不是 600 时只在首个管理请求的 stderr 告警一行 ⇒ 不要依赖日志，用上面的 `stat` 自查。
+
+**撤销**：删文件 + 重启 ⇒ 回到「一律 403」。
+
+**注意**：`.my-agent/` 已被 `.gitignore:4` 忽略，令牌不会误入库；不要把令牌写进 `my-agent.json`。
