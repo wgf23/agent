@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import { projectFilePath } from "../../src/config/project-file.js";
 import type { TeamEvent } from "../../src/rob/events.js";
@@ -60,6 +60,27 @@ async function seedLedger(state: RoomState): Promise<void> {
 }
 
 const MEMBERS = ["alpha", "beta"] as const;
+
+// The config-branch race needs the one await inside removeRoom to be
+// observable. A gate consumed on the next removeRoomConfig call does that
+// without touching production code: everything else calls the real function.
+const gate = vi.hoisted(() => ({
+	pending: null as null | (() => Promise<void>),
+}));
+
+vi.mock("../../src/config/project-file.js", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("../../src/config/project-file.js")>();
+	return {
+		...actual,
+		removeRoom: async (root: string, name: string) => {
+			const wait = gate.pending;
+			gate.pending = null;
+			if (wait !== null) await wait();
+			return actual.removeRoom(root, name);
+		},
+	};
+});
 
 describe("Team.removeRoom", () => {
 	it("removes a configured room: ledger archived, config entry gone", async () => {
@@ -206,6 +227,64 @@ describe("Team.removeRoom", () => {
 			room: "standup",
 			archived: false,
 		});
+	});
+});
+
+describe("a create during the config write", () => {
+	beforeEach(() => {
+		gate.pending = null;
+	});
+
+	afterEach(() => {
+		gate.pending = null;
+	});
+
+	it("fails the delete, keeps the room, and leaves the name usable", async () => {
+		// Config names the room but nothing is live and there is no ledger, so
+		// the delete takes the config branch. Between reading and writing that
+		// file there is an await — the only reachable window in the branch.
+		await writeFile(
+			projectFilePath(workspace),
+			`${JSON.stringify({
+				robs: [
+					{ name: "alpha", role: "a" },
+					{ name: "beta", role: "b" },
+				],
+				rooms: [{ name: "standup", members: [...MEMBERS] }],
+			})}\n`,
+			"utf8",
+		);
+		const team = makeTeam();
+
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		gate.pending = () => held;
+
+		const deleting = team.removeRoom("standup");
+		// The window: the config write is parked, and the user creates the room
+		// that is being deleted.
+		const created = team.createRoom({ name: "standup", members: [...MEMBERS] });
+		expect(created.status).toBe("created");
+		release();
+
+		const outcome = await deleting;
+		expect(outcome).toEqual({
+			status: "failed",
+			stage: "config",
+			error: expect.stringContaining(
+				"was recreated while it was being deleted",
+			),
+		});
+		// The room the user just made is still there and still running normally.
+		expect(team.rooms().map((room) => room.name)).toEqual(["standup"]);
+
+		// The name was not tombstoned: a second delete is a real delete, not a
+		// duplicate forever. This is what would break if the branch pinned first.
+		expect(await team.removeRoom("standup")).toEqual(
+			expect.objectContaining({ status: "removed", room: "standup" }),
+		);
 	});
 });
 
