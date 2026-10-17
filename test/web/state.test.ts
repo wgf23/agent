@@ -601,6 +601,39 @@ describe("rooms", () => {
 		expect(state.rooms["ship-it"].members).toEqual(["alpha", "beta"]);
 	});
 
+	it("writes the coordinator a members event carries, and clears it", () => {
+		const seeded = apply([{ ...hello, rooms: [shipIt] }]);
+		expect(seeded.rooms["ship-it"].coordinator).toBeNull();
+
+		const led = apply([
+			{ ...hello, rooms: [shipIt] },
+			{
+				type: "room",
+				event: {
+					kind: "members",
+					room: "ship-it",
+					members: ["alpha", "beta"],
+					coordinator: "alpha",
+				},
+			},
+		]);
+		expect(led.rooms["ship-it"].coordinator).toBe("alpha");
+
+		const cleared = apply([
+			{ ...hello, rooms: [shipIt] },
+			{
+				type: "room",
+				event: {
+					kind: "members",
+					room: "ship-it",
+					members: ["alpha", "beta"],
+					coordinator: null,
+				},
+			},
+		]);
+		expect(cleared.rooms["ship-it"].coordinator).toBeNull();
+	});
+
 	it("seeds a created room from the create response without dropping live entries", () => {
 		const fresh: RoomInfo = { ...shipIt, transcript: [] };
 		const seeded = clientReducer(initialState(), {

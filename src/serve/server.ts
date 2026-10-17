@@ -1537,6 +1537,16 @@ function parseRoomPatch(body: unknown): RoomSettingsPatch | null {
 		return null;
 	}
 	const record = body as Record<string, unknown>;
+	// Strict like the design's `.strict()` schema: a misspelled key would
+	// otherwise be dropped silently and the request would answer 200 without
+	// applying the half the client meant to send.
+	if (
+		Object.keys(record).some(
+			(key) => key !== "members" && key !== "coordinator",
+		)
+	) {
+		return null;
+	}
 	const hasMembers = record.members !== undefined;
 	const hasCoordinator = record.coordinator !== undefined;
 	if (!hasMembers && !hasCoordinator) return null;

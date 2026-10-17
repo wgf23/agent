@@ -524,6 +524,30 @@ describe("TeamHub", () => {
 			}
 			expect(hub.hello().rooms[0].coordinator).toBeNull();
 
+			// 403 before 404: an unknown room name with no token must not answer
+			// 404, or the status code becomes an existence probe (AC-14f).
+			const unknownDenied = await patch("/api/rooms/nope", {
+				coordinator: null,
+			});
+			expect(unknownDenied.status).toBe(403);
+			expect(await unknownDenied.json()).toEqual({
+				error: "Admin token required.",
+			});
+
+			// A misspelled key is a 400, never a silent 200 that drops the half
+			// the client meant to write (AC-14e).
+			const typo = await patch(
+				"/api/rooms/ship-it",
+				{ members: ["beta", "alpha"], coordinate: "beta" },
+				"s3cret",
+			);
+			expect(typo.status).toBe(400);
+			expect(await typo.json()).toEqual({
+				error: "expected {members?, coordinator?} with at least one field",
+			});
+			expect(hub.hello().rooms[0].members).toEqual(["alpha", "beta"]);
+			expect(hub.hello().rooms[0].coordinator).toBeNull();
+
 			const updated = await patch(
 				"/api/rooms/ship-it",
 				{ members: ["beta", "alpha"], coordinator: "beta" },
