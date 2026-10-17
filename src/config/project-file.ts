@@ -433,6 +433,19 @@ async function writeRobUpdate(
 	}
 	const incoming = parsedNext.data;
 
+	// Confirming a scope without saying what it is has no coherent meaning:
+	// the flag only qualifies a list. Refuse it here, before the file is read,
+	// because the merge below cannot report an error from its callback.
+	if (
+		incoming.skillsConfigured !== undefined &&
+		incoming.skills === undefined
+	) {
+		return {
+			ok: false,
+			error: "skillsConfigured requires skills",
+		};
+	}
+
 	const filePath = projectFilePath(workspaceRoot);
 
 	let text: string;
@@ -488,21 +501,18 @@ async function writeRobUpdate(
 		// Skill scope and MCP opt-in. Absent fields are left untouched, so a
 		// caller that only edits role/model keeps the bot's current scope.
 		//
-		// A confirmed-but-listless update (`skillsConfigured: true` with no
-		// `skills`) means "explicitly allow nothing". Deleting `skills` here
-		// would instead mean "never configured", which resolves to every
-		// installed skill — the exact opposite of what the caller asked for.
-		if (
-			incoming.skills !== undefined ||
-			incoming.skillsConfigured !== undefined
-		) {
-			if (incoming.skills !== undefined) merged.skills = incoming.skills;
-			else if (incoming.skillsConfigured === true) merged.skills = [];
-			else delete merged.skills;
-			if (incoming.skillsConfigured === undefined)
-				delete merged.skillsConfigured;
-			else merged.skillsConfigured = incoming.skillsConfigured;
+		// A list without the flag is taken as confirmed, not as "never
+		// configured": storing `skills: []` beside a missing flag would read
+		// back as *every* installed skill, the inverse of what was asked, and
+		// a scope that widens on save is worse than one that narrows.
+		// Omission is how a caller leaves the scope alone; an explicit
+		// `skillsConfigured: false` is how it goes back to the default.
+		if (incoming.skills !== undefined) {
+			merged.skills = incoming.skills;
+			merged.skillsConfigured = incoming.skillsConfigured ?? true;
 		}
+		// MCP is a patch: absent on create means "no servers", absent on
+		// update means "leave the selection alone".
 		if (incoming.mcp !== undefined) merged.mcp = incoming.mcp;
 		return merged;
 	});

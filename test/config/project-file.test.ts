@@ -7,7 +7,19 @@ import {
 	removeRob,
 	updateRob,
 } from "../../src/config/project-file.js";
+import type { Skill } from "../../src/skills/discover.js";
+import { visibleSkills } from "../../src/skills/scope.js";
 import { makeWorkspace, removeWorkspace } from "../tools/helpers.js";
+
+// Two installed skills, so a stored scope can be read back through the same
+// truth table the runtime uses.
+const installed: Skill[] = ["alpha", "beta"].map((name) => ({
+	name,
+	description: `${name} skill`,
+	packageName: `pkg-${name}`,
+	version: "1.0.0",
+	dir: `/skills/${name}`,
+}));
 
 let workspace: string;
 
@@ -378,19 +390,45 @@ describe("updateRob", () => {
 		expect(written.robs[0].skillsConfigured).toBe(true);
 	});
 
-	it("treats skillsConfigured alone as an explicit empty allowlist", async () => {
+	it("refuses a skillsConfigured flag without a skills list", async () => {
 		await writeFile(
 			join(workspace, "my-agent.json"),
 			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
 			"utf8",
 		);
 
-		// Confirming "nothing allowed" without sending a list must not fall
-		// back to "never configured" (= every installed skill, the inverse).
-		await updateRob(workspace, "atlas", {
+		const result = await updateRob(workspace, "atlas", {
 			name: "atlas",
 			role: "x",
 			skillsConfigured: true,
+		});
+
+		// The flag qualifies a list; on its own it means nothing, and guessing
+		// would let a scope widen or narrow on a malformed request.
+		expect(result).toEqual({
+			ok: false,
+			error: "skillsConfigured requires skills",
+		});
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0]).toEqual({ name: "atlas", role: "x" });
+	});
+
+	it("confirms an empty skill list so it reads back as the empty set", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
+			"utf8",
+		);
+
+		// "No skills" must not persist as a bare [] — that is truth table row
+		// 2, which resolves to every installed skill. Writing the flag beside
+		// it is what makes the stored file mean what it says.
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skills: [],
 		});
 
 		const written = JSON.parse(
@@ -398,6 +436,58 @@ describe("updateRob", () => {
 		);
 		expect(written.robs[0].skills).toEqual([]);
 		expect(written.robs[0].skillsConfigured).toBe(true);
+		expect(visibleSkills(installed, written.robs[0])).toEqual([]);
+	});
+
+	it("confirms a non-empty skill list on write", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
+			"utf8",
+		);
+
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skills: ["alpha"],
+		});
+
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skills).toEqual(["alpha"]);
+		expect(written.robs[0].skillsConfigured).toBe(true);
+	});
+
+	it("keeps an explicit skillsConfigured:false as the way back to the default", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify(
+				{
+					robs: [
+						{ name: "atlas", role: "x", skills: [], skillsConfigured: true },
+					],
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		// Clearing the confirmation is how a bot returns to "all installed";
+		// the stored pair then matches truth table row 2 on purpose.
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skills: [],
+			skillsConfigured: false,
+		});
+
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.robs[0].skillsConfigured).toBe(false);
+		expect(visibleSkills(installed, written.robs[0])).toHaveLength(2);
 	});
 
 	it("round-trips a skill whitelist and MCP selection through the file", async () => {
