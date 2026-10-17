@@ -254,6 +254,20 @@ describe("archive", () => {
 		await expect(readFile(roomFile("ship-it"), "utf8")).rejects.toThrow();
 	});
 
+	// The guard that matters at this layer: the name arrives as a type alias,
+	// so a caller that skipped the route check must not be able to address a
+	// file outside the rooms directory. Refusing is not enough — the refusal
+	// must come before .trash/ is created or the name is tombstoned.
+	it("refuses a traversing name before creating .trash or pinning it", async () => {
+		const store = storeFor();
+
+		const outcome = await store.archive("../outside");
+
+		expect(outcome.status).toBe("failed");
+		await expect(readdir(trashDirFor())).rejects.toThrow();
+		expect(store.isDeleted("../outside")).toBe(false);
+	});
+
 	it("reports missing_source when there was never a ledger", async () => {
 		expect(await storeFor().archive("never-existed")).toEqual({
 			status: "missing_source",

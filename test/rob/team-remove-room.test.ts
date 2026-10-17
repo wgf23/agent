@@ -228,6 +228,66 @@ describe("Team.removeRoom", () => {
 		});
 	});
 
+	// A ledger that exists but does not parse is still a file with a user's
+	// transcript in it. Treating "cannot read" as "nothing here" would let the
+	// front branch drop the config entry and leave the file behind unarchived.
+	it("archives a damaged ledger instead of treating it as absent", async () => {
+		await writeFile(
+			projectFilePath(workspace),
+			`${JSON.stringify({
+				robs: [
+					{ name: "alpha", role: "a" },
+					{ name: "beta", role: "b" },
+				],
+				rooms: [{ name: "standup", members: [...MEMBERS] }],
+			})}\n`,
+			"utf8",
+		);
+		// No live instance: the delete reaches the store with only this file.
+		const ledger = path.join(
+			roomsRoot(),
+			projectSlug(workspace),
+			"standup.json",
+		);
+		await mkdir(path.dirname(ledger), { recursive: true });
+		await writeFile(ledger, "{ not json", "utf8");
+
+		expect(await makeTeam().removeRoom("standup")).toEqual({
+			status: "removed",
+			room: "standup",
+			archived: true,
+		});
+		expect(existsSync(ledger)).toBe(false);
+		const archives = (await readdir(trashDir())).filter((entry) =>
+			entry.startsWith("standup."),
+		);
+		expect(archives).toHaveLength(1);
+	});
+
+	// The pre-branch's promise is "nothing to archive, so nothing is written".
+	// The discriminator is the absent .trash directory: it is created by
+	// archive() and by nothing else on this path.
+	it("deletes a config-only room without touching .trash", async () => {
+		await writeFile(
+			projectFilePath(workspace),
+			`${JSON.stringify({
+				robs: [
+					{ name: "alpha", role: "a" },
+					{ name: "beta", role: "b" },
+				],
+				rooms: [{ name: "seed", members: [...MEMBERS] }],
+			})}\n`,
+			"utf8",
+		);
+
+		expect(await makeTeam().removeRoom("seed")).toEqual({
+			status: "removed",
+			room: "seed",
+			archived: false,
+		});
+		await expect(readdir(trashDir())).rejects.toThrow();
+	});
+
 	it("reports archived:false when the ledger is already gone", async () => {
 		const team = makeTeam([{ name: "standup", members: [...MEMBERS] }]);
 		// A seeded room writes its ledger on construction; drop it so the delete
