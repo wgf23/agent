@@ -184,6 +184,10 @@ describe("Team.removeRoom", () => {
 
 		// Not awaited: removeRoomNow runs synchronously up to `await stop()`.
 		const deleting = team.removeRoom("standup");
+		// Fail loudly if the window ever closes by deleting the registry entry
+		// earlier: the create would then be refused for the wrong reason (or
+		// worse, accepted), and this line names the regression directly.
+		expect(team.rooms().map((room) => room.name)).toContain("standup");
 		expect(team.createRoom({ name: "standup", members: [...MEMBERS] })).toEqual(
 			{ status: "rejected", reason: "duplicate" },
 		);
