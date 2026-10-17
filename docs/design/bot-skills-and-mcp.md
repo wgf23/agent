@@ -48,7 +48,7 @@
 > - **基线实测（`ad3b41a..1eb7110` = 36 个非 `.md`：`src` 19 / `test` 14 / `web` 1 / `shared` 1 / `.gitignore` 1）**：正向未覆盖 = 0，负向误覆盖 = 0。**本行是「范围 + 方法」而非状态**：换 range 后按上面命令重跑，不必改正文。
 > **协议只允许加性变更**：新增字段一律可选；**不得**改既有字段必选性/改名/改事件语义。
 > **`src/tui/**` 的例外（唯一）**：允许 `src/tui/index.tsx` 里**仅 `new Team({...})` 的接线**，形如 `+ mcpToolsByServer: mcp.toolsByServer` 与 `extraTools: [...mcp.tools, ...plugins.tools] → plugins.tools`（净 3 行：2 增 1 删）。第二步**必须删掉 `...mcp.tools`**，否则 MCP 工具会既经 `mcpToolsByServer` 过滤、又被 `extraTools` 全量注入一次 —— 等于 AC-7 白做，且工具重复。
-> `<App>`（:290 附近的单 agent 路径）**与 tui 其余一律零命中**。
+> `<App`（`src/tui/index.tsx` 中唯一一处单 agent 路径）**与 tui 其余一律零命中**。
 > 理由：`runTui` 的 `Team` 是 bot 创建入口；不传 `mcpToolsByServer` 则 `createRob` 走 **C4' 的 `undefined` 分支**、每个 bot 无条件拿到全部 MCP 工具 ⇒ AC-7 在 TUI 面失效，且与 serve/cli 语义分叉。而 `<App>` 是单 agent 路径，正是 C4' 要保住旧行为的那个口子。
 > 仍零命中：`screenshots/**`、`src/rob/room-text.ts`（两者都必须进上面的**负向清单**；`room-text.ts` 被 `src/rob/**` 顺带覆盖，正向段抓不到它）。不引入 jsdom/@testing-library。
 
@@ -62,7 +62,7 @@
 
 ## 1. 数据模型
 
-### 1.1 `RobConfig`（`src/rob/types.ts:56-94`）
+### 1.1 `RobConfig`（`src/rob/types.ts` 的 `export type RobConfig = z.infer<typeof robConfigSchema>`）
 
 ```ts
 export const robConfigSchema = z.object({
@@ -108,7 +108,7 @@ skills/mcp 属于第一类（缺席 = 保留，C8）。
 ### 1.3.1 归一与拒绝都在**落盘函数**（**定稿**：写侧归一 + 400，不上移 handler）
 
 > 口径来源：leader 终裁（安全理由，非风格），review 逐行验过。**定稿，不再讨论**。
-> 落地：`normalizeSkillScope()` 在 `src/config/project-file.ts:49`，已被 `writeRob`（创建）与 `writeRobUpdate`（更新）**在文件 IO 之前**各自调用（`a5982e8` 落更新侧、`367f355` 落创建侧）。
+> 落地：`normalizeSkillScope()` 在 `src/config/project-file.ts` 的 `export function normalizeSkillScope(`，已被 `writeRob`（创建）与 `writeRobUpdate`（更新）**在文件 IO 之前**各自调用（`a5982e8` 落更新侧、`367f355` 落创建侧）。
 
 **结论：写侧归一 + 只给 flag 的 400 拒绝，都钉在落盘函数里；HTTP 层至多是额外便利，不作为正确性依赖。**
 
@@ -188,7 +188,7 @@ export function visibleSkills<T extends { name: string }>(
 
 ### 2.2 per-bot `load_skill` 工厂（C1/C2/C3，本线最关键）
 
-`src/skills/tool.ts` 现在导出模块级单例 `loadSkillTool`，`execute` 里直接 `await discoverSkills()`，`ToolContext`（`src/tools/types.ts:4`）**没有 bot 身份**。因此下沉为工厂：
+`src/skills/tool.ts` 现在导出模块级单例 `loadSkillTool`，`execute` 里直接 `await discoverSkills()`，`ToolContext`（`src/tools/types.ts` 的 `export interface ToolContext`）**没有 bot 身份**。因此下沉为工厂：
 
 ```ts
 export interface LoadSkillToolOptions {
@@ -213,8 +213,8 @@ export const loadSkillTool: Tool<typeof schema> = createLoadSkillTool({ allowed:
 3. `discover()` → `find(name)`
 4. `read(dir)`
 
-**遮蔽机制**：该工厂产物作为 `extraTools` 注入，`src/agent/agent.ts:127-145` 的既有逻辑（`shadowed` 去重 + `definitions` 过滤 + `lookupTool` 优先 extraTools）会**自动遮蔽** registry 里的同名 `load_skill`，无需改 registry。
-`src/tools/registry.ts:21` 保留 `loadSkillTool`（无作用域）给单 agent 使用，**不删**。
+**遮蔽机制**：该工厂产物作为 `extraTools` 注入，`src/agent/agent.ts` 的 `const shadowed = new Set<string>()` 的既有逻辑（`shadowed` 去重 + `definitions` 过滤 + `lookupTool` 优先 extraTools）会**自动遮蔽** registry 里的同名 `load_skill`，无需改 registry。
+`src/tools/registry.ts` 工具表里的 `	loadSkillTool,` 保留 `loadSkillTool`（无作用域）给单 agent 使用，**不删**。
 
 ### 2.3 注入链（一处快照 + **保存即重建**）
 
@@ -275,11 +275,11 @@ export const loadSkillTool: Tool<typeof schema> = createLoadSkillTool({ allowed:
 
 ## 3. MCP（FR-5/FR-6/FR-7）
 
-> **行号时点**：本节行号以**当前 HEAD** 为准，仅作定位辅助；符号（`connectMcpServers` / `createRob` / `filterToolsByServers`）才是权威锚点。改动会导致漂移，评审请以 grep 符号为准。**注意**：PRD §14.5「事实」节里「`manager.ts:54` 硬编 `new StdioMcpClient`、`ConnectMcpServersInput`(:28-32) 无注入点」记录的是**改动前**状态；改动后注入缝已存在（§3.1.1；声明在 `ConnectMcpServersInput` 内 :38，缺省实现在 `connectMcpServers` 内 :49-50），该条已过时。
+> **行号时点**：本节行号以**当前 HEAD** 为准，仅作定位辅助；符号（`connectMcpServers` / `createRob` / `filterToolsByServers`）才是权威锚点。改动会导致漂移，评审请以 grep 符号为准。**注意**：PRD §14.5「事实」节里「`src/mcp/manager.ts` 的 `input.createClient ?? ((options) => new StdioMcpClient(options))` 硬编 `new StdioMcpClient`、`ConnectMcpServersInput`(:28-32) 无注入点」记录的是**改动前**状态；改动后注入缝已存在（§3.1.1；声明在 `ConnectMcpServersInput` 内 :38，缺省实现在 `connectMcpServers` 内 :49-50），该条已过时。
 
 ### 3.1 连接结果按 server 分组（C5/C6）
 
-`src/mcp/tools.ts:31` 的 `mcpToolName()` 经 `sanitize()`（**不可逆**：`a.b` 与 `a_b` 同形），**禁止**从 `mcp__<server>__<tool>` 反推归属。故 `ConnectMcpServersResult.servers` 增字段：
+`src/mcp/tools.ts` 的 `export function mcpToolName(server: string, tool: string): string` 经 `sanitize()`（**不可逆**：`a.b` 与 `a_b` 同形），**禁止**从 `mcp__<server>__<tool>` 反推归属。故 `ConnectMcpServersResult.servers` 增字段：
 
 ```ts
 export interface McpServerSummary {
@@ -301,7 +301,7 @@ export interface ConnectMcpServersResult {
 `manager.ts` 组装处：`toolsByServer[name] = mapped.tools`（与 `tools.push(...mapped.tools)` 同一次迭代，不可能漂）；`servers[].tools` 由 `mapped.tools.map(t => t.name)` 同处生成。
 
 > **协议面：无需变更**。`McpServerSummary` / `ConnectMcpServersResult` 定义在 `src/mcp/manager.ts`，`shared/protocol.ts` 与 `web/**` 对它们**零引用**（`grepped`），`servers` 只在进程内用（tui 打印）。故 `tools` 是**内部加性字段**，不触发协议评审。
-> **但会打到既有断言**：`test/mcp/manager.test.ts:45` 用 `toEqual([{name:"good", toolCount:2}])` 严格比对 `servers`，新增 `tools` 后必红——改 `McpServerSummary` 必须同步该断言（见 §12 第 11 项）。
+> **但会打到既有断言**：`test/mcp/manager.test.ts` 的 `toolCount: 2` 用 `toEqual([{name:"good", toolCount:2}])` 严格比对 `servers`，新增 `tools` 后必红——改 `McpServerSummary` 必须同步该断言（见 §12 第 11 项）。
 
 ### 3.1.1 测试缝：`ConnectMcpServersInput.createClient?`（C15）
 
@@ -316,9 +316,9 @@ export interface ConnectMcpServersInput {
 }
 ```
 
-**这是为测试让步，不是生产扩展点**：① **仅测试用**，生产路径永不设置（全仓唯一非缺省用法在 `test/mcp/manager.test.ts:122`）；② 缺省 `new StdioMcpClient(options)`，**生产行为与加此字段前逐字一致**；③ **不改变 `McpClient` 接口本身**，也不经协议 / HTTP / 配置文件暴露（`shared/protocol.ts`、`web/**` 对该字段零引用）。
+**这是为测试让步，不是生产扩展点**：① **仅测试用**，生产路径永不设置（全仓唯一非缺省用法在 `test/mcp/manager.test.ts` 的 `const secret = "shutdown-db-password";`）；② 缺省 `new StdioMcpClient(options)`，**生产行为与加此字段前逐字一致**；③ **不改变 `McpClient` 接口本身**，也不经协议 / HTTP / 配置文件暴露（`shared/protocol.ts`、`web/**` 对该字段零引用）。
 
-**为什么需要它**：`StdioMcpClient.dispose()`（`client.ts:96-112`）现实中**不会抛**——只 `kill` + `await exited`，`kill` 返回 boolean、`exited` 只 resolve。故 C15 要求覆盖的 **dispose 脱敏分支不可达**，真实 client 测不到。按 pm §14.1「不得以"不可达所以不测"取代证据」，改为注入一个 `dispose()` 会抛错且**错误文本含 env 值**的假 client 来 pin 住它。
+**为什么需要它**：`StdioMcpClient.dispose()`（`src/mcp/client.ts` 的 `async dispose(): Promise<void> {`）现实中**不会抛**——只 `kill` + `await exited`，`kill` 返回 boolean、`exited` 只 resolve。故 C15 要求覆盖的 **dispose 脱敏分支不可达**，真实 client 测不到。按 pm §14.1「不得以"不可达所以不测"取代证据」，改为注入一个 `dispose()` 会抛错且**错误文本含 env 值**的假 client 来 pin 住它。
 
 **该测试覆盖三条断言（缺一不算过）**：
 1. **脱敏**：`dispose()` 抛出的错误文本进 notice 后，env 值被替换为 `«redacted»`，原文不出现；
@@ -327,7 +327,7 @@ export interface ConnectMcpServersInput {
 
 ### 3.2 过滤点：`createRob`（C4）
 
-`src/serve/server.ts:208` 现在是 `extraTools: [...mcp.tools, ...plugins.tools]` 一份扁平数组给所有 bot。改为：
+`src/serve/server.ts` 现在把工具拼成一份扁平数组（`extraTools: [` … `...mcp.tools, ...lsp.tools, ...plugins.tools`）给所有 bot。改为：
 
 ```ts
 // server.ts
@@ -378,7 +378,7 @@ export function filterToolsByServers<T>(
 
 ### 3.3 生命周期：只做可见性过滤，**不断开进程**
 
-- MCP server 仍在 serve 启动时连接一次（`server.ts:208` 之前），进程退出才 `dispose()`。
+- MCP server 仍在 serve 启动时连接一次（`extraTools` 装配之前，见 `src/serve/server.ts`），进程退出才 `dispose()`。
 - 取消某个 bot 的勾选 = **该 bot 的工具列表里不再出现这些工具**；server 进程**继续存活**（其他 bot 可能还在用）。
 - **不做**：按需 connect/disconnect、PID 管理、引用计数。这是设计约束，dev 不得顺手实现（PRD §8 已列，此处再钉一次）。
 
@@ -407,7 +407,7 @@ export interface McpServerBody {
 
 - 读：`GET /api/mcp` → `McpServerInfo[]`，`envKeys` 由 `Object.keys(config.env ?? {})` 生成，`argsCount` 由 `config.command.length - 1` 生成。
 - **为什么连 `args` 都不回（L2 改口，安全理由非风格）**：
-  - `mcpServerSchema`（`resolve.ts:118`）只有 `command: z.array(z.string().min(1)).min(1)` + 可选 `env`，**没有任何约束禁止密钥进 args**。「密钥只放 env」是**文档约定，不是不变量**；`--token=ghp_xxx` 是最自然的写法。
+  - `mcpServerSchema`（`src/config/resolve.ts` 的 `export const mcpServerSchema = z.object({`）只有 `command: z.array(z.string().min(1)).min(1)` + 可选 `env`，**没有任何约束禁止密钥进 args**。「密钥只放 env」是**文档约定，不是不变量**；`--token=ghp_xxx` 是最自然的写法。
   - `redactMcpServer` 只认**该 server 自己的 env 值** ⇒ 不配 env 的 `--token=…` **恰好漏掉**，兜底只覆盖「既放 env 又抄进 args」的少数情况。
   - 叠加：两条 GET **不做 loopback 限制**（§5），而 `isLoopbackHost` 全仓仅三处、**全部只护写**，serve 无 HTTP 鉴权、可绑 `0.0.0.0` ⇒ 同网段任何人 `GET /api/mcp` 就能读到 args 里的明文 token。
   - B-6a 的 MCP 区块**只做勾选**、不渲染编辑表单（§13.1）⇒ 候选列表用不到完整 args。**改成 `argsCount` 零功能损失、零风险**，不必现在发明一套 args 脱敏策略。
@@ -483,7 +483,7 @@ export interface UpdateBotResponse / SkillListResponse / McpListResponse { … }
 | PUT | `/api/mcp/:name` | 结构校验 + 写入配置层（`project-file.ts` 的 mcp 层） | **是** |
 | DELETE | `/api/mcp/:name` | 删除 server 定义 | **是** |
 
-- 403 口径照抄 `server.ts:1178-1185` 的 `isLoopbackHost(...)` 分支（同一措辞风格）。
+- 403 口径照抄 `src/serve/server.ts` 的 `function isLoopbackHost(host: string): boolean {` 分支（同一措辞风格）。
 - 只读路由不做 loopback 限制，与现有 `/api/settings` GET 一致。
 - **注意（见 §10 U1）**：新增/编辑 MCP server **定义**在下次 serve 启动时才连接；`PUT/DELETE` 后响应里明确带 `restartRequired: true` 提示。
 
@@ -560,7 +560,7 @@ bot 的创建与保存路径上，字段会被**逐字段白名单式重建**。
 | AC | 落点 | 取证 |
 |---|---|---|
 | AC-1 勾选并持久化 | §1.3 `writeRobUpdate` 合并 + §1.3.1 归一/400（两落盘入口）+ §5.1 **四处逐字段重建点** + `BotSettingsPanel` dirty 标记 | 纯函数（`test/config/skill-scope.test.ts` 里 `normalizeSkillScope` **直接**测四态：flag-only → 400、`skills` 无 flag → true、`[]`+`true` → 空集、`[]`+`false` → 不变）+ **端到端两条**：`PATCH /api/bots/x` 带 `skills:["a"]`（无 flag）→ 读回 `["a"]`+`true`；`POST /api/bots` 同形态同样成立（创建路径守卫） |
-| AC-2 未指派不进系统提示 | §2.3 `RunAgentOptions.skills` → `system-prompt.ts:43` | 纯函数 `visibleSkills` + 断言 `## Skills` 段落 |
+| AC-2 未指派不进系统提示 | §2.3 `RunAgentOptions.skills` → `src/agent/system-prompt.ts` 的 `const skills = options.skills ?? (await discoverSkills());` | 纯函数 `visibleSkills` + 断言 `## Skills` 段落 |
 | AC-3 `load_skill` 拒绝且不读文件 | §2.2 顺序契约 | 纯函数 spy：`ok:false` 且 `discover`/`read` **零调用** |
 | AC-4 已装 Skill 视图 | §6.2 + `SkillInfo[]` | 纯函数（视图模型）+ 人工 |
 | AC-5 安装/移除 + 无残留 | §5 `addSkill`/`removeSkill`（复用回滚） | 集成 + 纯函数（目录集回滚）；注意 **C22 flake** |
@@ -669,6 +669,55 @@ bot 的创建与保存路径上，字段会被**逐字段白名单式重建**。
 - **为什么**：散文里的状态句会随 commit 腐坏，而**腐坏的状态比没有状态更危险**——下一个人要么习惯性无视它（真红也会被忽略），要么据此"修正"回去（把已修好的判成没修）。本线已实际踩到**三次**：① 4c-4 的"当前红"；② `examples` 守卫（qa 据旧快照报假缺陷）；③ **立本条的同一段里写了 sha256 + 用例计数**（pm 实测哈希当天已变）——**在立规矩的地方犯这个病，说明它不是粗心而是默认习惯**，所以四类一起禁。
 - **§12.8a 管"状态表 HEAD 漂移"，本条管"散文里的状态句"**；两者互补，缺一个都会腐坏。
 - **例外只有一种**：引用**属性**而非**状态**的数字（如"契约位置 10 项"）可以写——那是契约本身，不随 commit 变。判别法：**这个数字会不会因为别人跑了一次测试/提交了一次代码而变？** 会 ⇒ 禁止。
+- **源码锚点禁行号（第 6 起，本文件实测）：凡引用 `src/**`、`test/**` 的行号一律换成「文件 + 逐字引句」**。理由不是洁癖：本文件 §13.3 一次性审计出 21 处源码锚点，其中 **15 处已在读者手里失效**（4 处是随代码改动漂移的偏移，其余是「写作当天就没对准」，典型如 `tools.ts:73` 从来不是 `description:`）。行号是**别人代码的坐标**，我方无法控制它的漂移，也无法保证写的那一刻算对了。
+  - ❌ `（`tools.ts:73` `description: info.description ?? ""`）`
+  - ✅ `（`src/mcp/tools.ts` 的 `description: info.description ?? ""`）`
+  - **引句必须在该文件里唯一出现**（`grep -c` = 1）。不唯一就再加限定（签名整行、相邻行注释），不要退回行号。
+  - **形态不同的失效，修法不同**：**偏移**（写时对、后来被推走）⇒ 只是重算行号会留下一颗定时炸弹；**区间重写**（区间没动、里面内容被整体替换）⇒ 重算行号**根本救不了**，必须换成符号；**从未对准**（写时就是猜的）⇒ 任何基于"当时是对的"的推理都不成立。**三种都只有符号锚点免疫。**
+
+**机械校验脚本（可直接复制运行；`sys.exit(1)` 即红）** —— 判据是「逐字引句在所指文件中唯一出现」，**故意改坏一个字就会红**（已用变异验证：把 `sanitizeNamePart(` 改成 `sanitizeNamePartX(` ⇒ `0 occurrences` ⇒ FAIL）：
+
+```python
+#!/usr/bin/env python3
+import sys
+CHECKS = [
+  ("src/rob/types.ts",           "export type RobConfig = z.infer<typeof robConfigSchema>;"),
+  ("src/config/project-file.ts", "export function normalizeSkillScope("),
+  ("src/tools/types.ts",         "export interface ToolContext"),
+  ("src/agent/agent.ts",         "const shadowed = new Set<string>()"),
+  ("src/tools/registry.ts",      "\tloadSkillTool,"),
+  ("src/mcp/manager.ts",         "input.createClient ?? ((options) => new StdioMcpClient(options))"),
+  ("src/mcp/tools.ts",           "export function mcpToolName(server: string, tool: string): string"),
+  ("test/mcp/manager.test.ts",   "toolCount: 2"),
+  ("test/mcp/manager.test.ts",   'const secret = "shutdown-db-password";'),
+  ("src/mcp/client.ts",          "async dispose(): Promise<void> {"),
+  ("src/serve/server.ts",        "extraTools: ["),
+  ("src/config/resolve.ts",      "export const mcpServerSchema = z.object({"),
+  ("src/serve/server.ts",        "function isLoopbackHost(host: string): boolean {"),
+  ("src/agent/system-prompt.ts", "const skills = options.skills ?? (await discoverSkills());"),
+  ("src/tui/index.tsx",          "mcpToolsByServer: mcp.toolsByServer,"),
+  ("src/serve/server.ts",        "mcpToolsByServer: mcp.toolsByServer,"),
+  ("src/cli/team.ts",            "mcpToolsByServer: mcp.toolsByServer,"),
+  ("src/mcp/redact.ts",          "if (inProse || (keyword !== undefined && PROSE_KEYS.has(keyword))) {"),
+  ("src/mcp/redact.ts",          "// tool, so a match is a refusal rather than an edit."),
+  ("src/mcp/redact.ts",          'if (!inProse) refuseIfHit(key, "tool schema");'),
+  ("src/mcp/tools.ts",           'description: info.description ?? ""'),
+  ("src/tools/registry.ts",      "? Object.fromEntries(Object.entries(z.toJSONSchema(tool.schema)))"),
+  ("src/mcp/tools.ts",           "inputSchema: z.record(z.string(), z.unknown()).optional(),"),
+  ("src/tools/types.ts",         "export function emptyInputSchema("),
+  ("src/mcp/tools.ts",           "export function sanitizeNamePart("),
+]
+bad = 0
+for path, quote in CHECKS:
+    n = open(path, encoding="utf-8").read().count(quote)
+    print(f"{'OK ' if n == 1 else 'FAIL'} {n}  {path}  <- {quote[:56]}")
+    bad += n != 1
+print(f"\n{len(CHECKS) - bad}/{len(CHECKS)} unique")
+sys.exit(1 if bad else 0)
+```
+
+> 注意：`grep -c` 只回答「这串字符在不在」，**不回答「它是不是你指的那个语义」** —— 与 §12.8d-3「代码形状不是证据」是同一个坑。引句要选**只可能属于这一处**的片段（整行签名 > 片段 > 关键词）。
+
 - **追加约束（第 5 起，leader 核出）："某提交是红/绿"必须在 `git status` 干净下测得**，否则必须显式声明"含未提交文件"。否则会出现**锚点不成立但缺陷为真**的混合态结论（实例：把未提交的测试文件与旧提交的源码一起跑，报"某提交红"，而该用例当时根本不在那个提交里）。⇒ 写证据时**锚点 = 提交 + 工作区状态**，缺一个就不算锚点；**缺陷为真不等于锚点成立**，两者要分开陈述。
 
 ---
@@ -687,14 +736,14 @@ bot 的创建与保存路径上，字段会被**逐字段白名单式重建**。
 | 3 | **C11' 快照来源** | `createRob` 用 `skillScopeOf(config)`，闭包 `() => resolveBotSkills(scope)`；全文件不得出现 `skillsFor(` 或从 `this.options.robs` 反查 skill 配置 | ✅ 已核 |
 | 4 | **B1 四处真放行** | ① `server.ts` PATCH handler ② `server.ts` POST handler ③ `composite.ts` `toRobConfig` ④ `shared/protocol.ts` 的 `BotDraft` —— 四处都能看到 `skills`/`skillsConfigured`/`mcp` | ⛔ 待步骤 3 |
 | 5 | **无重复归一** | 上述四处 handler/composite **不得**出现 `?? true` 或 `skillsConfigured requires skills`；该字符串只应出现在 `src/config/project-file.ts` | ⛔ 待步骤 3 |
-| 6 | **AC-7 过滤接线** | `filterToolsByServers` 在 `createRob` 被调用；三个生产调用点（`tui/index.tsx:153`、`serve/server.ts:210`、`cli/team.ts:123`）都传 `mcpToolsByServer` | 🟡 已接线（WIP 未提交），代码已核 |
+| 6 | **AC-7 过滤接线** | `filterToolsByServers` 在 `createRob` 被调用；三个生产调用点（`tui/index.tsx`、`serve/server.ts`、`cli/team.ts` 各一处 `mcpToolsByServer: mcp.toolsByServer,`）都传 `mcpToolsByServer` | 🟡 已接线（WIP 未提交），代码已核 |
 | 7 | **C4' `undefined` 逃生口** | `mcpToolsByServer === undefined` ⇒ `extraTools` 传**原引用**、不过滤；有值 + `config.mcp` 缺省 ⇒ `[]`（零 MCP 工具，U6） | 🟡 已核，与 §3.2 一致 |
-| 8 | **`servers` 严格断言同步** | 增 `McpServerSummary.tools` 后，`test/mcp/manager.test.ts:45` 的 `toEqual([{name,toolCount}])` 必须补 `tools`，否则必红 | ⛔ 待修（leader 已派 dev） |
+| 8 | **`servers` 严格断言同步** | 增 `McpServerSummary.tools` 后，`test/mcp/manager.test.ts` 的 `toolCount: 2` 的 `toEqual([{name,toolCount}])` 必须补 `tools`，否则必红 | ⛔ 待修（leader 已派 dev） |
 | 9 | **C12 用例** | bot 存 `skillsConfigured:true` → 切 CLI（配置与解析不变）→ 切回 native（`visibleSkills` 复原） | ⛔ 缺失（leader 已派 dev） |
 | 10 | **落盘守卫两入口** | `normalizeSkillScope` 被 `writeRob` 与 `writeRobUpdate` 各调一次，且均**在文件 IO 之前** | ✅ 已核（`367f355`） |
 | 11 | **谓词双侧穷举** | `test/rob/bot-scope-consistency.test.ts` 用 `satisfies Record<BackendKind, true>` + `Object.keys` | ✅ 已核 |
 | 12b | **测试缝未外溢** | `createClient` 只出现在 `src/mcp/manager.ts` 的 `ConnectMcpServersInput` 与 `test/mcp/manager.test.ts`；`shared/`、`web/`、HTTP body、配置文件**零出现**；`grep -rn createClient shared/ web/ src/serve/` 应为空 | 已核 |
-| 12 | **红线（补集法，不用"代码面 + 目录排除"）** | 两段都要跑，且**并集必须等于全部改动**：<br>`git diff --name-only A..B \| grep -E '\.(ts\|tsx\|js\|mjs\|css\|json)$'`（逐个判是否 ⊆ §0 允许路径）<br>`git diff --name-only A..B \| grep -vE '\.(ts\|tsx\|js\|mjs\|css\|json)$' \| grep -vE '^(docs(-dist)?/.*\.md\|\.gitignore)$'`（**必须为空**）——即「补集里除已定案的合法面（`.md` 文档、`.gitignore`）之外必须为空」。<br>**为什么不再写"补集必须为空"**：本线合法改动本就含 46 个 `.md` + `.gitignore`（`ad3b41a..ea72c40` 实测 47 个），一刀切喊空会让 ci **必红**，进而「习惯性忽略这条红」——比不写更糟。修正后**并集仍等于全部改动**，仍能抓 `docs-dist/x.ts` 与意外溅射<br>另：无 `screenshots/**`；`shared/protocol.ts` 仅加性；**`src/tui/**` 只允许 `src/tui/index.tsx` 的 `new Team({...})` 接线（2 增 1 删），`<App>`(:290) 与其余零命中**（hunk 级限制，文件级 glob 管不到 ⇒ 人工判）<br>**别把补集法"简化"成单段**：第二段之所以为空，是因为 `test/fixtures/*.mjs` **被前段正则 `\.(ts\|tsx\|js\|mjs\|css\|json)$` 捕获**；合并成"补集必须全空"会漏 `.mjs`。**成立条件是「两段并集 = 全部改动」，不是「补集为空」**<br>**分段审计**：`ad3b41a..1eb7110` 内含事务段（`ad3b41a..ea72c40`，17 笔，`.gitignore` a006169 与 `docs-dist/**` 021cef6）与业务段（`ea72c40..1eb7110`，8 笔）⇒ **先报事务段、再报业务段**，否则"25 笔"这个分母会把事务提交算进业务红线 | 每步提交时查 |
+| 12 | **红线（补集法，不用"代码面 + 目录排除"）** | 两段都要跑，且**并集必须等于全部改动**：<br>`git diff --name-only A..B \| grep -E '\.(ts\|tsx\|js\|mjs\|css\|json)$'`（逐个判是否 ⊆ §0 允许路径）<br>`git diff --name-only A..B \| grep -vE '\.(ts\|tsx\|js\|mjs\|css\|json)$' \| grep -vE '^(docs(-dist)?/.*\.md\|\.gitignore)$'`（**必须为空**）——即「补集里除已定案的合法面（`.md` 文档、`.gitignore`）之外必须为空」。<br>**为什么不再写"补集必须为空"**：本线合法改动本就含 46 个 `.md` + `.gitignore`（`ad3b41a..ea72c40` 实测 47 个），一刀切喊空会让 ci **必红**，进而「习惯性忽略这条红」——比不写更糟。修正后**并集仍等于全部改动**，仍能抓 `docs-dist/x.ts` 与意外溅射<br>另：无 `screenshots/**`；`shared/protocol.ts` 仅加性；**`src/tui/**` 只允许 `src/tui/index.tsx` 的 `new Team({...})` 接线（2 增 1 删），`<App`（`src/tui/index.tsx` 中唯一一处）与其余零命中**（hunk 级限制，文件级 glob 管不到 ⇒ 人工判）<br>**别把补集法"简化"成单段**：第二段之所以为空，是因为 `test/fixtures/*.mjs` **被前段正则 `\.(ts\|tsx\|js\|mjs\|css\|json)$` 捕获**；合并成"补集必须全空"会漏 `.mjs`。**成立条件是「两段并集 = 全部改动」，不是「补集为空」**<br>**分段审计**：`ad3b41a..1eb7110` 内含事务段（`ad3b41a..ea72c40`，17 笔，`.gitignore` a006169 与 `docs-dist/**` 021cef6）与业务段（`ea72c40..1eb7110`，8 笔）⇒ **先报事务段、再报业务段**，否则"25 笔"这个分母会把事务提交算进业务红线 | 每步提交时查 |
 
 > **第 6/7/8 项是 AC-7 的唯一取证链**：没有接线，单测绿也等于功能不存在；`undefined` 逃生口丢了会伤到 cli run/solo；`servers` 断言不同步则 CI 红。
 > **纯函数单测 ≠ AC-7 取证**：`test/mcp/scope.test.ts` 只证明「给定分组与选择，过滤结果正确」，不证明「建 bot 时真的用了它」。AC-7 需要 **Team→Rob 集成组**——造 `TeamOptions.mcpToolsByServer` + `robs:[{mcp:["docs"]}]`，断言该 rob 的 `extraTools` 里只有 docs 的工具、`mcp:[]` 或省略时为 0 个、`mcpToolsByServer` 省略时原样继承。
@@ -780,11 +829,11 @@ export interface McpServerInfo {
 > **本节只有一条判据，清单只是它的展开**：
 > **这个字符串参与 `tools/call` 的构造吗？会 ⇒ 拒绝；不会（只给人/模型看）⇒ 脱敏。**
 > - 清单（10 + 4 + `$ref` 3）会随 schema 语料漂移，**判据不会**。遇到清单里没有的关键字，用判据推，不要瞎猜、更不要按"泄漏了就脱敏"处理。
-> - **清单外 = 按契约位置处理（命中 ⇒ 拒整 server）**，这是**故意的 fail-safe 默认**（实现锚点：`src/mcp/redact.ts:168` 的自由文本分支只认 `PROSE_KEYS` + `inProse`，`:171-176` 的「其余字符串一律判拒」即兜底；`:185-188` 的键名检查对**每个非 prose 位置**都做）：`if`/`then`/`else`、`dependentSchemas`、`unevaluatedProperties`、`not`/`allOf` 的子 schema 串、以及未来新增关键字，全部走这条默认。理由：**未知关键字无法证明"不影响可调用性"**，而按本节通用原则（证明不了就只能拒绝），拒绝侧零损失（多拒一个可疑 server）远小于脱敏侧的风险（静默弄坏工具）。
+> - **清单外 = 按契约位置处理（命中 ⇒ 拒整 server）**，这是**故意的 fail-safe 默认**（实现锚点：`src/mcp/redact.ts` 的 `if (inProse || (keyword !== undefined && PROSE_KEYS.has(keyword))) {` 是自由文本分支（只认 `PROSE_KEYS` + `inProse`），其后 `// tool, so a match is a refusal rather than an edit.` 下的 `refuseIfHit(value, "tool schema");` 是「其余字符串一律判拒」的兜底；`if (!inProse) refuseIfHit(key, "tool schema");` 是键名检查（对**每个非 prose 位置**都做））：`if`/`then`/`else`、`dependentSchemas`、`unevaluatedProperties`、`not`/`allOf` 的子 schema 串、以及未来新增关键字，全部走这条默认。理由：**未知关键字无法证明"不影响可调用性"**，而按本节通用原则（证明不了就只能拒绝），拒绝侧零损失（多拒一个可疑 server）远小于脱敏侧的风险（静默弄坏工具）。
 > - 已知的**唯一例外是 `examples` 内部**：那里是**数据样本**不是 schema，键值都按自由文本脱敏（`inProse` 语义）。**该标志必须一路传下去**，丢一层就会把样本值当契约位置，误拒一个本可保留的 server。
 > ⇒ 因此：**清单内 10 项是"必须逐一有用例"的下限，不是"只处理这 10 项"的上限。**
 
-**缺陷（leader / review / qa 源码确认）**：本设计新增的 `McpServerSummary.tools` 把 MCP 工具名送上了浏览器，而工具名**未过脱敏**；`src/mcp/tools.ts` 的 `sanitize()` 只替换 `[^A-Za-z0-9_-]`，所以 `sk-live-abc-123` 这类值原样穿透。更糟的是 **`description`**（`tools.ts:73` `description: info.description ?? ""`）经 `registry.ts:37` 原样进 `ToolDefinition`，会**明文发给第三方模型**——比进浏览器更严重。
+**缺陷（leader / review / qa 源码确认）**：本设计新增的 `McpServerSummary.tools` 把 MCP 工具名送上了浏览器，而工具名**未过脱敏**；`src/mcp/tools.ts` 的 `sanitize()` 只替换 `[^A-Za-z0-9_-]`，所以 `sk-live-abc-123` 这类值原样穿透。更糟的是 **`description`**（`src/mcp/tools.ts` 的 `description: info.description ?? ""`）经 `src/tools/registry.ts` 的 `? Object.fromEntries(Object.entries(z.toJSONSchema(tool.schema)))` 分支原样进 `ToolDefinition`，会**明文发给第三方模型**——比进浏览器更严重。
 
 **C15 的真实范围是 5 条，不是 3 条**（qa 在真实 stdio server 上验出第 5 条，leader 已复现）：
 
@@ -878,10 +927,10 @@ PARAMS: {"properties":{"token":{"description":"Bearer sk-live-QA-DESC-7b1"}}}  �
      **转义方向的残余**：env 值是 `a/b`、指针写成 `a~1b` = **变形形态** ⇒ 归 §13.7 已接受极限（泄漏的是键名的变形，不是原值）；**反方向**（env 值是 `a~1b`、指针字面含它）**不是残余**，规则 1 原样命中 ⇒ 拒。**两个方向别混写**。
      另需一条正常用例：`{"$defs":{"foo":{…}},"properties":{"a":{"$ref":"#/$defs/foo"}},"$comment":"uses sk-live-abc-123"}` ⇒ server **被接受**、`$comment` 已脱敏、**`$ref` 逐字仍为 `"#/$defs/foo"`**、`$defs` 键仍为 `foo`。
    - **反过来也禁止"对整串做替换"**：`JSON.stringify(schema)` 全局 replace 会把 `"$ref": "#/$defs/x"` 这类引用一起改坏（与 `required` 对不上同理）。**必须按关键字递归、逐节点判断。**
-   - **递归是强制项**：`inputSchema` 的类型是 `z.record(z.string(), z.unknown())`（`tools.ts:7`）——**任意深度、无形状约束**，`properties.foo.items.properties.bar` 这种嵌套今天一样泄漏。**只扫顶层 `properties` 等于没做。**
+   - **递归是强制项**：`inputSchema` 的类型是 `z.record(z.string(), z.unknown())`（`src/mcp/tools.ts` 的 `inputSchema: z.record(z.string(), z.unknown()).optional(),`）——**任意深度、无形状约束**，`properties.foo.items.properties.bar` 这种嵌套今天一样泄漏。**只扫顶层 `properties` 等于没做。**
    - **结构保持**：只替换自由文本位置的字符串叶子，对象/数组/布尔/数字**逐值相等**，`required` 与 `properties` 的对应关系**不变**。**禁止**对 `JSON.stringify(schema)` 整串做 split/join 再 parse 回去：会破坏结构、`required` 对不上（工具直接不可用），且替换后可能不再是合法 JSON。
    - **"原样"= 值相等，不是同一个对象引用**（**共享可变对象是本条线已实际踩过的坑**）：每个 tool 的 `parameters` 必须是**独立对象树**，任何容器（`properties`/`items`/`$defs`/`enum` 数组）**不得**在 tool 之间、或与模块级常量之间共用引用。判别法：**拿到 `parameters` 的人可以随意改它，且只能影响这一个 tool。**
-     具体到空 schema 兜底：**必须每次返回新对象**（工厂函数，如 `src/tools/types.ts:14` 的 `emptyInputSchema()`），**禁止** `{ ...EMPTY_INPUT_SCHEMA }` 这类浅展开或直接复用模块常量——浅展开只复制了顶层、`properties` 仍是同一个对象，一个 tool 改了 `properties` 会污染所有后续 tool。
+     具体到空 schema 兜底：**必须每次返回新对象**（工厂函数，如 `src/tools/types.ts` 的 `export function emptyInputSchema(`），**禁止** `{ ...EMPTY_INPUT_SCHEMA }` 这类浅展开或直接复用模块常量——浅展开只复制了顶层、`properties` 仍是同一个对象，一个 tool 改了 `properties` 会污染所有后续 tool。
      这条与「三个调用点必须给同一个答案」不冲突：**形状一致（都答"对象、无属性"）而引用独立**，两件事都要满足。
    - **重建容器必须能承载任意字符串键，`__proto__` 也不例外**（**这不是理论风险，是本线实测的静默数据损坏**）：
      `JSON.parse('{"__proto__":{"type":"object"},"a":1}')` 会产出**自有** `__proto__` 键，`Object.entries` 也能看到它；但若把重建结果放进 `{}` 再用 `out[key] = …` 赋值，`__proto__` 会走 `Object.prototype` 的 setter ⇒ **该键既不会成为自有属性（被静默丢弃），又可能把结果对象的原型换掉**。两个后果都违反上一条「逐值相等」：**schema 少了一个属性，工具静默不可用**，而类型检查、`toEqual` 都可能照样通过。
@@ -972,7 +1021,7 @@ export function scanServerToolText(input: ToolTextScanInput): ToolTextScanResult
   ① **按下标用之前断言** `result.tools.length === infos.length && mapped.tools.length === infos.length`；
   ② **按 name 建 `Map<string, {description, parameters}>` 再取**（推荐：与 `mapServerTools` 的实现细节解耦）。
   选 ① 时把断言写在取用点旁边，不要只在测试里。
-- 比对用的 `sanitize(v)` 必须与 `src/mcp/tools.ts` 的 `sanitize()` **同源**：已导出为 `sanitizeNamePart`（`tools.ts:33`），`redact.ts` 直接复用它。**禁止**在 `redact.ts` 里复制 `/[^A-Za-z0-9_-]/g`；若复制，必须配一条同源用例（`sanitize("abc/def+ghi") === "abc_def_ghi"`），否则两处终将漂移。
+- 比对用的 `sanitize(v)` 必须与 `src/mcp/tools.ts` 的 `sanitize()` **同源**：已导出为 `sanitizeNamePart`（`src/mcp/tools.ts` 的 `export function sanitizeNamePart(`），`redact.ts` 直接复用它。**禁止**在 `redact.ts` 里复制 `/[^A-Za-z0-9_-]/g`；若复制，必须配一条同源用例（`sanitize("abc/def+ghi") === "abc_def_ghi"`），否则两处终将漂移。
 
 **B-4 必测：对抗性 fixture（常规 fixture 必然绿 ⇒ 等于没测）**
 
