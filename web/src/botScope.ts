@@ -6,6 +6,16 @@ import type {
 } from "../../shared/protocol.js";
 
 /**
+ * The part of a save body these helpers own. The panel merges it into the
+ * draft it builds for the other fields, so a scope helper can never send an
+ * incomplete body on its own.
+ */
+export type BotScopeDraft = Pick<
+	UpdateBotBody,
+	"skills" | "skillsConfigured" | "mcp"
+>;
+
+/**
  * Whether a bot can be given bot-scoped tools at all: a cli backend runs its
  * own tool registry, so skill scope and per-bot MCP do not reach it. The panel
  * greys those controls out on this.
@@ -60,7 +70,7 @@ export function skillSelection(
 export function skillDraft(
 	selected: readonly string[],
 	installed: readonly SkillInfo[],
-): UpdateBotBody {
+): BotScopeDraft {
 	const wanted = new Set(selected);
 	return {
 		skills: installed
@@ -74,7 +84,7 @@ export function skillDraft(
  * The one legal way back to "all installed": `[]` + `false` (design §1.3.1).
  * Sending `[]` + `true` would mean "ticked nothing" instead.
  */
-export function skillDefaultDraft(): UpdateBotBody {
+export function skillDefaultDraft(): BotScopeDraft {
 	return { skills: [], skillsConfigured: false };
 }
 
@@ -99,7 +109,7 @@ export function mcpSelection(
 export function mcpDraft(
 	selected: readonly string[],
 	servers: readonly McpServerInfo[],
-): UpdateBotBody {
+): BotScopeDraft {
 	const wanted = new Set(selected);
 	return {
 		mcp: servers

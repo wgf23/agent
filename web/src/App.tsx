@@ -437,6 +437,8 @@ export default function App() {
 								key={currentBot.name}
 								bot={selectedRob}
 								onUpdateBot={hub.updateBot}
+								loadSkills={hub.loadSkills}
+								loadMcpServers={hub.loadMcpServers}
 								onRemoveBot={async (name) => {
 									// A successful delete leaves the bot view; the hub
 									// has already dropped it from the roster.

@@ -23,6 +23,7 @@ import type {
 	FsDirsResponse,
 	ImagePart,
 	InstallAgentStartResponse,
+	McpServerInfo,
 	OfficePreview,
 	RoomInfo,
 	SaveProviderBody,
@@ -31,6 +32,7 @@ import type {
 	ServerEvent,
 	SettingsResponse,
 	SetWakeBody,
+	SkillInfo,
 	UpdateBotBody,
 } from "./protocol";
 import { WORKSPACE_BOT } from "./protocol";
@@ -152,6 +154,11 @@ export interface Hub {
 	loadAgents: () => Promise<void>;
 	installAgent: (id: string) => Promise<void>;
 	cancelInstall: (id: string) => void;
+	// The two read-only lists the bot panel picks from. They are not cached in
+	// the hub: the panel owns the fetch so a failed request shows up there
+	// instead of leaving a stale list behind (design §13.2).
+	loadSkills: () => Promise<SkillInfo[]>;
+	loadMcpServers: () => Promise<McpServerInfo[]>;
 }
 
 export function useHub(): Hub {
@@ -475,6 +482,25 @@ export function useHub(): Hub {
 		dispatch({ type: "settings_provider", provider: body.provider });
 	}, []);
 
+	// Both lists are read-only projections: the routes exist (design §13.3)
+	// and a refusal is a real error, not something to paper over with sample
+	// data -- the panel shows the empty state and the failure instead.
+	const loadSkills = useCallback(async () => {
+		const response = await fetch("/api/skills");
+		if (!response.ok) {
+			throw new Error(`GET /api/skills failed: ${response.status}`);
+		}
+		return (await response.json()) as SkillInfo[];
+	}, []);
+
+	const loadMcpServers = useCallback(async () => {
+		const response = await fetch("/api/mcp");
+		if (!response.ok) {
+			throw new Error(`GET /api/mcp failed: ${response.status}`);
+		}
+		return (await response.json()) as McpServerInfo[];
+	}, []);
+
 	const openSettings = useCallback(() => {
 		dispatch({ type: "settings_open" });
 		// Refresh the server's provider view and preset list so the dialog opens
@@ -579,6 +605,8 @@ export function useHub(): Hub {
 		loadAgents,
 		installAgent,
 		cancelInstall,
+		loadSkills,
+		loadMcpServers,
 		listFiles,
 		fileDownloadUrl,
 		fileArchiveUrl,
