@@ -457,3 +457,62 @@
 3. 断言是**读 dispose 之后**的 `notices`（该数组在返回后仍被追加，这是本函数唯一的隐式契约，须有用例钉住）。
 
 **文档归属**：`docs/design/bot-skills-and-mcp.md` 由 **architect 记一行** `ConnectMcpServersInput.createClient?`（测试缝、缺省行为不变），**同时** dev 在 commit message 写明。二者都要，**设计文档为准**（规则：设计文档与实现必须一致，不允许只在 commit message 留痕）。
+
+---
+
+## 15. 文档纳管（docs commit）与两处实测更正（2026-10-17）
+
+### 15.1 为什么 docs 必须入库
+`git ls-files docs/` = **7 个旧文件**；本线的 `docs/design/bot-skills-and-mcp.md`、`docs/prd/**`、`docs/deliverables/**`、`docs/research/**` **全部 UNTRACKED**。
+⇒ 我们一直在对 **git 从未见过的文档** 做治理：§14.1「有代码无证据不能判绿」在**文档层自我失效**（PRD 改了但没提交，谁都能说"我改了"）。
+**规则**：`docs/**.md` 列入允许路径、**不进红线**；必须**独立 `docs: …` commit**，不得与源码混提；落地后 `git ls-files docs/prd/` 必须非空。
+
+### 15.2 更正：`docs-dist/` **不是** `docs/` 的镜像（pm 与 leader 均判断有误）
+实测（`cmp` 逐文件比对 + `find`）：
+| 事实 | 数值 |
+|---|---|
+| `docs-dist/**` 文件数 | **14**（全部 `.md`，124K，无二进制、无密钥模式命中）|
+| 与 `docs/` 同路径同名且内容相同 | **1**（`research/grok-feature-design-vs-evolution.md`）|
+| **`docs/` 中根本没有对应文件** | **13** |
+| 其中 `docs-dist/verification/**` | **8 个**，而 `docs/` **完全没有 verification/ 目录** |
+
+⇒ `docs-dist/` 装的是**别条线的独有归档**（bot-context 设计 5 篇、verification 8 篇、research 1 篇），**删了就是永久丢失**；它不是冗余镜像。
+
+**再更正一处（pm 第二次自纠）**：`docs-dist/` **不是全部 untracked** —— 实测 `git ls-tree -r ad3b41a -- docs-dist/` = **9 个已跟踪**（自本线之前就在库里），**仅 5 个 untracked**：
+```
+?? docs-dist/design/bot-context-and-learning.tasks.md
+?? docs-dist/design/web-ui-visual-optimization.prompt.md
+?? docs-dist/research/grok-feature-design-vs-evolution.md   ← 与 docs/research/ 同名同内容（唯一真重复）
+?? docs-dist/verification/dm-flow-contract.md
+?? docs-dist/verification/max-cost-boundary.md
+```
+所以「docs-dist 只让它留在 untracked」这个说法本身就不完整，**它一直是半跟踪状态**。
+
+**裁决**：
+1. **不删**（会丢独有验证记录）；
+2. **不并入 `docs/`**（迁移会丢原始路径与出处，且旧引用会断）；
+3. **原样补齐 5 个**，作为**第二笔独立 `docs:` commit**（`docs: track the remaining docs-dist archive as-is`），使主 commit 保持「41 个在役文档」的干净边界；
+4. **不得**把 `docs-dist/` 写进 `.gitignore`（那是"假装解决"）；
+5. **唯一重复项**（`research/grok-feature-design-vs-evolution.md`）**照样跟踪**：它已在库外被引用，删/合并属另案，**本线不动**。
+
+### 15.3 扫描到的**代码侧**噪声（必须与 docs commit 隔离）
+| 路径 | 内容 | 处置 |
+|---|---|---|
+| `package.json` **(M)** | devDependencies 新增 `@playwright/mcp: 0.0.83` | **不得进 docs commit**；**不在本线范围**（`ad3b41a..HEAD` 零改动、无历史），属本地残留改动 |
+| `pnpm-lock.yaml` **(M)** | +29/−0（同上依赖） | 同上 |
+| `my-agent.json` (??) | ci 本地配置 | 不入库 |
+| `.pnpm-store/` (??) | 缓存噪声 | 不入库 |
+| `scripts/**` (??) | 非文档（`browser-setup.mjs`、`self-dev/`） | 不入库；另案 |
+
+**红线追加（pm 裁定）**：`package.json` / `pnpm-lock.yaml` 的**未提交改动**属依赖面变更，**在终版统计中必须显式声明"工作区存在与本线无关的依赖改动，未混入任何 commit"**。若它出现在任何一笔 commit 里，**按红线报**。
+**归属已查清**：`@playwright/mcp` 来自 `scripts/browser-setup.mjs` 那条线（`git log -S "@playwright/mcp" -- package.json` **无历史**，`ad3b41a..HEAD` 对这两个文件**零改动**）⇒ 属**共享工作区的本地残留**，**不是本线遗留、也不是任何 rob 提交**。dev 明确不动它，ci/review 见到脏树不得据此判本线不合格。
+
+### 15.4 落地状态（2026-10-17 实测）
+| 项 | 实测 |
+|---|---|
+| docs commit | `9b10160 docs: record the R&D design, PRD and delivery artifacts` |
+| 范围 | **41 文件 / +6631 / −0**，`grep -v '^docs/.*\.md$'` → **0**（全部 `docs/**/*.md`）|
+| 排除项 | `package.json`、`pnpm-lock.yaml`、`my-agent.json`、`docs-dist/`、`scripts/**`、`screenshots/**`、`.pnpm-store/` **均 0 命中** |
+| `git ls-files docs/prd/` | **6**（非空，规则达标）|
+| 密钥扫描 | `sk-` / `ghp_` / `BEGIN … PRIVATE KEY` / `api_key=` **0 命中** |
+| 遗留 | `M docs/prd/bot-skills-and-mcp.md`（**本文 §15 的自纠内容**，未提交，需一笔 `docs:` 补） |
