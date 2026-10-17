@@ -97,11 +97,13 @@ export function canSaveSettings(input: {
 	current: RoomSettingsCurrent;
 	busy: boolean;
 	submitting: boolean;
+	/** A delete in flight owns the room: PATCHing it now would race the archive. */
+	deleting?: boolean;
 	minMembers: number;
 	maxMembers: number;
 }): boolean {
 	const { draft, current, busy, submitting, minMembers, maxMembers } = input;
-	if (busy || submitting) return false;
+	if (busy || submitting || input.deleting === true) return false;
 	if (draft.members.length < minMembers || draft.members.length > maxMembers) {
 		return false;
 	}
@@ -123,4 +125,26 @@ export function settingsPatch(
 		patch.coordinator = draft.coordinator;
 	}
 	return patch;
+}
+
+/** The label under the delete button. It has to name what actually happens:
+ *  the ledger moves to `.trash/`, so "irreversible" would be a lie (PRD D-7). */
+export const DELETE_ROOM_CONFIRM_TEXT = "移入回收目录，重启不会重建";
+
+/** Deleting needs the room name typed exactly. This is a slip guard, not
+ *  authentication — the admin token is the security boundary, and both are
+ *  required. A no-op while a request is in flight keeps a double click from
+ *  sending a second DELETE. */
+export function canDeleteRoom(input: {
+	typed: string;
+	name: string;
+	submitting: boolean;
+	/** No token means the server answers 403, so the button stays off rather
+	 *  than offering a request that cannot succeed. */
+	token: string;
+}): boolean {
+	if (input.submitting) return false;
+	if (input.name === "") return false;
+	if (input.token.trim() === "") return false;
+	return input.typed === input.name;
 }

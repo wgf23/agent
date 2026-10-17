@@ -142,6 +142,10 @@ export interface Hub {
 		patch: { members?: string[]; coordinator?: string | null },
 		token: string,
 	) => Promise<void>;
+	// Deleting a room. A 404 means it is already gone (the delete was replayed
+	// or another client won the race), so it resolves instead of rejecting:
+	// there is nothing left for the user to fix.
+	deleteRoom: (name: string, token: string) => Promise<void>;
 	loadSettings: () => Promise<void>;
 	openSettings: () => void;
 	closeSettings: () => void;
@@ -470,6 +474,31 @@ export function useHub(): Hub {
 		[],
 	);
 
+	const deleteRoom = useCallback(async (name: string, token: string) => {
+		const response = await fetch(`/api/rooms/${encodeURIComponent(name)}`, {
+			method: "DELETE",
+			// No body and no content type: the name is in the path and the
+			// token is in the header, so neither ends up in a URL or a payload.
+			headers: { "X-Admin-Token": token },
+		});
+		if (response.ok || response.status === 404) {
+			// Local removal first: the broadcast may reach another tab first, and
+			// the reducer ignores a name it no longer knows.
+			dispatch({ type: "room_removed", room: name });
+			return;
+		}
+		let message = `DELETE /api/rooms/${name} failed: ${response.status}`;
+		try {
+			const payload = (await response.json()) as { error?: string };
+			if (typeof payload.error === "string" && payload.error !== "") {
+				message = payload.error;
+			}
+		} catch {
+			// keep the fallback message
+		}
+		throw new Error(message);
+	}, []);
+
 	const listFiles = useCallback(
 		(path: string, options?: { showHidden?: boolean; showIgnored?: boolean }) =>
 			api.listFiles(path, options),
@@ -642,6 +671,7 @@ export function useHub(): Hub {
 		sendToRoom,
 		interruptRoom,
 		patchRoom,
+		deleteRoom,
 		loadSettings,
 		openSettings,
 		closeSettings,

@@ -6,6 +6,7 @@ import {
 	addRob,
 	readProjectConfig,
 	removeRob,
+	removeRoom,
 	updateRob,
 } from "../../src/config/project-file.js";
 import type { Skill } from "../../src/skills/discover.js";
@@ -710,5 +711,98 @@ describe("removeRob", () => {
 			ok: false,
 			error: "Unknown rob: ghost",
 		});
+	});
+});
+
+// A valid file needs its rooms to reference real robs, so every case below
+// seeds a roster wide enough for the members it names.
+const robs = [
+	{ name: "alpha", role: "r1" },
+	{ name: "bravo", role: "r2" },
+	{ name: "charlie", role: "r3" },
+	{ name: "delta", role: "r4" },
+];
+
+describe("removeRoom", () => {
+	it("drops only the named room and keeps every other key and room", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify(
+				{
+					custom: 1,
+					robs,
+					rooms: [
+						{ name: "one", members: ["alpha", "bravo"] },
+						{
+							name: "two",
+							members: ["charlie", "delta"],
+							coordinator: "charlie",
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		expect(await removeRoom(workspace, "one")).toEqual({
+			ok: true,
+			removed: true,
+		});
+		const written = JSON.parse(
+			await readFile(join(workspace, "my-agent.json"), "utf8"),
+		);
+		expect(written.rooms).toEqual([
+			{ name: "two", members: ["charlie", "delta"], coordinator: "charlie" },
+		]);
+		expect(written.custom).toBe(1);
+		expect(written.robs).toEqual(robs);
+	});
+
+	// The route turns removed:false into 404, so a missing file must read as
+	// "nothing was configured" rather than as a write failure.
+	it("reports removed:false for a missing file and does not create it", async () => {
+		expect(await removeRoom(workspace, "ghost")).toEqual({
+			ok: true,
+			removed: false,
+		});
+		await expect(
+			readFile(join(workspace, "my-agent.json"), "utf8"),
+		).rejects.toThrow();
+	});
+
+	it("reports removed:false when the room has no config entry", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs, rooms: [{ name: "two", members: ["charlie", "delta"] }] })}\n`,
+			"utf8",
+		);
+		expect(await removeRoom(workspace, "one")).toEqual({
+			ok: true,
+			removed: false,
+		});
+	});
+
+	it("refuses to touch a file that does not parse", async () => {
+		await writeFile(join(workspace, "my-agent.json"), "{ nope", "utf8");
+		const result = await removeRoom(workspace, "one");
+		expect(result.ok).toBe(false);
+		expect(await readFile(join(workspace, "my-agent.json"), "utf8")).toBe(
+			"{ nope",
+		);
+	});
+
+	it("does not write when the schema rejects the file", async () => {
+		// Duplicate rob names make the whole config invalid; a delete must fail
+		// rather than rewrite a file it could not round-trip.
+		const bad = `${JSON.stringify({
+			robs: [...robs, { name: "alpha", role: "again" }],
+			rooms: [{ name: "one", members: ["alpha", "bravo"] }],
+		})}\n`;
+		await writeFile(join(workspace, "my-agent.json"), bad, "utf8");
+		const result = await removeRoom(workspace, "one");
+		expect(result.ok).toBe(false);
+		expect(await readFile(join(workspace, "my-agent.json"), "utf8")).toBe(bad);
 	});
 });

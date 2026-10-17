@@ -23,7 +23,7 @@ import type {
 	RoomSettingsOutcome,
 	RoomSettingsPatch,
 } from "../rob/room.js";
-import { UnknownRobError } from "../rob/team.js";
+import { type RoomRemoveOutcome, UnknownRobError } from "../rob/team.js";
 import { type RobConfig, robConfigSchema } from "../rob/types.js";
 import { commandExists } from "../util/which.js";
 import { EventBus, type HelloEvent, type Hub } from "./hub.js";
@@ -199,6 +199,10 @@ export class CompositeHub extends EventBus implements Hub {
 
 	updateRoom(room: string, patch: RoomSettingsPatch): RoomSettingsOutcome {
 		return this.robs.updateRoom(room, patch);
+	}
+
+	removeRoom(room: string): Promise<RoomRemoveOutcome> {
+		return this.robs.removeRoom(room);
 	}
 
 	async createBot(draft: BotDraft): Promise<BotInfo> {

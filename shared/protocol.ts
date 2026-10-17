@@ -460,7 +460,11 @@ export type RoomEventInfo =
 			// Required, not optional: an absent field would arrive as undefined
 			// and overwrite the client's real coordinator with "none".
 			coordinator: string | null;
-	  };
+	  }
+	// Wire-only: the domain RoomEvent has no such member, so the TUI's
+	// exhaustive switches (src/tui/**) stay untouched. Carries the name only —
+	// an absolute archive path would leak the filesystem to every client.
+	| { kind: "room_removed"; room: string };
 
 export interface CreateRoomBody {
 	name: string;

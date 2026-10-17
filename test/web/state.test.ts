@@ -478,6 +478,25 @@ const shipIt: RoomInfo = {
 };
 
 describe("rooms", () => {
+	it("drops a deleted room and ignores a name it never had", () => {
+		const before = apply([{ ...hello, rooms: [shipIt] }]);
+		expect(Object.keys(before.rooms)).toEqual(["ship-it"]);
+
+		const after = clientReducer(before, {
+			type: "server",
+			event: { type: "room", event: { kind: "room_removed", room: "ship-it" } },
+		});
+		expect(after.rooms).toEqual({});
+
+		// A tab that loaded after the create never learned the room: removing it
+		// must be a no-op, not an error and not a materialized empty entry.
+		const untouched = clientReducer(after, {
+			type: "server",
+			event: { type: "room", event: { kind: "room_removed", room: "ghost" } },
+		});
+		expect(untouched).toBe(after);
+	});
+
 	it("seeds hello rooms and folds every room event into them", () => {
 		const running = {
 			phase: "running" as const,

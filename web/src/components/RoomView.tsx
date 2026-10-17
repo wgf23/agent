@@ -33,6 +33,8 @@ interface Props {
 		patch: { members?: string[]; coordinator?: string | null },
 		token: string,
 	) => Promise<void>;
+	/** Moves the room into `.trash/`; the drawer owns the typed-name guard. */
+	onDeleteRoom: (token: string) => Promise<void>;
 }
 
 // Within this many pixels of the bottom we treat the reader as "following".
@@ -57,6 +59,7 @@ export default function RoomView({
 	onSend,
 	onInterrupt,
 	onSaveSettings,
+	onDeleteRoom,
 }: Props) {
 	const [value, setValue] = useState("");
 	const [error, setError] = useState<string | null>(null);
@@ -394,6 +397,7 @@ export default function RoomView({
 					room={room}
 					roster={roster}
 					onSave={onSaveSettings}
+					onDelete={onDeleteRoom}
 					// Closing must hand focus back to the gear: without it the
 					// caret lands on <body> and the keyboard user loses the trail.
 					onClose={() => {

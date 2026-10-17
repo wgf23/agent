@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	ADMIN_TOKEN_STORAGE_KEY,
+	canDeleteRoom,
 	canSaveSettings,
 	readAdminToken,
 	reconcileCoordinator,
@@ -138,5 +139,37 @@ describe("admin token storage", () => {
 		expect(store.getItem(ADMIN_TOKEN_STORAGE_KEY)).toBe("abc");
 		saveAdminToken("   ", store);
 		expect(store.has(ADMIN_TOKEN_STORAGE_KEY)).toBe(false);
+	});
+});
+
+describe("canDeleteRoom", () => {
+	const base = {
+		typed: "ship-it",
+		name: "ship-it",
+		submitting: false,
+		token: "abc",
+	};
+
+	it("allows a delete only when the name is typed exactly and a token exists", () => {
+		expect(canDeleteRoom(base)).toBe(true);
+	});
+
+	it("refuses a mismatched or partial name, including trailing spaces", () => {
+		for (const typed of ["", "ship", "ship-it ", "Ship-It", " ship-it"]) {
+			expect(canDeleteRoom({ ...base, typed }), typed).toBe(false);
+		}
+	});
+
+	it("refuses while the drawer is already deleting", () => {
+		expect(canDeleteRoom({ ...base, submitting: true })).toBe(false);
+	});
+
+	it("refuses a blank token: the server would only answer 403", () => {
+		expect(canDeleteRoom({ ...base, token: "" })).toBe(false);
+		expect(canDeleteRoom({ ...base, token: "   " })).toBe(false);
+	});
+
+	it("refuses an empty room name rather than matching an empty draft", () => {
+		expect(canDeleteRoom({ ...base, name: "", typed: "" })).toBe(false);
 	});
 });

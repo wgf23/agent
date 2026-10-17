@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -206,5 +213,128 @@ describe("createRoomStore", () => {
 		expect(store.readAll().failed).toHaveLength(1);
 		expect(store.readAll().failed[0]?.name).toBe("ship-it");
 		expect(await readFile(roomFile("ship-it"), "utf8")).toBe("{ not json");
+	});
+});
+
+function trashDirFor(): string {
+	return path.join(roomsDir, projectSlug(workspace), ".trash");
+}
+
+describe("archive", () => {
+	beforeEach(async () => {
+		await mkdir(path.dirname(roomFile("ship-it")), { recursive: true });
+		const store = storeFor();
+		await store.save(savedState());
+		await store.flush();
+	});
+
+	it("moves the ledger into .trash and reports where it went", async () => {
+		const store = storeFor();
+		const outcome = await store.archive("ship-it");
+
+		expect(outcome.status).toBe("archived");
+		await expect(readFile(roomFile("ship-it"), "utf8")).rejects.toThrow();
+		if (outcome.status !== "archived") throw new Error("unreachable");
+		expect(await readFile(outcome.to, "utf8")).toContain(
+			"who takes the parser",
+		);
+	});
+
+	// The reason the order is frozen: locking after the flush leaves a window
+	// in which a queued save writes the ledger back after it moved.
+	it("pins the name before flushing, so a queued save cannot resurrect it", async () => {
+		const store = storeFor();
+		const archiving = store.archive("ship-it");
+		// Queued after archive() started: the tombstone must already be set.
+		expect(store.isDeleted("ship-it")).toBe(true);
+		await archiving;
+
+		await store.save(savedState({ transcript: [] }));
+		await store.flush();
+		await expect(readFile(roomFile("ship-it"), "utf8")).rejects.toThrow();
+	});
+
+	it("reports missing_source when there was never a ledger", async () => {
+		expect(await storeFor().archive("never-existed")).toEqual({
+			status: "missing_source",
+		});
+	});
+
+	it("reports already_archived on a retry and does not add a second file", async () => {
+		const store = storeFor();
+		expect((await store.archive("ship-it")).status).toBe("archived");
+		const retry = await store.archive("ship-it");
+		expect(retry.status).toBe("already_archived");
+
+		const entries = (await readdir(trashDirFor())).filter((entry) =>
+			entry.startsWith("ship-it."),
+		);
+		expect(entries).toHaveLength(1);
+	});
+
+	it("reports failed when the trash directory cannot be created", async () => {
+		// A file where .trash/ should be: mkdir(recursive) fails with ENOTDIR.
+		await writeFile(trashDirFor(), "", "utf8");
+		const outcome = await storeFor().archive("ship-it");
+		expect(outcome.status).toBe("failed");
+		// The ledger is untouched, so a retry after fixing the disk still works.
+		expect(await readFile(roomFile("ship-it"), "utf8")).toContain(
+			"who takes the parser",
+		);
+	});
+});
+
+describe("hasArchive", () => {
+	it("returns false without creating .trash when nothing was ever archived", async () => {
+		const store = storeFor();
+		expect(store.hasArchive("ship-it")).toBe(false);
+		await expect(readdir(trashDirFor())).rejects.toThrow();
+	});
+
+	// The whole point of swallowing: this call runs after the config entry is
+	// gone, so a throw would turn a finished delete into a 500.
+	it("returns false instead of throwing when .trash is unreadable", async () => {
+		// A file where the directory should be: readdir fails with ENOTDIR,
+		// which is the same shape as the EACCES/ENOENT cases that matter.
+		await mkdir(path.dirname(trashDirFor()), { recursive: true });
+		await writeFile(trashDirFor(), "", "utf8");
+		expect(() => storeFor().hasArchive("ship-it")).not.toThrow();
+		expect(storeFor().hasArchive("ship-it")).toBe(false);
+	});
+
+	it("sees an archive once one exists, and ignores lookalike names", async () => {
+		await mkdir(path.dirname(roomFile("ship-it")), { recursive: true });
+		const store = storeFor();
+		await store.save(savedState());
+		await store.flush();
+		await store.archive("ship-it");
+		expect(store.hasArchive("ship-it")).toBe(true);
+		// `ship-it.1.2.json` style foreign files, or a longer room name, must
+		// not be read as an archive of `ship-it`.
+		expect(store.hasArchive("ship-it-two")).toBe(false);
+		expect(store.hasArchive("ship")).toBe(false);
+	});
+});
+
+describe("markDeleted / isDeleted", () => {
+	it("pins the name without touching the disk", async () => {
+		const store = storeFor();
+		store.markDeleted("ghost");
+		expect(store.isDeleted("ghost")).toBe(true);
+		expect(store.isDeleted("ship-it")).toBe(false);
+		expect(store.read("ghost")).toEqual({ ok: true, record: null });
+	});
+
+	it("drops every later save for a pinned name", async () => {
+		await mkdir(path.dirname(roomFile("ghost")), { recursive: true });
+		const store = storeFor();
+		store.markDeleted("ghost");
+
+		const result = await store.save(
+			savedState({ name: "ghost" as RoomState["name"] }),
+		);
+		await store.flush();
+		expect(result.ok).toBe(true);
+		await expect(readFile(roomFile("ghost"), "utf8")).rejects.toThrow();
 	});
 });

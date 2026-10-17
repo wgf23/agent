@@ -337,6 +337,7 @@ export default function App() {
 						onSaveSettings={(patch, token) =>
 							hub.patchRoom(currentRoom.name, patch, token)
 						}
+						onDeleteRoom={(token) => hub.deleteRoom(currentRoom.name, token)}
 					/>
 				) : currentBot === null ? (
 					<div className="empty-page">

@@ -26,6 +26,7 @@ import type {
 	RoomSettingsOutcome,
 	RoomSettingsPatch,
 } from "../rob/room.js";
+import type { RoomRemoveOutcome } from "../rob/team.js";
 import type { Tool } from "../tools/types.js";
 import type {
 	ApplyRuntimeResult,
@@ -103,6 +104,9 @@ export interface Hub {
 	// The one write path for a room's members and coordinator. A hub that does
 	// not manage rooms omits it and the route answers 501.
 	updateRoom?(room: string, patch: RoomSettingsPatch): RoomSettingsOutcome;
+	// Archiving a room moves files; a hub without rooms omits it and the route
+	// answers 501. Success is the only branch that broadcasts room_removed.
+	removeRoom?(room: string): Promise<RoomRemoveOutcome>;
 	// A hub that can swap the provider at runtime implements this. It refuses
 	// with {ok:false} while a turn is in flight.
 	applyRuntime?(next: RuntimeSnapshot): Promise<ApplyRuntimeResult>;

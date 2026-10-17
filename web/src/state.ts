@@ -111,6 +111,7 @@ export interface ClientState {
 export type ClientAction =
 	| { type: "server"; event: ServerEvent }
 	| { type: "room_created"; room: RoomInfo }
+	| { type: "room_removed"; room: string }
 	| { type: "connection"; status: ConnectionStatus }
 	| { type: "submit"; bot: string; text: string }
 	| { type: "approval_removed"; id: string }
@@ -195,6 +196,16 @@ export function clientReducer(
 	switch (action.type) {
 		case "connection":
 			return { ...state, connection: action.status };
+
+		case "room_removed": {
+			// Tolerant by design: the broadcast reaches every client, including
+			// one that never learned about the room (a tab that loaded after the
+			// create event). Removing a missing key is a no-op, not an error.
+			if (state.rooms[action.room] === undefined) return state;
+			const rooms = { ...state.rooms };
+			delete rooms[action.room];
+			return { ...state, rooms };
+		}
 
 		case "room_created": {
 			// The create response is the server's own snapshot. Seed it so the
@@ -581,6 +592,16 @@ export function applyRoomEvent(
 			// Like the TUI: the run snapshot already names the current speaker,
 			// so a single member's turn outcome adds no state.
 			return state;
+
+		case "room_removed": {
+			// The server only sends this after a real delete, so dropping the key
+			// is the whole reducer. An unknown name (a room created and removed
+			// before this tab loaded) is ignored rather than materialized.
+			if (state.rooms[event.room] === undefined) return state;
+			const rooms = { ...state.rooms };
+			delete rooms[event.room];
+			return { ...state, rooms };
+		}
 
 		default:
 			// A newer server may name an event this bundle predates. Ignoring it

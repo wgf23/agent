@@ -159,6 +159,13 @@ export type ProjectConfigResult =
 
 export type WriteResult = { ok: true } | { ok: false; error: string };
 
+/** `removeRoom` reports whether it actually dropped an entry, because the route
+ *  maps `removed:false` to 404 and `removed:true` to 200. `WriteResult` cannot
+ *  carry that, and widening it would touch `removeRob` and every caller. */
+export type RoomConfigRemoval =
+	| { readonly ok: true; readonly removed: boolean }
+	| { readonly ok: false; readonly error: string };
+
 export function projectFilePath(workspaceRoot: string): string {
 	return path.join(workspaceRoot, PROJECT_FILE_NAME);
 }
@@ -645,6 +652,88 @@ async function writeRobRemoval(
 		};
 	}
 	return { ok: true };
+}
+
+/** Drops the named room from `rooms[]` and leaves every other key byte-for-byte
+ *  intact. Unlike removeRob, a missing entry is success, not an error: rooms
+ *  come from three sources (config, the ledger, and runtime POSTs that never
+ *  write config), so "not in config" says nothing about whether the room
+ *  exists — and reporting it as a failure would make deleting a runtime room
+ *  fail forever. */
+export function removeRoom(
+	workspaceRoot: string,
+	name: string,
+): Promise<RoomConfigRemoval> {
+	const run = writeChain.then(() => writeRoomRemoval(workspaceRoot, name));
+	writeChain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+async function writeRoomRemoval(
+	workspaceRoot: string,
+	name: string,
+): Promise<RoomConfigRemoval> {
+	const filePath = projectFilePath(workspaceRoot);
+
+	let text: string;
+	try {
+		text = await readFile(filePath, "utf8");
+	} catch (error) {
+		// A workspace with no config file has no configured rooms; there is
+		// nothing to remove and nothing to write. Creating the file here would
+		// turn "delete" into "materialize a config".
+		if (isEnoent(error)) return { ok: true, removed: false };
+		return {
+			ok: false,
+			error: `Failed to read ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(text);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Invalid JSON in ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	const parsed = projectFileSchema.safeParse(parsedJson);
+	if (!parsed.success) {
+		return {
+			ok: false,
+			error: `Invalid ${PROJECT_FILE_NAME}: ${z.prettifyError(parsed.error)}`,
+		};
+	}
+	const raw = parsedJson as Record<string, unknown>;
+	const rooms = Array.isArray(raw.rooms) ? raw.rooms : [];
+
+	let found = false;
+	const nextRooms = rooms.filter((entry) => {
+		if (typeof entry !== "object" || entry === null) return true;
+		const room = entry as Record<string, unknown>;
+		if (room.name !== name) return true;
+		found = true;
+		return false;
+	});
+	if (!found) return { ok: true, removed: false };
+
+	try {
+		await writeFile(
+			filePath,
+			`${JSON.stringify({ ...raw, rooms: nextRooms }, null, 2)}\n`,
+			"utf8",
+		);
+	} catch (error) {
+		return {
+			ok: false,
+			error: `Failed to write ${PROJECT_FILE_NAME}: ${errorMessage(error)}`,
+		};
+	}
+	return { ok: true, removed: true };
 }
 
 function isEnoent(error: unknown): boolean {

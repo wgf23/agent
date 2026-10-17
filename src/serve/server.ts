@@ -55,7 +55,7 @@ import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
 import { loadPlugins } from "../plugins/load.js";
 import type { Provider } from "../providers/types.js";
-import type { RoomSettingsPatch } from "../rob/room.js";
+import { type RoomSettingsPatch, roomNameSchema } from "../rob/room.js";
 import { renderRoomOutcome } from "../rob/room-text.js";
 import { UnknownRobError } from "../rob/team.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
@@ -399,13 +399,18 @@ export async function buildServer(
 	/** One audit line per admin attempt (success and refusal alike). Fixed
 	 *  fields only: no token, no hash, no member list, no filesystem path. */
 	const auditAdmin = (input: {
-		action: "patch";
+		// Both admin routes write audit lines, so this is a union rather than
+		// the single literal the PATCH route started with.
+		action: "patch" | "delete";
 		room: string;
 		ip: string;
 		result: "ok" | "denied" | "error";
 	}): void => {
+		// The room comes from the URL and this line is written before the token
+		// is checked, so it is quoted: a raw newline would let a caller append a
+		// second, official-looking audit entry from an unauthenticated request.
 		process.stderr.write(
-			`${new Date().toISOString()} admin action=${input.action} room=${input.room} ip=${input.ip} result=${input.result}\n`,
+			`${new Date().toISOString()} admin action=${input.action} room=${JSON.stringify(input.room)} ip=${input.ip} result=${input.result}\n`,
 		);
 	};
 
@@ -1248,6 +1253,63 @@ export async function buildServer(
 			return reply.send({ ok: true, room: toRoomInfo(outcome.room) });
 		} catch (error) {
 			auditAdmin({ action: "patch", room, ip: request.ip, result: "error" });
+			return reply.code(500).send({ error: errorText(error) });
+		}
+	});
+
+	// Deleting a room: guard -> 501 -> delegate -> map. The token gate runs
+	// before the room is even looked up, so an unauthenticated probe cannot
+	// learn whether a name exists (403 before 404).
+	app.delete("/api/rooms/:name", async (request, reply) => {
+		const name = roomParam(request);
+		const room = name ?? "?";
+		const denied = requireAdminToken(request);
+		if (denied !== null) {
+			auditAdmin({
+				action: "delete",
+				room,
+				ip: request.ip,
+				result: "denied",
+			});
+			return reply.code(denied.code).send({ error: denied.error });
+		}
+		const removeRoom = hub.removeRoom?.bind(hub);
+		if (removeRoom === undefined) {
+			auditAdmin({ action: "delete", room, ip: request.ip, result: "error" });
+			return reply.code(501).send({ error: "this server cannot manage rooms" });
+		}
+		if (name === undefined) {
+			auditAdmin({ action: "delete", room, ip: request.ip, result: "error" });
+			return reply.code(400).send({ error: "expected a room name" });
+		}
+		// A name that cannot be a room cannot name a file either: without this,
+		// `..%2F..%2Foutside` would reach the ledger path join and archive a
+		// file from outside the rooms directory. 404, not 400, keeps the DELETE
+		// status vocabulary unchanged (and 403 still wins, above).
+		if (!roomNameSchema.safeParse(name).success) {
+			auditAdmin({ action: "delete", room, ip: request.ip, result: "error" });
+			return reply.code(404).send({ error: `Unknown room "${name}".` });
+		}
+		try {
+			const outcome = await removeRoom(name);
+			if (outcome.status === "unknown_room") {
+				auditAdmin({ action: "delete", room, ip: request.ip, result: "error" });
+				return reply.code(404).send({ error: `Unknown room "${name}".` });
+			}
+			if (outcome.status === "failed") {
+				auditAdmin({ action: "delete", room, ip: request.ip, result: "error" });
+				return reply.code(500).send({
+					error: outcome.error,
+					stage: outcome.stage,
+				});
+			}
+			auditAdmin({ action: "delete", room, ip: request.ip, result: "ok" });
+			return reply.send({
+				ok: true,
+				removed: { name: outcome.room, archived: outcome.archived },
+			});
+		} catch (error) {
+			auditAdmin({ action: "delete", room, ip: request.ip, result: "error" });
 			return reply.code(500).send({ error: errorText(error) });
 		}
 	});

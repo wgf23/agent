@@ -42,7 +42,12 @@ import type {
 	RoomSettingsPatch,
 	RoomView,
 } from "../rob/room.js";
-import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
+import {
+	type LoadChannelResult,
+	type RoomRemoveOutcome,
+	Team,
+	UnknownRobError,
+} from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
 import type { Tool } from "../tools/types.js";
 import { FilesChangedTracker } from "./files-changed.js";
@@ -270,6 +275,16 @@ export class TeamHub extends EventBus implements Hub {
 
 	updateRoom(room: string, patch: RoomSettingsPatch): RoomSettingsOutcome {
 		return this.team.updateRoomSettings(room, patch);
+	}
+
+	async removeRoom(room: string): Promise<RoomRemoveOutcome> {
+		const outcome = await this.team.removeRoom(room);
+		// The only broadcast point: a 404 or a 500 must not make every other
+		// client drop a room that still exists.
+		if (outcome.status === "removed") {
+			this.emit({ type: "room", event: { kind: "room_removed", room } });
+		}
+		return outcome;
 	}
 
 	resolveApproval(id: string, decision: ApprovalChoice): void {

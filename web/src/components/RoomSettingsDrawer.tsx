@@ -1,6 +1,8 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
+	canDeleteRoom,
 	canSaveSettings,
+	DELETE_ROOM_CONFIRM_TEXT,
 	ROOM_MAX_MEMBERS,
 	ROOM_MIN_MEMBERS,
 	readAdminToken,
@@ -21,6 +23,8 @@ interface Props {
 		patch: { members?: string[]; coordinator?: string | null },
 		token: string,
 	) => Promise<void>;
+	/** Moves the room to `.trash/`. Absent only for a hub that cannot delete. */
+	onDelete?: (token: string) => Promise<void>;
 	onClose: () => void;
 }
 
@@ -28,6 +32,7 @@ export default function RoomSettingsDrawer({
 	room,
 	roster,
 	onSave,
+	onDelete,
 	onClose,
 }: Props) {
 	const current = {
@@ -40,6 +45,10 @@ export default function RoomSettingsDrawer({
 	);
 	const [token, setToken] = useState(() => readAdminToken());
 	const [submitting, setSubmitting] = useState(false);
+	const [deleting, setDeleting] = useState(false);
+	// Typed by hand, never pre-filled: the slip guard only works if the user
+	// has to reproduce the name.
+	const [typed, setTyped] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -47,12 +56,16 @@ export default function RoomSettingsDrawer({
 	// answer 409 anyway; disabling here keeps the reason visible instead of
 	// turning a click into an error the user has to decode.
 	const busy = room.run.phase === "running";
+	const canDelete =
+		onDelete !== undefined &&
+		canDeleteRoom({ typed, name: room.name, submitting, token });
 	const draft = { members, coordinator };
 	const canSave = canSaveSettings({
 		draft,
 		current,
 		busy,
 		submitting,
+		deleting,
 		minMembers: ROOM_MIN_MEMBERS,
 		maxMembers: ROOM_MAX_MEMBERS,
 	});
@@ -104,6 +117,22 @@ export default function RoomSettingsDrawer({
 			// be rewritten into "team stopped".
 			setError(caught instanceof Error ? caught.message : String(caught));
 			setSubmitting(false);
+		}
+	};
+
+	const remove = async () => {
+		if (!canDelete || onDelete === undefined) return;
+		setDeleting(true);
+		setError(null);
+		try {
+			saveAdminToken(token);
+			await onDelete(token);
+			onClose();
+		} catch (caught) {
+			// The server's wording is the only wording: a 500's stage message is
+			// what tells the user whether a retry is safe.
+			setError(caught instanceof Error ? caught.message : String(caught));
+			setDeleting(false);
 		}
 	};
 
@@ -189,6 +218,50 @@ export default function RoomSettingsDrawer({
 								))}
 							</select>
 						</label>
+
+						{onDelete !== undefined && (
+							<div className="room-settings-danger">
+								<span className="room-settings-danger-title">危险操作</span>
+								<p className="room-settings-danger-text">
+									删除只作用于本房间：对话记录会移入回收目录（.trash），重启不会重建这个房间。其它
+									Bot、其它房间与交付物都不受影响。
+								</p>
+								{busy && (
+									<p className="room-settings-danger-text" role="status">
+										该房间正在运行：删除会先中断当前这一轮，再移入回收目录。
+									</p>
+								)}
+								<label className="field">
+									<span className="field-label">输入房间名确认</span>
+									<input
+										className="field-input"
+										type="text"
+										autoComplete="off"
+										spellCheck={false}
+										value={typed}
+										disabled={submitting || deleting}
+										onChange={(event) => setTyped(event.target.value)}
+										placeholder={room.name}
+										aria-describedby="room-delete-hint"
+									/>
+									<span id="room-delete-hint" className="field-hint">
+										与「{room.name}」逐字相同才可删除
+									</span>
+								</label>
+								<div className="panel-actions">
+									<button
+										type="button"
+										className="btn small deny"
+										disabled={!canDelete || deleting}
+										onClick={() => {
+											void remove();
+										}}
+									>
+										{deleting ? "删除中…" : DELETE_ROOM_CONFIRM_TEXT}
+									</button>
+								</div>
+							</div>
+						)}
 
 						{error !== null && (
 							// role="alert" is what makes the refusal audible: the red

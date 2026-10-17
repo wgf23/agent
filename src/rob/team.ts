@@ -12,6 +12,7 @@ import {
 	type Timer,
 	type Wake,
 } from "../bot/wake.js";
+import { removeRoom as removeRoomConfig } from "../config/project-file.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import { filterToolsByServers } from "../mcp/scope.js";
 import type {
@@ -52,6 +53,7 @@ import {
 	type RoomTurnResult,
 	type RoomView,
 	roomConfigSchema,
+	roomNameSchema,
 	validateRoomCoordinator,
 	validateRoomMembers,
 } from "./room.js";
@@ -149,6 +151,23 @@ export type LoadChannelResult =
 	| { ok: true; messages: Message[] }
 	| { ok: false; error: string };
 
+/** What a delete did, as outcomes the route can map. `status` is the only
+ *  discriminant: removed is 200, unknown_room is 404, failed is 500 + stage. */
+export type RoomRemoveOutcome =
+	| {
+			readonly status: "removed";
+			readonly room: RoomName;
+			/** Whether the ledger lives in `.trash` now. False only for a room
+			 *  that was never on disk (a config seed). */
+			readonly archived: boolean;
+	  }
+	| { readonly status: "unknown_room" }
+	| {
+			readonly status: "failed";
+			readonly stage: "stop" | "archive" | "config";
+			readonly error: string;
+	  };
+
 interface SessionRecord {
 	readonly rob: RobName;
 	readonly secret: string;
@@ -189,6 +208,12 @@ export class Team implements TeamPort {
 	});
 	private readonly listeners = new Set<TeamListener>();
 	private readonly roomRegistry = new Map<RoomName, Room>();
+	// One delete per room at a time; a second concurrent request shares the
+	// first one's outcome rather than racing it.
+	private readonly roomRemovals = new Map<
+		RoomName,
+		Promise<RoomRemoveOutcome>
+	>();
 	private readonly roomTurns = new Map<RobName, PendingRoomTurn>();
 	private readonly roomStore: RoomStore;
 	// The room's only persistence handle; built once from the store.
@@ -575,6 +600,12 @@ export class Team implements TeamPort {
 		const { name, members, coordinator } = parsed.data;
 		if (this.roomRegistry.has(name))
 			return { status: "rejected", reason: "duplicate" };
+		// A name a delete has tombstoned stays dead until restart: the store
+		// drops every later save for it, so building a room now would run while
+		// silently losing its whole ledger. Reusing "duplicate" keeps the wire
+		// vocabulary and room-text.ts's exhaustive switch untouched.
+		if (this.roomStore.isDeleted(name))
+			return { status: "rejected", reason: "duplicate" };
 		if (this.robs.has(name))
 			return { status: "rejected", reason: "name_taken" };
 		const validation = validateRoomMembers(members, [...this.robs.keys()]);
@@ -642,6 +673,104 @@ export class Team implements TeamPort {
 			return { status: "rejected", reason: "unknown_room" };
 		}
 		return target.updateSettings(patch);
+	}
+
+	/** Deletes a room: archive its ledger, drop it from config, and leave no
+	 *  way back in this process. Concurrent calls for the same name share one
+	 *  attempt, so two DELETEs are one delete. */
+	removeRoom(room: RoomName): Promise<RoomRemoveOutcome> {
+		const active = this.roomRemovals.get(room);
+		if (active !== undefined) return active;
+		const task = this.removeRoomNow(room).finally(() => {
+			// Identity, not presence: a later delete of a re-liveable name must
+			// not have its entry removed by an earlier task's cleanup.
+			if (this.roomRemovals.get(room) === task) this.roomRemovals.delete(room);
+		});
+		this.roomRemovals.set(room, task);
+		return task;
+	}
+
+	private async removeRoomNow(room: RoomName): Promise<RoomRemoveOutcome> {
+		// Not a room name, so not a room: answer the same 404 an absent name
+		// gets instead of falling through to a 500 from the store layer.
+		if (!roomNameSchema.safeParse(room).success) {
+			return { status: "unknown_room" };
+		}
+		const instance = this.roomRegistry.get(room);
+		const read = this.roomStore.read(room);
+		// A ledger that failed to parse still exists on disk: treat it as
+		// present, or the branch below would claim "nothing was ever here" and
+		// strip the config entry without archiving it.
+		const hasLedger = !read.ok || read.record !== null;
+
+		if (instance === undefined && !hasLedger) {
+			const cfg = await removeRoomConfig(this.options.workspaceRoot, room);
+			if (!cfg.ok) return configFailure(cfg.error);
+			// Nowhere to be: no instance, no ledger, no config entry. Answer 404
+			// and leave nothing behind — no .trash entry, no tombstone, so a
+			// mistyped name does not become un-creatable.
+			if (!cfg.removed) return { status: "unknown_room" };
+			// A room created while the config write was in flight must not be
+			// tombstoned out from under its owner; report a retry instead.
+			if (this.roomRegistry.has(room)) {
+				// The config entry is already gone, so this is not a config
+				// failure: the room is live again and deleting it would be a
+				// different request. Say exactly that, and keep the restart
+				// warning honest — the new room has no config seed either.
+				return {
+					status: "failed",
+					stage: "config",
+					error: `Room "${room}" was recreated while it was being deleted; nothing was archived. The live room stays and will be recreated on restart.`,
+				};
+			}
+			// Evaluate before pinning: if this ever fails, the name is still
+			// usable. Both calls are synchronous and cannot throw.
+			const archived = this.roomStore.hasArchive(room);
+			this.roomStore.markDeleted(room);
+			return { status: "removed", room, archived };
+		}
+
+		if (instance !== undefined) {
+			if (instance.view().run.phase === "running") instance.interrupt();
+			try {
+				await instance.stop();
+			} catch (error) {
+				return {
+					status: "failed",
+					stage: "stop",
+					error: errorMessage(error),
+				};
+			}
+			// Drop the instance before touching files: anything still holding it
+			// would otherwise keep persisting into an archived room.
+			this.roomRegistry.delete(room);
+		}
+
+		// Recheck for the same reason as the branch above: a createRoom that won
+		// the window would be tombstoned by archive() and then lose every save.
+		// Stopping here leaves the new instance and its ledger alone.
+		if (this.roomRegistry.has(room)) {
+			// Nothing was archived and the config entry is untouched, so the
+			// archive stage's promise ("disk unchanged, back after restart")
+			// is literally true here.
+			return {
+				status: "failed",
+				stage: "archive",
+				error: `Room "${room}" was recreated while it was being deleted; nothing was archived.`,
+			};
+		}
+
+		const archive = await this.roomStore.archive(room);
+		if (archive.status === "failed") {
+			return { status: "failed", stage: "archive", error: archive.error };
+		}
+		const cfg = await removeRoomConfig(this.options.workspaceRoot, room);
+		if (!cfg.ok) return configFailure(cfg.error);
+		return {
+			status: "removed",
+			room,
+			archived: archive.status !== "missing_source",
+		};
 	}
 
 	interruptRoom(room: RoomName): void {
@@ -1042,4 +1171,14 @@ function sameNames(left: readonly string[], right: readonly string[]): boolean {
 		left.length === right.length &&
 		left.every((name, index) => name === right[index])
 	);
+}
+
+/** The config stage is the only one that leaves a seed behind, so its message
+ *  has to say what the next restart will do. */
+function configFailure(detail: string): RoomRemoveOutcome {
+	return {
+		status: "failed",
+		stage: "config",
+		error: `Failed to remove the room from my-agent.json (${detail}); the room will be recreated on restart.`,
+	};
 }
