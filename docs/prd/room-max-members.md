@@ -102,7 +102,7 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
     - **「免疫」的定义 = fail-closed（拒绝运行并说明原因），不是「解析更聪明」**。实现取「解析不干净就 exit 1，打印 `Cannot parse RESERVED_ROOM_SPEAKERS …`」，**不是**剥掉注释后仍认出 `user`。两者都满足本条，但后果不同：对数组做合法维护（加注释、折行）会让脚本**整体不可用** —— 这是**有意的取舍**（安全侧优先，宁可拒绝也不猜）；错误文案必须指明「解析失败」而非「房间非法」，避免被误读成脚本损坏。
 - **AC-12** **文档引用的脚本/命令必须在库**（`room-members.mjs` 那条规则的推广，2026-10-17 立）：
   - 判据：任何**已提交文档**里出现的 `pnpm <script>` 或 `node scripts/<file>`，必须同时满足 ① `package.json` 的 `scripts` 里有该项且**该 `package.json` 已提交** ② `scripts/<file>` 被 `git ls-files` 命中。任一不满足 ⇒ 用户照文档做会 `Missing script` / `MODULE_NOT_FOUND`，属真缺陷。
-  - **当前已知违例（不在本 PRD 的 AC 范围内，属 ui/playwright 线）**：`docs/rnd-team.md:61` 已提交地写着 `pnpm browser:setup`、`:64` 引用 `scripts/browser-setup.mjs`，但 `package.json`（含 `browser:setup` 脚本）目前是 **M 未提交**、`scripts/browser-setup.mjs` 是 **untracked**（`git ls-files` 零命中）。裁决：`package.json` + `pnpm-lock.yaml` + `scripts/browser-setup.mjs` **单独一笔 `chore` 补入库**，不并入 bot-skills 的提交序列；验收按本条判据在同一线内执行。
+  - **曾经的违例，已修复**：`docs/rnd-team.md:61` 已提交地写着 `pnpm browser:setup`、`:64` 引用 `scripts/browser-setup.mjs`，当时 `package.json`（含 `browser:setup` 脚本）是 M 未提交、`scripts/browser-setup.mjs` 是 untracked（`git ls-files` 零命中）。已由 **`c3d8cef`**（`chore: add the browser:setup script the docs already point at`）把 `package.json` + `pnpm-lock.yaml` + `scripts/browser-setup.mjs` 一起入库（`origin/main` 已含），本条判据现为通过；不要再按旧状态重派一次。
   - **本线已满足**：`scripts/room-members.mjs` 已 `git ls-files` 命中（`98e93f2` 系列），`docs/rnd-team.md` 对其的引用可执行。
 - **AC-11** `docs/rnd-team.md` **写明迁移时序**（对应 design §4 第 2 条）：
   - 判据用**内容级锚**，不锚措辞片段（锚短语 = 下一个人换个说法就误红，2026-10-17 已踩两次）：

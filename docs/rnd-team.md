@@ -61,7 +61,7 @@ pnpm install
 pnpm browser:setup    # 下载 Playwright 的 Chromium 到 .my-agent/browsers
 ```
 
-`browser:setup` 走 `scripts/browser-setup.mjs`，它会从 `@playwright/mcp` 依赖里解析出 Playwright CLI 的路径，所以不需要全局安装。下载目录由 `PLAYWRIGHT_BROWSERS_PATH` 决定；`my-agent.json` 里已把它指向 `.my-agent/browsers`，容器里 `$HOME` 只读时也能工作。
+`browser:setup` 走 `scripts/browser-setup.mjs`，它会从 `@playwright/mcp` 依赖里解析出 Playwright CLI 的路径，所以不需要全局安装。默认下载到 `<cwd>/.my-agent/browsers`（`PLAYWRIGHT_BROWSERS_PATH` 可覆盖，容器里 `$HOME` 只读时用它指到别处）。**MCP 服务器自己的 env 若另指了目录，请让它与这个默认值一致** —— 否则浏览器装在一处、服务器在另一处找，ui 起不来。
 
 MCP 服务器的环境也做了隔离：`HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` 指向 `.my-agent/browser-home`，浏览器 profile 不污染你自己的目录。`--no-sandbox` 因为在 docker/CI 里没有 user namespace 时需要它；本机跑可以把这一项去掉。
 
@@ -74,9 +74,11 @@ MCP 服务器的环境也做了隔离：`HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME
 要让 `my-agent.json` 里新的成员表（8 人，coordinator 为 `manager`）对一个已经跑过的房间生效，执行一次：
 
 ```bash
-node scripts/room-members.mjs rnd            # 会先写 .bak 备份
+node scripts/room-members.mjs rnd            # 首次写 .bak；再跑写 .bak.<时间戳>，不覆盖
 node scripts/room-members.mjs rnd --dry-run  # 只看差异
 ```
+
+若你从 config 里删掉了 `coordinator`，脚本会拒绝执行（清空 coordinator 会让房间静默不出交付物）；确实要清，加 `--allow-clear-coordinator`。
 
 它只改 `members`、`coordinator`、`updatedAt`，transcript 原样保留。想彻底重建，也可以换个房间名（例如 `rnd2`）。
 

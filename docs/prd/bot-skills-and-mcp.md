@@ -643,7 +643,9 @@ printf 'docs/x.ts\ndocs-dist/y.mjs\nsrc/real.ts' \
 **红线追加（pm 裁定）**：`package.json` / `pnpm-lock.yaml` 的**未提交改动**属依赖面变更，**在终版统计中必须显式声明"工作区存在与本线无关的依赖改动，未混入任何 commit"**。若它出现在任何一笔 commit 里，**按红线报**。
 **归属已查清**：`@playwright/mcp` 来自 `scripts/browser-setup.mjs` 那条线（`git log -S "@playwright/mcp" -- package.json` **无历史**，`ad3b41a..HEAD` 对这两个文件**零改动**）⇒ 属**共享工作区的本地残留**，**不是本线遗留、也不是任何 rob 提交**。dev 明确不动它，ci/review 见到脏树不得据此判本线不合格。
 
-### 15.4 落地状态（**HEAD `9b10160`**；按 §12.8a，引用前先核 HEAD）
+> **以上已由 `c3d8cef` 取代**：AC-12 裁定 `browser:setup` 必须入库，`package.json` + `pnpm-lock.yaml` + `scripts/browser-setup.mjs` 已于该笔（`chore: add the browser:setup script the docs already point at`）一并提交并推上 `origin/main`，本段的「红线」不再适用于它们；上表 `scripts/**` 的「不入库」亦仅剩 `scripts/self-dev/`（已 ignore）。原文保留作审计痕迹。
+
+### 15.4 落地状态（**历史锚：撰写时的 HEAD `9b10160`**；按 §12.8a，引用前先核当前 HEAD）
 | 项 | 实测 |
 |---|---|
 | docs commit | `9b10160 docs: record the R&D design, PRD and delivery artifacts` |

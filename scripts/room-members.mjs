@@ -6,7 +6,8 @@
 // for a room that already ran. This script performs that one explicit edit:
 // it rewrites only `members`, `coordinator`, and `updatedAt`, leaves the
 // transcript and everything else byte-for-byte intact, and writes a `.bak`
-// sibling first.
+// sibling first. A second run does not overwrite that sibling -- it writes
+// `.bak.<timestamp>` instead, so the original rollback target survives.
 //
 // Stop the server before running it: the ledger is the disk copy of in-memory
 // state, so any room write overwrites this script's result with the old member
@@ -16,8 +17,13 @@
 // validateRoomCoordinator in src/rob/room.ts (restated, not imported). Change
 // one and you must change the other.
 //
+// Dropping the coordinator from the config would clear the ledger's
+// coordinator, which silently disables the deliverable; that needs the
+// explicit --allow-clear-coordinator flag.
+//
 //   node scripts/room-members.mjs rnd          # config -> ledger
 //   node scripts/room-members.mjs rnd --dry-run
+//   node scripts/room-members.mjs rnd --allow-clear-coordinator
 import {
 	existsSync,
 	readFileSync,
@@ -31,9 +37,12 @@ import path from "node:path";
 const workspaceRoot = process.cwd();
 const [roomName, ...flags] = process.argv.slice(2);
 const dryRun = flags.includes("--dry-run");
+const allowClearCoordinator = flags.includes("--allow-clear-coordinator");
 
 if (roomName === undefined) {
-	console.error("usage: node scripts/room-members.mjs <room> [--dry-run]");
+	console.error(
+		"usage: node scripts/room-members.mjs <room> [--dry-run] [--allow-clear-coordinator]",
+	);
 	process.exit(1);
 }
 
@@ -203,6 +212,21 @@ if (!existsSync(ledgerPath)) {
 }
 
 const record = JSON.parse(readFileSync(ledgerPath, "utf8"));
+// A ledger restored without a coordinator never runs the wrap-up, and nothing
+// reports it (see docs/design/room-max-members.md §4). Deleting the key from
+// the config is usually an accident, so it takes a flag.
+const currentCoordinator =
+	typeof record.coordinator === "string" ? record.coordinator : null;
+if (
+	coordinator === null &&
+	currentCoordinator !== null &&
+	!allowClearCoordinator
+) {
+	console.error(
+		`my-agent.json room "${roomName}" has no coordinator, but the ledger's is "${currentCoordinator}"; clearing it silently disables the deliverable, so nothing was written. Pass --allow-clear-coordinator to clear it anyway.`,
+	);
+	process.exit(1);
+}
 const next = {
 	...record,
 	members,
@@ -224,10 +248,11 @@ if (dryRun) {
 	process.exit(0);
 }
 
-writeFileSync(`${ledgerPath}.bak`, JSON.stringify(record, null, 2), {
-	mode: 0o600,
-});
+const backup = existsSync(`${ledgerPath}.bak`)
+	? `${ledgerPath}.bak.${Date.now()}`
+	: `${ledgerPath}.bak`;
+writeFileSync(backup, JSON.stringify(record, null, 2), { mode: 0o600 });
 const tmp = `${ledgerPath}.tmp`;
 writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
 renameSync(tmp, ledgerPath);
-console.log("written (backup at .bak)");
+console.log(`written (backup at ${path.basename(backup)})`);
