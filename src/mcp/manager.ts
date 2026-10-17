@@ -7,7 +7,7 @@ import {
 	type McpClientOptions,
 	StdioMcpClient,
 } from "./client.js";
-import { redactMcpServer } from "./redact.js";
+import { redactMcpServer, scanServerToolText } from "./redact.js";
 import { mapServerTools, parseToolList } from "./tools.js";
 
 export interface McpServerSummary {
@@ -71,19 +71,95 @@ export async function connectMcpServers(
 		clients.push(entry);
 		try {
 			await client.initialize();
+			const infos = parseToolList(await client.listTools());
+			// Three steps, in this order, each owning its own question:
+			//   1. scan   -- is any of this secret, and what is safe to send?
+			//                It only reads `infos`; it never names a tool.
+			//   2. map    -- what are these tools called? Only here do names
+			//                enter the shared `existingNames` set.
+			//   3. send   -- `toolDefinition` turns a Tool into a provider
+			//                request, and is where a value would finally leak.
+			// The scan has to run first: mapping ends by adding names to a set
+			// shared across servers, so a server refused afterwards would leave
+			// its names behind and the next good server would fail as a
+			// collision. A name is never rewritten -- it is how the tool is
+			// called -- so a name that matches means the whole server goes, and
+			// that decision cannot wait for a name to exist.
+			const scan = scanServerToolText({ infos, env: config.env ?? {} });
+			if (scan.reject) {
+				// A tool name is how the tool is called, so it cannot be
+				// redacted; the whole server goes instead. The client stays in
+				// `clients` — this refuses visibility, not the process.
+				// The variable name is not a secret, and naming it is what
+				// separates "refused on purpose" from "the server crashed" or
+				// "the config is wrong". The tool name is not repeated: it is
+				// attacker-controlled and adds nothing the key does not.
+				// Two shapes of refusal. A match names the variable; a pointer
+				// that leaves the schema matches nothing, so saying "env ?"
+				// would point at a variable that does not exist.
+				const where = scan.rejectWhere ?? "tool schema";
+				let reason: string;
+				if (scan.rejectKey !== undefined) {
+					reason = `${where} repeats the value of env "${scan.rejectKey}"`;
+				} else if (scan.rejectKind === "malformed") {
+					reason = `${where} is malformed`;
+				} else {
+					reason = `${where} points outside the schema`;
+				}
+				notices.push(
+					redactMcpServer(
+						`mcp ${name}: refused by security policy — ${reason}`,
+						config.env ?? {},
+					),
+				);
+				continue;
+			}
 			const mapped = mapServerTools({
 				server: name,
 				client,
-				infos: parseToolList(await client.listTools()),
+				infos,
 				existingNames,
 			});
 			if (mapped.error !== undefined) throw new Error(mapped.error);
-			tools.push(...mapped.tools);
-			toolsByServer[name] = mapped.tools;
+			// The scan ran over the same infos in the same order, so the two
+			// arrays line up today. Assert it rather than relying on it: once
+			// mapServerTools starts filtering entries, an unchecked index would
+			// hand one tool another's text and nothing would turn red.
+			if (scan.tools.length !== mapped.tools.length) {
+				throw new Error(
+					`mcp ${name}: tool scan and mapping disagree on length`,
+				);
+			}
+			const safeTools: Tool[] = mapped.tools.map((tool, index) => {
+				const safe = scan.tools[index];
+				// The length check above makes this unreachable. It throws rather
+				// than falling back to `tool`, because a fallback would send the
+				// unredacted text and look exactly like the success path.
+				if (safe === undefined) {
+					throw new Error(`mcp ${name}: missing scan result for ${tool.name}`);
+				}
+				return {
+					...tool,
+					description: safe.description,
+					// `parameters` is what reaches the provider, and MCP tools
+					// carry no `schema`, so the registry passes it through
+					// untouched. The scan has already redacted the prose inside
+					// it and refused any contract position that matched. This is
+					// also the only place either is computed: doing it again
+					// here would leave two copies to keep in step.
+					parameters: safe.parameters,
+				};
+			});
+			tools.push(...safeTools);
+			toolsByServer[name] = safeTools;
 			servers.push({
 				name,
-				toolCount: mapped.tools.length,
-				tools: mapped.tools.map((tool) => tool.name),
+				toolCount: safeTools.length,
+				// Depth: the scan above already proved these carry no value, so
+				// this is a no-op until an edit makes it not one.
+				tools: safeTools.map((tool) =>
+					redactMcpServer(tool.name, config.env ?? {}),
+				),
 			});
 		} catch (error) {
 			// A spawn or handshake error can quote the environment it was

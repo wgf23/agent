@@ -24,12 +24,26 @@ const callResultSchema = z.looseObject({
 
 const INVALID_NAME_CHAR = /[^A-Za-z0-9_-]/g;
 
-function sanitize(part: string): string {
+/** Turns one half of a tool name into the characters the wire allows.
+ *
+ *  Exported so the security scan can compare a configured value against the
+ *  shape it would take in a tool name. Both sides must use this one function:
+ *  a second copy of the pattern is a second place for it to drift.
+ */
+/** What a tool with no declared schema takes. A tool may legitimately omit
+ *  `inputSchema`, and the fallback has to be the same in the mapper and in the
+ *  scan: `{}` accepts any value, while this says the tool takes an object, so
+ *  the two are not interchangeable. Spread it rather than sharing one object --
+ *  the scan builds a new value per tool.
+ */
+export const EMPTY_INPUT_SCHEMA = { type: "object", properties: {} } as const;
+
+export function sanitizeNamePart(part: string): string {
 	return part.replace(INVALID_NAME_CHAR, "_");
 }
 
 export function mcpToolName(server: string, tool: string): string {
-	return `mcp__${sanitize(server)}__${sanitize(tool)}`;
+	return `mcp__${sanitizeNamePart(server)}__${sanitizeNamePart(tool)}`;
 }
 
 export function parseToolList(result: unknown): McpToolInfo[] {
@@ -68,7 +82,7 @@ export function mapServerTools(input: MapServerToolsInput): {
 		name,
 		description: info.description ?? "",
 		readOnly: info.annotations?.readOnlyHint === true,
-		parameters: info.inputSchema ?? { type: "object", properties: {} },
+		parameters: info.inputSchema ?? { ...EMPTY_INPUT_SCHEMA },
 		execute: (args) => callTool(client, name, info.name, args),
 	}));
 	for (const entry of named) existingNames.add(entry.name);

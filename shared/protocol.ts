@@ -96,6 +96,29 @@ export interface BotDraft {
 	mcp?: string[];
 }
 
+// One installed skill, as the panel needs it. Deliberately no `dir`: the
+// local absolute path never crosses to the client, and the panel has no use
+// for it.
+export interface SkillInfo {
+	name: string;
+	description: string;
+	packageName: string;
+	version: string;
+}
+
+// One configured MCP server, as the panel needs it. Two things are deliberately
+// absent. `env` never appears, not even its values: the keys alone let the panel
+// say a server needs secrets without learning them. The arguments appear only as
+// a count, because they are a place a token can be written in full
+// (--token=ghp_…), and the route is not restricted to the loopback interface.
+// The command is projected to the executable alone for the same reason.
+export interface McpServerInfo {
+	name: string;
+	command: string;
+	argsCount: number;
+	envKeys: string[];
+}
+
 export type ProviderPresetName = "deepseek" | "openai";
 
 // Everything the browser may know about the provider. Deliberately has no key

@@ -24,6 +24,7 @@ import type {
 	ForgetMemoryBody,
 	InstallAgentBody,
 	InterruptBody,
+	McpServerInfo,
 	RenameSessionBody,
 	RoomInterruptBody,
 	RoomSendBody,
@@ -34,6 +35,7 @@ import type {
 	SessionNewBody,
 	SessionOpenBody,
 	SetWakeBody,
+	SkillInfo,
 	UpdateBotBody,
 } from "../../shared/protocol.js";
 import { DEFAULT_PORT } from "../../shared/protocol.js";
@@ -43,7 +45,11 @@ import {
 	toAgentStatusView,
 } from "../agents/supervisor.js";
 import { verifyApiKey } from "../cli/setup.js";
-import { childProviderEnv, resolveConfig } from "../config/resolve.js";
+import {
+	childProviderEnv,
+	type McpServers,
+	resolveConfig,
+} from "../config/resolve.js";
 import { startLspServers } from "../lsp/manager.js";
 import { connectMcpServers, mcpStderrLines } from "../mcp/manager.js";
 import { createAllowAll } from "../permissions/allow-all.js";
@@ -53,6 +59,8 @@ import { renderRoomOutcome } from "../rob/room-text.js";
 import { UnknownRobError } from "../rob/team.js";
 import { buildSemanticSearchTool } from "../semantic/tool.js";
 import { latestSession, listSessions, newSession } from "../session/store.js";
+import { discoverSkills } from "../skills/discover.js";
+import { skillsRoot } from "../skills/paths.js";
 import { PathEscapeError, resolveInWorkspace } from "../util/paths.js";
 import { CompositeHub } from "./composite.js";
 import {
@@ -248,6 +256,10 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 		{ supervisor, host },
 		undefined,
 		{ homeDir },
+		{
+			skillsRoot: skillsRoot(env, homeDir),
+			mcpServers: resolved.config.mcpServers,
+		},
 	);
 
 	try {
@@ -307,6 +319,15 @@ export interface FilesBinding {
 	homeDir: string;
 }
 
+// The two read-only catalogues the bot panel picks from: what is installed, and
+// what is configured. Both are resolved once at startup, matching how MCP
+// servers are connected, and both are projected before they leave: see the
+// comments on SkillInfo and McpServerInfo for what is withheld and why.
+export interface CatalogBinding {
+	skillsRoot: string;
+	mcpServers: McpServers;
+}
+
 // The upload route streams each part straight to disk, so a large file never
 // lands in memory. The multipart parser caps one part at 100 MiB and the route
 // re-checks that count while it streams; the route's body limit sits above the
@@ -346,6 +367,7 @@ export async function buildServer(
 	agents?: AgentsBinding,
 	upload?: UploadLimits,
 	files?: FilesBinding,
+	catalog?: CatalogBinding,
 ): Promise<FastifyInstance> {
 	const app = fastify({ logger: false, bodyLimit: 1024 * 1024 });
 	const uploadFileLimit = upload?.fileSize ?? MAX_UPLOAD_FILE_BYTES;
@@ -1213,6 +1235,50 @@ export async function buildServer(
 			provider: result.provider,
 			...(result.warning !== undefined ? { warning: result.warning } : {}),
 		});
+	});
+
+	// The installed skills, without their directories: the panel picks by name,
+	// and a local absolute path has no business on the wire. An unreadable or
+	// empty root is an empty list, not an error -- "nothing installed" is a
+	// normal state, and distinguishishing it from a failure would leak the
+	// filesystem's shape.
+	app.get("/api/skills", async (_request, reply) => {
+		if (catalog === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot list installed skills" });
+		}
+		const skills = await discoverSkills(catalog.skillsRoot);
+		const rows: SkillInfo[] = skills.map((skill) => ({
+			name: skill.name,
+			description: skill.description,
+			packageName: skill.packageName,
+			version: skill.version,
+		}));
+		reply.header("cache-control", "no-store");
+		return rows;
+	});
+
+	// The configured MCP servers, with their environment variable names but
+	// never their values. The command is the executable only and the arguments
+	// are a count: an argument is a perfectly ordinary place to write a token
+	// in full, and this route is reachable from anywhere the server is bound to.
+	app.get("/api/mcp", (_request, reply) => {
+		if (catalog === undefined) {
+			return reply
+				.code(501)
+				.send({ error: "this server cannot list configured MCP servers" });
+		}
+		const rows: McpServerInfo[] = Object.entries(catalog.mcpServers).map(
+			([name, config]) => ({
+				name,
+				command: config.command[0] ?? "",
+				argsCount: Math.max(0, config.command.length - 1),
+				envKeys: Object.keys(config.env ?? {}).sort(),
+			}),
+		);
+		reply.header("cache-control", "no-store");
+		return rows;
 	});
 
 	app.get("/api/agents", async (_request, reply) => {

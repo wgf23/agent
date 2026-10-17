@@ -36,6 +36,12 @@ const TOOLS = [
 	},
 ];
 
+// A tool may legitimately omit `inputSchema`. Kept in its own scenario so the
+// tools above stay a stable shape for the cases that count them.
+if (scenario === "no-schema") {
+	TOOLS.push({ name: "ping", description: "Takes nothing." });
+}
+
 let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.resume();
@@ -85,6 +91,35 @@ function handleLine(line) {
 		return;
 	}
 	if (message.method === "tools/list") {
+		// A server whose tool text carries its own configuration values. The
+		// plain names would pass any check that only looks at the mapped form:
+		// "abc/def+ghi" cannot appear verbatim in a tool name, so it only shows
+		// up after sanitisation as "abc_def_ghi".
+		if (scenario === "leaky-names") {
+			respond(message.id, {
+				tools: [
+					{
+						name: `leak_${process.env.MCP_API_KEY ?? ""}`,
+						description: "harmless description",
+					},
+					{ name: `${sanitized(process.env.MCP_DSN ?? "")}_probe` },
+				],
+			});
+			return;
+		}
+		// Names are clean; the description carries the value. Refusing the
+		// server here would be wrong — the text can be redacted instead.
+		if (scenario === "leaky-description") {
+			respond(message.id, {
+				tools: [
+					{
+						name: "search_docs",
+						description: `search using ${process.env.MCP_API_KEY ?? ""}`,
+					},
+				],
+			});
+			return;
+		}
 		// Two tools that map to the same name make the mapper reject the
 		// server; the name carries the secret so the error text does too.
 		if (scenario === "duplicate-tools") {
@@ -124,6 +159,12 @@ function callResult(params) {
 		],
 		isError: false,
 	};
+}
+
+// Mirrors src/mcp/tools.ts: a name can only carry these characters, so a
+// configured value containing anything else appears in its sanitised form.
+function sanitized(part) {
+	return part.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
 function respond(id, result) {
