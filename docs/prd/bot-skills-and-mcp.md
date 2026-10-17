@@ -384,6 +384,19 @@
 | `src/cli/team.ts`（**必改**） | :121 | :121 |
 
 > 修正记录：`:182`→`:183`（ci 指出）；`:289`/`:290` 的 1 行差是 **HEAD 差异不是错误**（pm@790d688 = 289，ci@047dc7f = 290）。**核心结论：禁区判定不看行号，看 `git diff -U0` 的 hunk 是否落在 `<App>` 块内。**
+>
+> **更稳的判据（2026-10-17 review 补，pm 采纳）**：连 hunk 行号也不作为唯一依据，**最终以 `git diff --name-only` + 按目录/扩展名白名单判定路径集**为准，hunk 只用于确认 `<App>` 零命中。
+
+### 13.4a 红线取证**不得用前缀法**（review 指出，pm 采纳）
+`grep -v '^docs/'` 这类前缀匹配会**误判**：`docs-dist/**.md` 是纯文档、**不在任何红线内**，却会被前缀法判成「非 docs 文件」；反过来，未来若出现 `docs-dist/x.ts`，前缀法会**静默漏检**。
+**规则**：红线取证一律按**「目录白名单 + 扩展名」**判定，禁止用 `^docs/` 这类前缀一刀切。示范：
+```sh
+# 代码面（红线判定只看这里）
+git diff --name-only A..B | grep -E '\.(ts|tsx|js|mjs|css|json)$'   | grep -v -E '^(docs/|docs-dist/|screenshots/)' || true
+# 文档面（单独报，不参与红线）
+git diff --name-only A..B | grep -E '^(docs|docs-dist)/.*\.md$'
+```
+**本轮实例**：`021cef6`（`docs-dist/` 5 文件）用前缀法会被误报为「5 个非 docs 文件」；按新规则应判为**纯文档面、红线零命中**。
 
 ### 13.5 AC-11 行为变更必须写进终判（与 §12.10 同为硬要求）
 `mcp` 缺省 = **不启用任何 server**（U6 刻意非对称）。升级后老 bot 会**失去现有 MCP 工具可见性** —— **这是行为变更，不是回归、不是向后兼容**。
@@ -559,3 +572,48 @@
 1. `my-agent skill add ./test/fixtures/skill-valid` → `my-agent skill list`（表格含 name/package/version/description/path）—— **当前机器 `~/.config/my-agent/skills` 为空，`skill list` 只会打印 `No skills installed.`**，需先装一个
 2. `my-agent.json` 的 `robs[].skills` / `mcp` 手写后重启 serve，用 `curl /api/bots` 看回显（**当前 12 个 rob 三字段全缺省，`mcpServers` 为空**，故无内容可看）
 3. **不建议**把 1/2 当「效果演示」给用户看 —— 那是配置演示，不是 UI
+
+### 16.4 B-6a 的两条硬约束（leader 2026-10-17 拍板，作为 B-6a 的验收标准）
+
+> 依据：`ad3b41a` 那版移动端适配是用户刚验收过的，**不能回退**；B-4 的脱敏是 C14/C15 的正面要求，**不能只靠"结构上不会"**。
+
+**B-6a-1 移动端契约零改动（硬）**
+- `BotSettingsPanel` 新增 UI **只准复用既有类**：`.panel-*` / `.btn` / `.modal-*` / `.field*` / `.dialog-*`。**禁止**引入新类名而不加媒体查询覆盖。
+- **禁止**修改 `web/src/styles.css` 中 `@media (max-width: 640px)` 内的**任何既有规则**（当前三处：`:3360`、`:3837`、`:3920`）。
+- **禁止**移除或改写以下三处（行号为 `ad3b41a`/`a006169` 实测，报时必须带 HEAD）：
+  - `.sidebar.drawer-open` —— **`:3385`**
+  - **`.file-panel:not(.mobile-open)` —— `:3397`**（⚠️ **否定选择器**；同区段 `:3394` 还有 `.file-panel.closed`。**不要按 `.file-panel.mobile-open` 正向 grep**，那样查不到任何东西，禁令会空转）
+  - `@media (pointer: coarse)` 的 44px 触控段 —— **`:3893`**
+  - 附：`@media (max-width: 640px)` 共三处 **`:3360` / `:3837` / `:3920`**；另有 `:3350` 的 880px、`:1091`/`:3914` 的 `hover:none`，同属移动端契约，一并禁改。
+- **取证方式（命令写死，勿靠口述）**：
+  ```sh
+  git diff ad3b41a..<b6a-HEAD> -- web/src/styles.css | grep -E '^@@'
+  # 凡 hunk 头落在 3350-3940 区间 → 按红线报
+  ```
+  新增规则必须落在媒体查询之外，或写成**新增的独立媒体查询块**（不得夹进既有块内）。
+- **回归验证**：移动端三态（drawer 开合 / 文件面板开合 / 触控目标 ≥44px）人工或截图复核，**不得只跑单测就判过**。
+
+**B-6a-2 B-4 脱敏必须有用例钉死（硬）**
+- `GET /api/skills` → `SkillInfo[]`，**不下发 `dir`**（U4：本地绝对路径不出 wire）。用例：`expect(JSON.stringify(body)).not.toContain(<临时 skills 根目录绝对路径>)`，且逐条 `expect(item).not.toHaveProperty("dir")`。
+- `GET /api/mcp` → `McpServerInfo[]`，`envKeys` = `Object.keys(config.env ?? {})`，**只回键名、零值回传**。用例：配置 `env: { DB_PASSWORD: "<sentinel>" }` ⇒ 响应含 `"DB_PASSWORD"`、**不含** `<sentinel>`；断言 `JSON.stringify(body)` 不含 sentinel。
+- 两条用例都必须在 **HTTP 层**（`test/serve/*`）跑，**不能只在 `src/mcp/*` 的纯函数单测里测**（依据 §14.1：纯函数绿 ≠ 生产已接）。
+
+**B-6a-3 三字段「省略」而非 `[]`（leader 定为 AC，2026-10-17；pm 补充取证）**
+- **规则**：cli backend bot（`backend.kind === "cli"`）与 workspace bot（`kind === "workspace"`）提交 draft 时，三个 scope 字段**必须整体省略**。**发 `[]` 会真的把用户白名单清空**；「省略」才是"默认（全部）"。
+- **为什么必须分开处理**：`skills: []` + `skillsConfigured: true` 是**合法的第三态**（用户显式确认"一个都不要"），与"未设置"**语义相反**。面板若把 `undefined` 序列化成 `[]`，等于**替用户做了一次清空决定**，直接翻掉 C9 真值表第 1 行。
+- **workspace bot 额外要求**：`kind === "workspace"` 时**不渲染 scope 控件**（不是灰显，是不渲染）—— 否则会把"默认/全部"错误显示成"未启用"，用户会以为自己的 skill 被关掉了。
+- **取证（三条，缺一不算）**：
+  1. 单测：`backendDraft()` / 面板 submit 构造的 draft，对 cli 与 workspace 两态均断言 `expect(draft).not.toHaveProperty("skills")`（三字段各一条）；
+  2. 单测：切到 cli 再切回 native，draft 仍不含三字段（**不得**因切换而写入 `[]`）；
+  3. 集成：cli/workspace bot 走一遍 `PATCH /api/bots/:bot`，读回 `my-agent.json` 后 `skills` 仍为 `undefined`（**不是 `[]`**）。
+- **依据**：`BotInfo.kind` 已是 `"workspace" | "rob"`（`shared/protocol.ts:39`），`botScope.ts` 覆盖 backend 维度；本条约定的 `kind` 维度**需在 B-6a 一并加进 `web/src/botScope.ts`**（或在面板内单独判定），并补 `test/rob/bot-scope-consistency.test.ts` 的一致性用例。
+
+### 16.5 两条 non-blocking 记档（review 提出，pm 判定：本线不修，留待后续）
+| # | 现象 | 判定 | 理由 |
+|---|---|---|---|
+| 1 | **脱敏过度替换**：`DEBUG:"true"` 这类普通值也被换成 `«redacted»` | **接受，不修** | 方向是安全侧；代价是可诊断性下降。收敛成「像密钥的值」需要一套启发式规则，本身就会引入漏判风险，**不属本线范围** |
+| 2 | **截断片段泄漏**：若错误文本只回显 env 值的**片段**（如前 8 字符），替换方案不命中 | **接受，不修** | 值替换方案的固有限制；彻底解决要改 `StdioMcpClient` 的错误整形，属连接层改动，与 §3.3「只做可见性过滤」冲突 |
+**两条都不得作为终判阻塞项**；但**必须写进交付说明**，否则等于隐瞒已知限制。
+
+### 16.6 终判前最后一项（pm 自查）
+当前工作区 `M docs/prd/bot-skills-and-mcp.md` = 本节 §13.4a + §16.4 + §16.5 + §16.6 原文（29+ 行）。**这笔 docs 未提交前，HEAD 不是真终版**；提交后再由 ci 跑五步。
