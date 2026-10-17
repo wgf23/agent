@@ -58,7 +58,11 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - **因此变异探针 A 的期望改为：常量 20→21 时，只有取值锚这 1 例红**；若红的不止 1 例，说明别处仍有硬编码字面量，判红。
 - **AC-2** 边界：19 人通过、20 人通过、21 人拒绝且 `reason === "member_count"`；1 人拒绝、2 人通过。
   - **入口覆盖（2026-10-17 终裁）**：`createRoom` / `setMembers` / API 三条入口共用 `validateRoomMembers` 同一校验器，边界判定以该函数为准（不在每个入口重复断言 19/20/21）。
-  - **另需一条 `createRoom` 20 人正例**：证明「上限提升后真的能建出 20 人房间」，即用户价值端到端成立。评审实测（review @89e9a12）：20-过/21-拒目前只在 `validateRoomMembers` 一级，`createRoom`/`setMembers` 只有 too-few 侧，故补此一条。本条**非阻塞**，可与运维动作并行。
+  - **另需一条 `createRoom` 20 人正例**（已由 `b92afee` 落地于 `test/rob/team-rooms.test.ts`）：证明「上限提升后真的能建出 20 人房间」，即用户价值端到端成立。
+  - **该用例的判别边界（勿误判为假绿，qa 两臂实证）**：
+    - 探针 C2（常量静默改回 6，用例内一切派生）⇒ **仍绿**。这不构成缺陷：该用例证明的是「`createRoom` 跟着常量走、走到同一校验器」，**不证明取值是 20**；取值仍只由 `test/rob/room.test.ts:1462` 的取值锚钉住（AC-1）。
+    - 探针 D（常量保持 20，但把 `src/rob/room.ts` 校验硬编码成 `> 6`）⇒ **该用例红**。它抓的是「校验器里存在独立小上限 / 旁路」这类真缺陷。
+    - 结论：取值锚（管值）与该用例（管路径互通）**互补、不重叠**，两条都要；任何一方单独存在都不完整。
 - **AC-3** `member_count` 提示串由常量派生（`` `A room needs ${ROOM_MIN_MEMBERS} to ${ROOM_MAX_MEMBERS} members.` ``），当前取值 = `"A room needs 2 to 20 members."`。
   - **取证必须成对**：① 单改常量 20→21 ⇒ 全绿（测试期望也派生，会一起移动，**单臂恒绿，不构成证据**）；② 常量 21 **且** 把源码分支改回不含 `${}` 的字面量 ⇒ **必须红**（qa 实测 2 files / 2 failed）。B 绿 ⇒ `member_count` 未派生，缺陷在源头。
 - **AC-4** `RoomView.limits.maxMembers` 由常量派生（`src/rob/room.ts:507`），经 API 透传。
