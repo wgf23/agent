@@ -24,7 +24,7 @@
 		"web:build": "pnpm --filter my-agent-web build",
 		"serve": "tsx src/index.ts serve",
 		"test": "vitest run",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"lint": "biome check .",
 		"smoke:provider": "tsx scripts/smoke-provider.ts",
 		"e2e": "tsx scripts/e2e.ts",

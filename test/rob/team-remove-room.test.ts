@@ -252,11 +252,12 @@ describe("Team.removeRoom", () => {
 		await mkdir(path.dirname(ledger), { recursive: true });
 		await writeFile(ledger, "{ not json", "utf8");
 
-		expect(await makeTeam().removeRoom("standup")).toEqual({
-			status: "removed",
-			room: "standup",
-			archived: true,
-		});
+		const outcome = await makeTeam().removeRoom("standup");
+		expect(outcome).toMatchObject({ status: "removed", room: "standup" });
+		if (outcome.status !== "removed") throw new Error("unreachable");
+		// Assert the field on its own: a deep-equal failure here truncates to
+		// "removed … removed" and hides that `archived` is the difference.
+		expect(outcome.archived, "damaged ledger must be archived").toBe(true);
 		expect(existsSync(ledger)).toBe(false);
 		const archives = (await readdir(trashDir())).filter((entry) =>
 			entry.startsWith("standup."),
