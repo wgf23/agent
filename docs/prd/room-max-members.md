@@ -40,13 +40,20 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
 
 ## 3. 验收标准（AC）
 
-- **AC-1** `src/rob/room.ts` 导出的 `ROOM_MAX_MEMBERS === 20`；`ROOM_MIN_MEMBERS === 2` 不变。
+- **AC-1** `ROOM_MAX_MEMBERS === 20`（`src/rob/room-limits.ts`），`ROOM_MIN_MEMBERS === 2` 不变；`room.ts` 的 re-export 指向同一值。
+  - **取值锚（裁决 ①）**：必须有**且仅有**一条字面量断言钉死取值，放在 `test/rob/room.test.ts`，形如 `expect(ROOM_MAX_MEMBERS).toBe(20)`，注释写明「AC-1 取值锚：此处故意写字面量；单靠派生会让改回 6 静默通过」。
+  - 理由：其余用例全部由常量派生 ⇒ 谁把常量改回 6，全量仍绿（qa 探针 C 实证），「单一真值」在取值上是空的。
+  - **因此变异探针 A 的期望改为：常量 20→21 时，只有取值锚这 1 例红**；若红的不止 1 例，说明别处仍有硬编码字面量，判红。
 - **AC-2** 边界：19 人通过、20 人通过、21 人拒绝且 `reason === "member_count"`；1 人拒绝、2 人通过。同时覆盖 `createRoom` / `setMembers` / API 三条入口中至少两条。
-- **AC-3** `member_count` 提示串 = `"A room needs 2 to 20 members."`，且由常量派生：把常量临时改 21 则文案随之为 `2 to 21`（变异探针可验）。
-- **AC-4** `RoomView.limits.maxMembers === 20` 由常量派生；`web/src/**` 无硬编码 6/20 的上限字面量（前端只读 API 值）。
+- **AC-3** `member_count` 提示串由常量派生（`` `A room needs ${ROOM_MIN_MEMBERS} to ${ROOM_MAX_MEMBERS} members.` ``），当前取值 = `"A room needs 2 to 20 members."`。
+  - **取证必须成对**：① 单改常量 20→21 ⇒ 全绿（测试期望也派生，会一起移动，**单臂恒绿，不构成证据**）；② 常量 21 **且** 把源码分支改回不含 `${}` 的字面量 ⇒ **必须红**（qa 实测 2 files / 2 failed）。B 绿 ⇒ `member_count` 未派生，缺陷在源头。
+- **AC-4** `RoomView.limits.maxMembers` 由常量派生（`src/rob/room.ts:507`），经 API 透传。
+  - **现状修正（qa 实测）**：`web/src/**` 根本不引用 `limits` / `maxMembers`，前端不展示上限 ⇒ 「前端只读 API 值」属**空转满足，不得记为已验证 UI 展示 20**。
+  - 本 AC 判据收敛为两条：① `src/serve/**` 原样透传（有断言则断言，`test/serve/team.test.ts` 已覆盖）；② `web/src/**` 无硬编码 6/20 上限字面量（grep 零命中）。
 - **AC-5** 测试 fixture 一律 `import { ROOM_MAX_MEMBERS }` 派生，禁止写死数字；机械判据（review 执行）：
   - `grep -rn "ROOM_MAX_MEMBERS" src test web` 是唯一数字源；
-  - `grep -rn "maxMembers: [0-9]\|to 6 members\|to 8 members" src test web` 无命中（除变异探针外）。
+  - `grep -rn "maxMembers: [0-9]\|to 6 members\|to 8 members\|to 20 members" src test web` 无命中；
+  - **白名单（唯一例外）**：`test/rob/room.test.ts` 中 AC-1 取值锚那一行 `expect(ROOM_MAX_MEMBERS).toBe(20)`。评审时该行命中 grep 属预期，其它任何字面量命中均判红。
 - **AC-6** `README.md` 与 `docs/rnd-team.md` 中房间人数表述与 20 一致；`docs/rnd-team.md` 中「上限从 6 提到 8」「新的 8 人成员表」「rnd 之前是 6 个成员」三句假话必须消除。**改这三句即可，不得顺手删改 ui/manager 的其它成果**（review 在 diff 里核）。
 - **AC-6b** 两处文案断言（`test/serve/team.test.ts` 的 `error: "A room needs 2 to 6 members."`、`test/rob/room-text.test.ts` 同一串）必须改为常量派生，**不得手改成 `"2 to 20"`**（否则下次改常量再次漂移）。
 - **AC-7** 运维动作可回滚：执行前把 `my-agent.json`、`~/.local/share/my-agent/rooms/-home-heiwa-my-agent/ppp.json`、`~/.local/share/my-agent/bots/{test,pi-test,opencode,dmtest,aaa,leader}.json` 备份到 `~/.local/share/my-agent/backup-<ts>/`；备份存在且非空。

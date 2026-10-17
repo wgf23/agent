@@ -1456,6 +1456,12 @@ describe("Room", () => {
 });
 
 describe("validateRoomMembers", () => {
+	it("pins the member cap", () => {
+		// AC-1 取值锚：此处故意写字面量；单靠派生会让改回 6 静默通过。
+		// 全仓仅此一处允许出现上限的字面值。
+		expect(ROOM_MAX_MEMBERS).toBe(20);
+	});
+
 	it("accepts a known roster in the order it was given", () => {
 		expect(
 			validateRoomMembers(["builder", "planner"], ["planner", "builder"]),
