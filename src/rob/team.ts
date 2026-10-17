@@ -20,6 +20,7 @@ import type {
 } from "../permissions/authorizer.js";
 import { defaultRules, type PermissionRules } from "../permissions/rules.js";
 import type { ImagePart, Message, Provider } from "../providers/types.js";
+import { resolveBotSkills, skillScopeOf } from "../skills/scope.js";
 import type { Tool } from "../tools/types.js";
 import { webTools } from "../tools/web.js";
 import { errorMessage } from "../util/errors.js";
@@ -270,6 +271,12 @@ export class Team implements TeamPort {
 		const provider = this.options.providerFactory(config);
 		const model = config.model ?? this.options.defaultModel;
 		const clock = () => this.clock.now();
+		// The scope is read from this config, captured here, and never by
+		// looking the name up on the roster: the roster would give a second
+		// source of truth during the window between a save and the rebuild
+		// that follows it. Installing a skill still shows up next turn,
+		// because resolveBotSkills discovers on every call.
+		const scope = skillScopeOf(config);
 		return new Rob({
 			name: config.name,
 			role: config.role,
@@ -282,6 +289,7 @@ export class Team implements TeamPort {
 			backend: config.backend,
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
+			skills: () => resolveBotSkills(scope),
 			hooks: this.options.hooks,
 			store: this.store,
 			channels: this.channels,

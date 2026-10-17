@@ -15,6 +15,7 @@ import type {
 	ThinkingSetting,
 	ToolCallBlock,
 } from "../providers/types.js";
+import type { Skill } from "../skills/discover.js";
 import {
 	executeTool,
 	getTool,
@@ -61,6 +62,10 @@ export interface RunAgentOptions {
 	maxRetries?: number;
 	drainInput?: () => Message[];
 	extraTools?: Tool[];
+	// The skills the system prompt advertises. Omitted means "discover them",
+	// which is what a standalone agent does; a bot passes the list its scope
+	// allows so the prompt and load_skill agree.
+	skills?: readonly Skill[];
 	extraInstructions?: string;
 	compaction?: CompactionSettings;
 	forceCompact?: boolean;
@@ -110,6 +115,7 @@ export async function runAgent(
 		platform: process.platform,
 		date: new Date().toISOString(),
 		extraInstructions: options.extraInstructions,
+		skills: options.skills === undefined ? undefined : [...options.skills],
 	});
 
 	let messages: Message[] = [

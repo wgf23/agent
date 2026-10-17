@@ -29,6 +29,7 @@ import type { HooksConfig } from "../hooks/hooks.js";
 import type { Approval } from "../permissions/authorizer.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider } from "../providers/types.js";
+import type { Skill } from "../skills/discover.js";
 import type { Tool } from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import {
@@ -82,6 +83,9 @@ export interface RobOptions {
 	providerEnv?: Record<string, string>;
 	// MCP tools are native-only; a cli backend runs its own tool registry.
 	extraTools?: Tool[];
+	// Native only: a cli backend runs its own tool registry, so bot-scoped
+	// skills and load_skill do not apply to it.
+	skills?: () => Promise<readonly Skill[]>;
 	hooks?: HooksConfig;
 	// Both default so a lone Rob (a test) still gets the durable global ledger
 	// and its own channel bookkeeping; a Team passes one shared pair.
@@ -195,6 +199,7 @@ export class Rob {
 							}),
 							...(options.extraTools ?? []),
 						],
+						skills: options.skills,
 						hooks: options.hooks,
 						systemNote: () => this.memoryBlock,
 					});

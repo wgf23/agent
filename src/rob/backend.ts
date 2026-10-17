@@ -4,6 +4,8 @@ import type { AgentEvent } from "../agent/events.js";
 import type { HooksConfig } from "../hooks/hooks.js";
 import type { PermissionRules } from "../permissions/rules.js";
 import type { Message, Provider, TextBlock } from "../providers/types.js";
+import type { Skill } from "../skills/discover.js";
+import { createLoadSkillTool } from "../skills/tool.js";
 import type { Tool } from "../tools/types.js";
 import { renderTeamPreamble } from "./roster.js";
 import type { BridgePort, Inbound, RobName } from "./types.js";
@@ -36,6 +38,11 @@ export interface NativeBackendOptions {
 	authorize: Authorize;
 	drain: () => Inbound[];
 	extraTools?: Tool[];
+	// Resolved once per run: the prompt and load_skill share this one snapshot,
+	// so the model can never be told about a skill its own tool refuses.
+	// A function because the answer changes between turns (an install, or a
+	// config edit) without the turn needing a rebuilt backend.
+	skills?: () => Promise<readonly Skill[]>;
 	hooks?: HooksConfig;
 	// Called once per run, after the prompt is built, so memory committed since
 	// the last turn reaches the model. Returns the rendered memory block, or ""
@@ -72,6 +79,8 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				tools: turn.bridge.tools,
 			});
 			const note = options.systemNote?.() ?? "";
+			const skills =
+				options.skills === undefined ? undefined : await options.skills();
 
 			const result = await runAgent({
 				provider: options.provider,
@@ -84,7 +93,16 @@ export function createNativeBackend(options: NativeBackendOptions): RobBackend {
 				authorize: options.authorize,
 				extraInstructions: note === "" ? preamble : `${preamble}\n${note}`,
 				drainInput,
-				extraTools: [...turn.bridge.tools, ...(options.extraTools ?? [])],
+				extraTools: [
+					...turn.bridge.tools,
+					...(options.extraTools ?? []),
+					// Only a scoped backend pins load_skill; an unscoped one keeps
+					// the registry instance, which already allows everything.
+					...(skills === undefined
+						? []
+						: [createLoadSkillTool({ allowed: skills.map((s) => s.name) })]),
+				],
+				skills,
 				hooks: options.hooks,
 				onEvent: turn.onEvent,
 			});

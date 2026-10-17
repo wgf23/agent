@@ -102,6 +102,21 @@ export const robConfigSchema = z
 	});
 export type RobConfig = z.infer<typeof robConfigSchema>;
 
+/** Whether a bot can be given bot-scoped tools at all: a cli backend runs its
+ *  own tool registry, so skill scope and per-bot MCP do not reach it. The
+ *  panel greys those controls out on this, and the injection chain applies the
+ *  same rule, so the UI cannot offer what the runtime ignores.
+ *
+ *  The stored scope is deliberately kept, not cleared, when a bot switches to
+ *  a cli backend: switching back must restore exactly what was configured,
+ *  rather than silently resetting the user's selection on a round trip.
+ */
+export function supportsBotScopedTools(
+	backend: RobConfig["backend"] | undefined,
+): boolean {
+	return backend?.kind !== "cli";
+}
+
 export type InboundKind =
 	| "user"
 	| "dm"
