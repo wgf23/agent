@@ -1,6 +1,7 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { NAME_RULE } from "../names";
 import type { BotInfo } from "../protocol";
+import { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS } from "../room-admin";
 
 interface Props {
 	robs: BotInfo[];
@@ -26,7 +27,23 @@ export default function NewRoomDialog({
 	const [error, setError] = useState<string | null>(null);
 
 	const nameValid = NAME_RULE.test(name);
-	const canCreate = nameValid && members.length > 0 && !submitting;
+	// The server refuses a member count outside ROOM_MIN_MEMBERS..ROOM_MAX_MEMBERS
+	// (src/rob/room.ts), so the button must be disabled at both bounds; otherwise
+	// the click goes through and the submit dies on a red error line. Kept in
+	// step with canSaveSettings in room-admin.ts, which checks both.
+	const memberCountValid =
+		members.length >= ROOM_MIN_MEMBERS && members.length <= ROOM_MAX_MEMBERS;
+	const canCreate = nameValid && memberCountValid && !submitting;
+
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			// An IME uses Escape to cancel candidate selection; closing the
+			// dialog there would throw away everything typed so far.
+			if (event.key === "Escape" && !event.isComposing) onClose();
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [onClose]);
 
 	const toggle = (member: string) => {
 		if (members.includes(member)) {
@@ -52,8 +69,20 @@ export default function NewRoomDialog({
 	};
 
 	return (
-		<div className="modal-backdrop">
-			<div className="modal" role="dialog" aria-modal="true">
+		// biome-ignore lint/a11y/noStaticElementInteractions: the backdrop itself is a dismiss target, Escape is the accessible path
+		// biome-ignore lint/a11y/useKeyWithClickEvents: same handler, the key path is the window Escape listener
+		<div
+			className="modal-backdrop"
+			onClick={(event) => {
+				if (event.target === event.currentTarget) onClose();
+			}}
+		>
+			<div
+				className="modal"
+				role="dialog"
+				aria-modal="true"
+				aria-label="创建房间"
+			>
 				<div className="modal-header">
 					<span className="modal-title">创建房间</span>
 				</div>
@@ -100,7 +129,7 @@ export default function NewRoomDialog({
 								</div>
 							)}
 							<span className="field-hint">
-								选择 2–6 名成员；消息里的 @名字 可指定回应者
+								{`选择 ${ROOM_MIN_MEMBERS}–${ROOM_MAX_MEMBERS} 名成员；消息里的 @名字 可指定回应者`}
 							</span>
 						</div>
 

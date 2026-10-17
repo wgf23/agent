@@ -3900,13 +3900,24 @@ button.browser-crumb:hover {
 	.sidebar-action,
 	.session-action,
 	.session-close,
-	.btn {
+	.btn,
+	.roster-trigger,
+	.mention-item {
+		min-height: 44px;
+	}
+
+	/* The whole label is the hit area: enlarging the 15x15 square itself would
+	   only make the list uglier without making it easier to hit. */
+	.field-checkbox {
 		min-height: 44px;
 	}
 
 	.icon-btn,
 	.session-close {
 		min-width: 44px;
+		/* Widths were already 44; leaving the height at 30 produced a squat
+		   button that is just as hard to hit as a small one. */
+		min-height: 44px;
 	}
 }
 
@@ -4025,5 +4036,23 @@ button.browser-crumb:hover {
 	.room-settings-members {
 		max-height: none;
 		overflow: visible;
+	}
+
+	/* Design 9.4: a bottom-anchored sheet, not a centred dialog. position:fixed
+	   takes the modal out of the backdrop's flex row, so no :has() helper is
+	   needed to move it to the bottom edge. */
+	.modal.room-settings {
+		position: fixed;
+		inset: auto 0 0 0;
+		width: 100%;
+		max-width: 100%;
+		max-height: calc(100dvh - 24px);
+		border-radius: 16px 16px 0 0;
+	}
+
+	/* Flush with the screen edge, the save button would sit under the iPhone
+	   home indicator; 14px is the existing footer padding. */
+	.modal.room-settings .modal-actions {
+		padding-bottom: calc(14px + env(safe-area-inset-bottom));
 	}
 }
