@@ -118,7 +118,9 @@ export async function runTeamCommand(
 		workspaceRoot,
 		permissions,
 		providerEnv: childProviderEnv(settings, apiKey),
-		extraTools: mcp.tools,
+		// MCP tools are filtered per rob by its server selection; nothing else
+		// rides on this team, so extraTools stays empty.
+		mcpToolsByServer: mcp.toolsByServer,
 		hooks: resolved.config.hooks,
 		consolidate: true,
 		authorizerFactory: (rob) =>

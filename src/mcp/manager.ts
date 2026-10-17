@@ -8,10 +8,17 @@ import { mapServerTools, parseToolList } from "./tools.js";
 export interface McpServerSummary {
 	name: string;
 	toolCount: number;
+	// The mapped tool names, so a panel can show what enabling this server
+	// would actually add. Names only: env values never leave the connection.
+	tools: string[];
 }
 
 export interface ConnectMcpServersResult {
 	tools: Tool[];
+	// The same tools grouped by the server that provided them. A bot's tool
+	// list is a selection over this, so grouping has to come from here: the
+	// names are sanitised and a server cannot be recovered from them.
+	toolsByServer: Record<string, Tool[]>;
 	notices: string[];
 	servers: McpServerSummary[];
 	dispose: () => Promise<void>;
@@ -30,6 +37,7 @@ export async function connectMcpServers(
 ): Promise<ConnectMcpServersResult> {
 	const clients: McpClient[] = [];
 	const tools: Tool[] = [];
+	const toolsByServer: Record<string, Tool[]> = {};
 	const notices: string[] = [];
 	const servers: McpServerSummary[] = [];
 	const existingNames = new Set(builtinTools.map((tool) => tool.name));
@@ -53,7 +61,12 @@ export async function connectMcpServers(
 			});
 			if (mapped.error !== undefined) throw new Error(mapped.error);
 			tools.push(...mapped.tools);
-			servers.push({ name, toolCount: mapped.tools.length });
+			toolsByServer[name] = mapped.tools;
+			servers.push({
+				name,
+				toolCount: mapped.tools.length,
+				tools: mapped.tools.map((tool) => tool.name),
+			});
 		} catch (error) {
 			notices.push(`mcp ${name}: ${errorDetail(name, error)}`);
 		}
@@ -61,6 +74,7 @@ export async function connectMcpServers(
 
 	return {
 		tools,
+		toolsByServer,
 		notices,
 		servers,
 		dispose: async () => {

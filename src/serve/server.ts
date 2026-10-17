@@ -205,7 +205,10 @@ export async function runServe(options: RunServeOptions): Promise<void> {
 	// on the workspace chat.
 	const robHub = new TeamHub({
 		...hubOptions,
-		extraTools: [...mcp.tools, ...plugins.tools],
+		// Robs select MCP servers per bot, so the tools travel grouped rather
+		// than as one flat list every rob would inherit.
+		mcpToolsByServer: mcp.toolsByServer,
+		extraTools: plugins.tools,
 		robs,
 		rooms: resolved.config.rooms,
 		providerEnv: runtime.current().providerEnv,

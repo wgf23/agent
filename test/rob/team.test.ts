@@ -157,6 +157,72 @@ describe("Team", () => {
 		).toContain("mcp__memory__create_entity");
 	});
 
+	// AC-7: a rob sees the MCP tools of the servers it enables, and only those.
+	// Driven through a real Team and a real turn, because the hand-written
+	// fixtures in test/mcp/scope.test.ts prove the filter but not the wiring.
+	it("gives each rob only the mcp servers it enables", async () => {
+		const providers: Record<string, ReturnType<typeof createMockProvider>> = {
+			planner: createMockProvider([
+				[
+					{ type: "text_delta", text: "planned" },
+					{ type: "finish", reason: "stop" },
+				],
+			]),
+			worker: createMockProvider([
+				[
+					{ type: "text_delta", text: "worked" },
+					{ type: "finish", reason: "stop" },
+				],
+			]),
+			// Never enables a server: must see none of them.
+			scout: createMockProvider([
+				[
+					{ type: "text_delta", text: "scouted" },
+					{ type: "finish", reason: "stop" },
+				],
+			]),
+		};
+		const docsTool = mcpToolNamed("mcp__docs__search");
+		const githubTool = mcpToolNamed("mcp__github__issues");
+		const team = new Team({
+			robs: [
+				{ name: "planner", role: "plan", mcp: ["docs"] },
+				{ name: "worker", role: "work", mcp: ["github"] },
+				{ name: "scout", role: "look" },
+			],
+			defaultModel: "deepseek-flash",
+			providerFactory: (rob) => providers[rob.name],
+			workspaceRoot: workspace,
+			authorizerFactory: () => readOnlyAuthorize,
+			// Absent `mcp` on scout means no servers, not all of them.
+			mcpToolsByServer: { docs: [docsTool], github: [githubTool] },
+		});
+
+		team.start();
+		for (const name of ["planner", "worker", "scout"]) {
+			team.dispatch(name, "go");
+			await waitFor(
+				() => providers[name].requests.length === 1,
+				`${name} to start`,
+			);
+		}
+		await waitFor(
+			() => team.statuses().every((status) => status.status === "idle"),
+			"every rob to finish",
+		);
+		await team.stop();
+
+		const advertised = (name: string) =>
+			providers[name].requests[0].tools.map((tool) => tool.name);
+
+		expect(advertised("planner")).toContain("mcp__docs__search");
+		expect(advertised("planner")).not.toContain("mcp__github__issues");
+		expect(advertised("worker")).toContain("mcp__github__issues");
+		expect(advertised("worker")).not.toContain("mcp__docs__search");
+		expect(advertised("scout")).not.toContain("mcp__docs__search");
+		expect(advertised("scout")).not.toContain("mcp__github__issues");
+	});
+
 	it("keeps a cli rob out of the extra tools without crashing", async () => {
 		const native = createMockProvider([
 			[
@@ -481,6 +547,16 @@ describe("Team sessions", () => {
 		expect(provider.requests[0].model).toBe("deepseek-chat");
 	});
 });
+
+function mcpToolNamed(name: string): Tool {
+	return {
+		name,
+		description: `${name} tool`,
+		readOnly: true,
+		parameters: { type: "object", properties: {} },
+		execute: async () => ({ ok: true, output: "ok" }),
+	};
+}
 
 function mcpTool(): Tool {
 	return {

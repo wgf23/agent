@@ -42,11 +42,20 @@ describe("connectMcpServers", () => {
 		expect(result.notices).toEqual([
 			"mcp bad: spawn /nonexistent-binary ENOENT",
 		]);
-		expect(result.servers).toEqual([{ name: "good", toolCount: 2 }]);
+		expect(result.servers).toEqual([
+			{
+				name: "good",
+				toolCount: 2,
+				// Grouping has to come from here: the tool names are sanitised,
+				// so a panel cannot recover which server a tool came from.
+				tools: ["mcp__good__create_entity", "mcp__good__read_graph"],
+			},
+		]);
 		expect(result.tools.map((tool) => tool.name).sort()).toEqual([
 			"mcp__good__create_entity",
 			"mcp__good__read_graph",
 		]);
+		expect(Object.keys(result.toolsByServer).sort()).toEqual(["good"]);
 	});
 
 	it("disposes every client", async () => {

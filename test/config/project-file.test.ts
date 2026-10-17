@@ -467,6 +467,56 @@ describe("updateRob", () => {
 		});
 	});
 
+	// C12: switching a bot to a cli backend must not erase what it was
+	// configured with. The cli backend ignores the scope today, and the
+	// tempting "clean up" is to clear it on the way in; that would lose the
+	// user's selection on a switch, and switching back would not restore it.
+	it("keeps a scope through a cli backend round trip", async () => {
+		await writeFile(
+			join(workspace, "my-agent.json"),
+			`${JSON.stringify({ robs: [{ name: "atlas", role: "x" }] })}\n`,
+			"utf8",
+		);
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			skills: ["alpha"],
+			mcp: ["github"],
+		});
+		const before = await readBackScope("atlas");
+		expect(before.visible).toEqual([installed[0]]);
+
+		// Switch to cli, sending only the backend: the panel omits fields the
+		// user did not touch.
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			backend: {
+				kind: "cli",
+				command: "claude",
+				provider: "deepseek",
+				model: "m",
+			},
+		});
+		const onCli = await readBackScope("atlas");
+		expect(onCli.raw).toMatchObject({
+			skills: ["alpha"],
+			skillsConfigured: true,
+			mcp: ["github"],
+			backend: { kind: "cli" },
+		});
+
+		// Switching back restores exactly the same whitelist, not the default.
+		await updateRob(workspace, "atlas", {
+			name: "atlas",
+			role: "x",
+			backend: { kind: "native" },
+		});
+		const back = await readBackScope("atlas");
+		expect(back.visible).toEqual([installed[0]]);
+		expect(back.raw.skillsConfigured).toBe(true);
+	});
+
 	it("writes a confirmed empty skill list, which is not the same as absent", async () => {
 		await writeFile(
 			join(workspace, "my-agent.json"),

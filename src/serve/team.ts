@@ -42,6 +42,7 @@ import type {
 } from "../rob/room.js";
 import { type LoadChannelResult, Team, UnknownRobError } from "../rob/team.js";
 import type { RobConfig, RobStatusEntry } from "../rob/types.js";
+import type { Tool } from "../tools/types.js";
 import { FilesChangedTracker } from "./files-changed.js";
 import { EventBus, type HelloEvent, type Hub, type HubOptions } from "./hub.js";
 import { parseImages } from "./images.js";
@@ -70,6 +71,9 @@ export interface TeamHubOptions extends HubOptions {
 	robs: RobConfig[];
 	rooms?: readonly RoomConfig[];
 	providerEnv: Record<string, string>;
+	// MCP tools grouped by server, so each rob gets only the servers it
+	// enables. Optional: without it no filtering happens.
+	mcpToolsByServer?: Readonly<Record<string, readonly Tool[]>>;
 	// Optional so existing test literals keep compiling; production shares the
 	// one durable global ledger.
 	store?: BotStore;
@@ -110,6 +114,7 @@ export class TeamHub extends EventBus implements Hub {
 			permissions: this.options.permissions,
 			providerEnv: this.options.providerEnv,
 			extraTools: this.options.extraTools,
+			mcpToolsByServer: this.options.mcpToolsByServer,
 			hooks: this.options.hooks,
 			store: this.store,
 			clock: this.options.clock ?? systemClock,

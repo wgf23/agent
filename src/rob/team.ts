@@ -13,6 +13,7 @@ import {
 	type Wake,
 } from "../bot/wake.js";
 import type { HooksConfig } from "../hooks/hooks.js";
+import { filterToolsByServers } from "../mcp/scope.js";
 import type {
 	ApprovalChoice,
 	ApprovalDecision,
@@ -122,6 +123,11 @@ export interface TeamOptions {
 	providerEnv?: Record<string, string>;
 	// Native robs receive these; cli backends run their own tool registry.
 	extraTools?: Tool[];
+	// MCP tools grouped by server, filtered per rob by its `mcp` selection.
+	// Deliberately separate from extraTools, which apply to every rob. When
+	// omitted, no MCP filtering happens and extraTools stays as passed, so a
+	// caller that never had per-rob selection keeps working unchanged.
+	mcpToolsByServer?: Readonly<Record<string, readonly Tool[]>>;
 	hooks?: HooksConfig;
 	rooms?: readonly RoomConfig[];
 	// An unanswered approval expires and is denied after this long, so a rob
@@ -277,6 +283,13 @@ export class Team implements TeamPort {
 		// that follows it. Installing a skill still shows up next turn,
 		// because resolveBotSkills discovers on every call.
 		const scope = skillScopeOf(config);
+		// A bot gets the MCP tools of the servers it enables. An absent list
+		// means none, not all (design §10 U6), so a bot that never opted in
+		// sees no MCP tool at all rather than inheriting the connection.
+		const mcpTools =
+			this.options.mcpToolsByServer === undefined
+				? undefined
+				: filterToolsByServers(this.options.mcpToolsByServer, config.mcp ?? []);
 		return new Rob({
 			name: config.name,
 			role: config.role,
@@ -288,7 +301,10 @@ export class Team implements TeamPort {
 			team: this,
 			backend: config.backend,
 			providerEnv: this.options.providerEnv,
-			extraTools: this.options.extraTools,
+			extraTools:
+				mcpTools === undefined
+					? this.options.extraTools
+					: [...mcpTools, ...(this.options.extraTools ?? [])],
 			skills: () => resolveBotSkills(scope),
 			hooks: this.options.hooks,
 			store: this.store,
