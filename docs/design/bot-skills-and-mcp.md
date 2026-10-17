@@ -5,13 +5,46 @@
 - 基线：**`ad3b41a`**（= origin/main = HEAD，0/0，tracked 树 clean）
 - 决策来源：Q1–Q6 按 pm 建议（Web 为主 + 配置持久化 / 全局装一次 + 每 bot 白名单 / MCP 全局定义 + 每 bot 勾选 / 仅 stdio / 老 bot 可用全部 / 仅 native 生效）
 
-> **本线红线（已重划，见 C19）**：允许改 `web/**`、`src/skills/**`、`src/mcp/**`、`src/rob/**`、`src/agent/system-prompt.ts`、`src/serve/**`、`shared/protocol.ts`、`src/config/project-file.ts`，以及 **`src/cli/skill.ts` + `src/cli/team.ts`**（后者仅 MCP 接线一行）。
-> **测试面**：`test/web/**`、`test/skills/**`、`test/mcp/**`、`test/rob/**`、`test/config/**`（只加用例，不改既有断言语义；`test/mcp/manager.test.ts` 的 `servers` 断言属"跟随字段变更"，允许）。
+> **本线红线（已重划，见 C19）**。**授权面 = 下方清单**；散文只作解释，**清单外一律越界**（唯一 hunk 级例外见下条 tui 说明）。
+> ```text
+> src/skills/**                src/mcp/**                 src/rob/**
+> src/serve/**                 src/agent/system-prompt.ts src/agent/agent.ts
+> src/config/project-file.ts   src/cli/skill.ts           src/cli/team.ts
+> src/tools/types.ts           src/tools/registry.ts
+> src/tui/index.tsx   # 路径允许；hunk 仅 new Team 接线（净 2 增 1 删），人工判
+> shared/protocol.ts  # 仅加性
+> web/**
+> test/web/**   test/skills/**   test/mcp/**   test/rob/**   test/config/**
+> test/serve/**   test/fixtures/**
+> .gitignore          # 事务性，见 §12 第 12 项的分段审计
+> ```
+> **测试面约束**：只加用例、不改既有断言语义；`test/mcp/manager.test.ts` 的 `servers` 断言属"跟随字段变更"，允许。
+>
+> **授权面双向核对（两段输出都必须为空；只查一半等于没查）**
+> ```sh
+> # 两段都必须带 --no-renames（原因见下条）
+> # 正向：改动集里每个非 .md 文件都必须被清单覆盖；未覆盖记为 UNCOVERED
+> git diff --name-only --no-renames A..B | grep -vE '\.md$' | while read -r f; do …; done
+> # 负向：「正文声明零命中 / 归其他设计线」的文件一律不得出现在改动集里；出现记为 MUST-NOT-COVER
+> git diff --name-only --no-renames A..B | grep -E '^(src/tools/web\.ts|src/rob/room-text\.ts|screenshots/.*)$'   # 必须为空
+> ```
+> - 🔴 **必须带 `--no-renames`，否则改名会双绿**：`--name-only` 对 rename **只输出目标路径**，旧路径消失 ⇒ 负向段看不见"红线文件被搬走"；而搬迁的目标通常仍在同一棵授权树里（`src/rob/**`、`src/mcp/**`、`test/rob/**`），**正向段也照样绿**。
+>   实测（`git mv src/rob/room-text.ts →`）：`src/rob/room_text_v2.ts`、`src/mcp/room_text_v2.ts`、`test/rob/room_text_v2.ts` **三处全双绿**；只有搬出授权树（如 `src/other/…`）才会被正向抓到。
+>   加 `--no-renames` 后，旧路径以"删除"身份回到改动集 ⇒ **负向段三处全拦**。**这不是"让报错说得更准"，而是补一个真洞。**
+> - **为什么必须有负向段**：**漏写会让检查红，过宽不会红、只会悄悄扩权**。只做正向，等于允许"顺手多改一个文件"。
+> - **负向清单的入选判据**：**凡正文出现「零命中 / 不得改 / 归 X 线」的文件，都必须进负向清单**（判据落在**改动集**上，不是落在 glob 覆盖关系上）。
+>   ⚠️ **"可机械执行"≠"自动生成"**：命令形状是机械的，但**清单成员仍是人工从正文抄下来的** ⇒ 正文新增一处"零命中"而清单没跟，检查依旧全绿。缩小的只是漂移面，不是消除。**所以「同步义务」那条是必需的，不是补充。**
+> - **两类文件都要进，原因不同**：未被任何 glob 覆盖的（`screenshots/**`、`src/tools/web.ts`）正向段**今天**能报 UNCOVERED；**被大 glob 顺带覆盖**的（`src/rob/room-text.ts` 被 `src/rob/**` 吃住）**只有负向段能拦** —— 只跑正向时它会**双绿**，这才是真正的缝。
+> - ⚠️ **清单里既有"精确文件名"又有"目录前缀"，写法不同就会漏**：`src/tools/web.ts`、`src/rob/room-text.ts` 是**精确路径**（用 `^…$` 锚定），`screenshots/**` 是**目录形**（必须写成 `screenshots/.*` 前缀匹配）。**别只给目录写成 `^screenshots$`，那永远匹配不到 `screenshots/a.png`。**
+>   ⇒ 另一个理由：`screenshots/**` 现在靠"它不在任何 allow glob 里"被正向兜住 —— 一旦有人为放截图把它加进授权面（哪怕是临时），**正向立刻不红、负向若没列它也不查 ⇒ 双绿**。**"今天能兜住"不是"判据成立"。**
+> - **反向禁令**：正文点名 ≠ 授权。`src/tools/web.ts` 在 §10 L4 只是**对照引用**（"全仓只有它的 `EXTERNAL_NOTE` 包裹 untrusted"），**不得**因"正文提到"而纳入授权面（它归 `docs/design/web-tools.md`）。
+> - **同步义务**：正文点名"必须改"的文件时，**同一次提交**里更新本清单；只改其一 = 下一次误判越界的源头。
+> - **基线实测（`ad3b41a..1eb7110` = 36 个非 `.md`：`src` 19 / `test` 14 / `web` 1 / `shared` 1 / `.gitignore` 1）**：正向未覆盖 = 0，负向误覆盖 = 0。**本行是「范围 + 方法」而非状态**：换 range 后按上面命令重跑，不必改正文。
 > **协议只允许加性变更**：新增字段一律可选；**不得**改既有字段必选性/改名/改事件语义。
 > **`src/tui/**` 的例外（唯一）**：允许 `src/tui/index.tsx` 里**仅 `new Team({...})` 的接线**，形如 `+ mcpToolsByServer: mcp.toolsByServer` 与 `extraTools: [...mcp.tools, ...plugins.tools] → plugins.tools`（净 3 行：2 增 1 删）。第二步**必须删掉 `...mcp.tools`**，否则 MCP 工具会既经 `mcpToolsByServer` 过滤、又被 `extraTools` 全量注入一次 —— 等于 AC-7 白做，且工具重复。
 > `<App>`（:290 附近的单 agent 路径）**与 tui 其余一律零命中**。
 > 理由：`runTui` 的 `Team` 是 bot 创建入口；不传 `mcpToolsByServer` 则 `createRob` 走 **C4' 的 `undefined` 分支**、每个 bot 无条件拿到全部 MCP 工具 ⇒ AC-7 在 TUI 面失效，且与 serve/cli 语义分叉。而 `<App>` 是单 agent 路径，正是 C4' 要保住旧行为的那个口子。
-> 仍零命中：`screenshots/**`、`src/rob/room-text.ts`。不引入 jsdom/@testing-library。
+> 仍零命中：`screenshots/**`、`src/rob/room-text.ts`（两者都必须进上面的**负向清单**；`room-text.ts` 被 `src/rob/**` 顺带覆盖，正向段抓不到它）。不引入 jsdom/@testing-library。
 
 ---
 
@@ -655,7 +688,7 @@ bot 的创建与保存路径上，字段会被**逐字段白名单式重建**。
 | 10 | **落盘守卫两入口** | `normalizeSkillScope` 被 `writeRob` 与 `writeRobUpdate` 各调一次，且均**在文件 IO 之前** | ✅ 已核（`367f355`） |
 | 11 | **谓词双侧穷举** | `test/rob/bot-scope-consistency.test.ts` 用 `satisfies Record<BackendKind, true>` + `Object.keys` | ✅ 已核 |
 | 12b | **测试缝未外溢** | `createClient` 只出现在 `src/mcp/manager.ts` 的 `ConnectMcpServersInput` 与 `test/mcp/manager.test.ts`；`shared/`、`web/`、HTTP body、配置文件**零出现**；`grep -rn createClient shared/ web/ src/serve/` 应为空 | 已核 |
-| 12 | **红线（补集法，不用"代码面 + 目录排除"）** | 两段都要跑，且**并集必须等于全部改动**：<br>`git diff --name-only A..B \| grep -E '\.(ts\|tsx\|js\|mjs\|css\|json)$'`（逐个判是否 ⊆ §0 允许路径）<br>`git diff --name-only A..B \| grep -vE '\.(ts\|tsx\|js\|mjs\|css\|json)$' \| grep -vE '^(docs(-dist)?/.*\.md\|\.gitignore)$'`（**必须为空**）——即「补集里除已定案的合法面（`.md` 文档、`.gitignore`）之外必须为空」。<br>**为什么不再写"补集必须为空"**：本线合法改动本就含 46 个 `.md` + `.gitignore`（`ad3b41a..ea72c40` 实测 47 个），一刀切喊空会让 ci **必红**，进而「习惯性忽略这条红」——比不写更糟。修正后**并集仍等于全部改动**，仍能抓 `docs-dist/x.ts` 与意外溅射<br>另：无 `screenshots/**`；`shared/protocol.ts` 仅加性；**`src/tui/**` 只允许 `src/tui/index.tsx` 的 `new Team({...})` 接线（2 增 1 删），`<App>`(:290) 与其余零命中** | 每步提交时查 |
+| 12 | **红线（补集法，不用"代码面 + 目录排除"）** | 两段都要跑，且**并集必须等于全部改动**：<br>`git diff --name-only A..B \| grep -E '\.(ts\|tsx\|js\|mjs\|css\|json)$'`（逐个判是否 ⊆ §0 允许路径）<br>`git diff --name-only A..B \| grep -vE '\.(ts\|tsx\|js\|mjs\|css\|json)$' \| grep -vE '^(docs(-dist)?/.*\.md\|\.gitignore)$'`（**必须为空**）——即「补集里除已定案的合法面（`.md` 文档、`.gitignore`）之外必须为空」。<br>**为什么不再写"补集必须为空"**：本线合法改动本就含 46 个 `.md` + `.gitignore`（`ad3b41a..ea72c40` 实测 47 个），一刀切喊空会让 ci **必红**，进而「习惯性忽略这条红」——比不写更糟。修正后**并集仍等于全部改动**，仍能抓 `docs-dist/x.ts` 与意外溅射<br>另：无 `screenshots/**`；`shared/protocol.ts` 仅加性；**`src/tui/**` 只允许 `src/tui/index.tsx` 的 `new Team({...})` 接线（2 增 1 删），`<App>`(:290) 与其余零命中**（hunk 级限制，文件级 glob 管不到 ⇒ 人工判）<br>**别把补集法"简化"成单段**：第二段之所以为空，是因为 `test/fixtures/*.mjs` **被前段正则 `\.(ts\|tsx\|js\|mjs\|css\|json)$` 捕获**；合并成"补集必须全空"会漏 `.mjs`。**成立条件是「两段并集 = 全部改动」，不是「补集为空」**<br>**分段审计**：`ad3b41a..1eb7110` 内含事务段（`ad3b41a..ea72c40`，17 笔，`.gitignore` a006169 与 `docs-dist/**` 021cef6）与业务段（`ea72c40..1eb7110`，8 笔）⇒ **先报事务段、再报业务段**，否则"25 笔"这个分母会把事务提交算进业务红线 | 每步提交时查 |
 
 > **第 6/7/8 项是 AC-7 的唯一取证链**：没有接线，单测绿也等于功能不存在；`undefined` 逃生口丢了会伤到 cli run/solo；`servers` 断言不同步则 CI 红。
 > **纯函数单测 ≠ AC-7 取证**：`test/mcp/scope.test.ts` 只证明「给定分组与选择，过滤结果正确」，不证明「建 bot 时真的用了它」。AC-7 需要 **Team→Rob 集成组**——造 `TeamOptions.mcpToolsByServer` + `robs:[{mcp:["docs"]}]`，断言该 rob 的 `extraTools` 里只有 docs 的工具、`mcp:[]` 或省略时为 0 个、`mcpToolsByServer` 省略时原样继承。
