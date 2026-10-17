@@ -2,3 +2,4 @@ node_modules
 dist
 .env
 .my-agent/
+.pnpm-store/
