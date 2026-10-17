@@ -6,7 +6,12 @@ import { editFileTool } from "./edit_file.js";
 import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { readFileTool } from "./read_file.js";
-import type { Tool, ToolContext, ToolResult } from "./types.js";
+import {
+	emptyInputSchema,
+	type Tool,
+	type ToolContext,
+	type ToolResult,
+} from "./types.js";
 import { webFetchTool } from "./web_fetch.js";
 import { webSearchTool } from "./web_search.js";
 import { writeFileTool } from "./write_file.js";
@@ -31,7 +36,7 @@ export function toolDefinition(tool: Tool): ToolDefinition {
 	const parameters =
 		tool.schema !== undefined
 			? Object.fromEntries(Object.entries(z.toJSONSchema(tool.schema)))
-			: (tool.parameters ?? { type: "object", properties: {} });
+			: (tool.parameters ?? emptyInputSchema());
 	return {
 		name: tool.name,
 		description: tool.description,

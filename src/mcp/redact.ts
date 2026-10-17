@@ -1,4 +1,5 @@
-import { EMPTY_INPUT_SCHEMA, sanitizeNamePart } from "./tools.js";
+import { emptyInputSchema } from "../tools/types.js";
+import { sanitizeNamePart } from "./tools.js";
 
 const REDACTED = "«redacted»";
 const REDACTED_TAG = REDACTED;
@@ -198,7 +199,7 @@ export function scanServerToolText(
 			description: redactMcpServer(info.description ?? "", input.env),
 			parameters: isRecord(schema)
 				? (walk(schema, undefined) as Record<string, unknown>)
-				: { ...EMPTY_INPUT_SCHEMA },
+				: emptyInputSchema(),
 		};
 	});
 

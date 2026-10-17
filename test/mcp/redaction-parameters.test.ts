@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConnectMcpServersResult } from "../../src/mcp/manager.js";
 import { connectMcpServers } from "../../src/mcp/manager.js";
+import { EMPTY_INPUT_SCHEMA } from "../../src/mcp/tools.js";
 import { toolDefinition } from "../../src/tools/registry.js";
 
 // AC-10 item 12 (PRD §16.7a): a tool's `inputSchema` is split by whether the
@@ -726,5 +727,70 @@ describe("AC-10/12: examples must be an array (L5, accepted fail-safe)", () => {
 			| Record<string, unknown>
 			| undefined;
 		expect(mode?.enum).toEqual(["fast"]);
+	});
+});
+
+describe("AC-10/12: a tool with no inputSchema still gets the object fallback", () => {
+	it("deep-equals the shared empty object schema at the toolDefinition boundary", async () => {
+		// A tool may legitimately omit `inputSchema`. `{}` would accept any
+		// value while this says the tool takes an object; the two are not
+		// interchangeable, and the provider only ever sees this shape.
+		const result = await boot([{ name: "safe_tool", description: "clean" }]);
+
+		expect(result.servers.map((server) => server.name)).toEqual(["probe"]);
+		const tool = result.tools[0];
+		expect(tool).toBeDefined();
+		if (tool === undefined) return;
+
+		expect(toolDefinition(tool).parameters).toEqual({
+			type: "object",
+			properties: {},
+		});
+	});
+
+	it("gives each tool its own properties object", async () => {
+		// The fallback is spread, not shared, so one tool's schema cannot be
+		// edited into another's -- or into the module constant every later tool
+		// reads. A shallow spread copies the top level only, leaving both tools
+		// pointing at one `properties`.
+		const result = await boot([
+			{ name: "first_tool", description: "clean" },
+			{ name: "second_tool", description: "clean" },
+		]);
+
+		const [first, second] = result.tools;
+		expect(first).toBeDefined();
+		expect(second).toBeDefined();
+		if (first === undefined || second === undefined) return;
+
+		const firstParameters = toolDefinition(first).parameters as {
+			properties: Record<string, unknown>;
+		};
+		const secondParameters = toolDefinition(second).parameters as {
+			properties: Record<string, unknown>;
+		};
+		expect(firstParameters.properties).not.toBe(secondParameters.properties);
+
+		// Edit through the public shape, the way any consumer would.
+		firstParameters.properties.injected = { type: "string" };
+		expect(secondParameters.properties).toEqual({});
+	});
+});
+
+describe("AC-10/12: the empty input schema has one shape everywhere", () => {
+	it("matches the exported constant on the registry's own fallback path too", async () => {
+		// `toolDefinition` has its own literal for a tool with neither a zod
+		// schema nor parameters. Comparing it against the exported constant is
+		// what keeps the copies from drifting apart until a provider sees a
+		// shape the mapper never produced.
+		const result = await boot([{ name: "safe_tool", description: "clean" }]);
+		const tool = result.tools[0];
+		expect(tool).toBeDefined();
+		if (tool === undefined) return;
+
+		// Strip the parameters the mapper set, forcing the registry fallback.
+		const bare = { ...tool };
+		delete (bare as { parameters?: unknown }).parameters;
+		expect(toolDefinition(bare).parameters).toEqual(EMPTY_INPUT_SCHEMA);
 	});
 });

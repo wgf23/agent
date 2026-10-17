@@ -1,7 +1,15 @@
 import { z } from "zod";
-import type { Tool, ToolResult } from "../tools/types.js";
+import {
+	EMPTY_INPUT_SCHEMA,
+	emptyInputSchema,
+	type Tool,
+	type ToolResult,
+} from "../tools/types.js";
 import { errorMessage } from "../util/errors.js";
 import type { McpClient } from "./client.js";
+
+// Re-exported so the MCP side keeps a single import site for the shape.
+export { EMPTY_INPUT_SCHEMA };
 
 const toolInfoSchema = z.looseObject({
 	name: z.string().min(1),
@@ -30,14 +38,6 @@ const INVALID_NAME_CHAR = /[^A-Za-z0-9_-]/g;
  *  shape it would take in a tool name. Both sides must use this one function:
  *  a second copy of the pattern is a second place for it to drift.
  */
-/** What a tool with no declared schema takes. A tool may legitimately omit
- *  `inputSchema`, and the fallback has to be the same in the mapper and in the
- *  scan: `{}` accepts any value, while this says the tool takes an object, so
- *  the two are not interchangeable. Spread it rather than sharing one object --
- *  the scan builds a new value per tool.
- */
-export const EMPTY_INPUT_SCHEMA = { type: "object", properties: {} } as const;
-
 export function sanitizeNamePart(part: string): string {
 	return part.replace(INVALID_NAME_CHAR, "_");
 }
@@ -82,7 +82,7 @@ export function mapServerTools(input: MapServerToolsInput): {
 		name,
 		description: info.description ?? "",
 		readOnly: info.annotations?.readOnlyHint === true,
-		parameters: info.inputSchema ?? { ...EMPTY_INPUT_SCHEMA },
+		parameters: info.inputSchema ?? emptyInputSchema(),
 		execute: (args) => callTool(client, name, info.name, args),
 	}));
 	for (const entry of named) existingNames.add(entry.name);
