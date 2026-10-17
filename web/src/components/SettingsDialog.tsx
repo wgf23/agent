@@ -4,6 +4,7 @@ import type {
 	ProviderPresetName,
 	ProviderView,
 	SaveProviderBody,
+	SkillInfo,
 } from "../protocol";
 import type { Theme } from "../theme";
 
@@ -13,6 +14,10 @@ interface Props {
 	theme: Theme;
 	onThemeChange: (theme: Theme) => void;
 	onSave: (body: SaveProviderBody) => Promise<string | undefined>;
+	// The installed-skill list is a read-only fact view in this step: the
+	// install/remove routes do not exist yet (design §13.1), so the controls
+	// render disabled rather than being added later as new DOM.
+	loadSkills: () => Promise<SkillInfo[]>;
 	onClose: () => void;
 }
 
@@ -38,6 +43,7 @@ export default function SettingsDialog({
 	theme,
 	onThemeChange,
 	onSave,
+	loadSkills,
 	onClose,
 }: Props) {
 	const options = presets.length > 0 ? presets : FALLBACK_PRESETS;
@@ -56,6 +62,25 @@ export default function SettingsDialog({
 	const [apiKeyEnv, setApiKeyEnv] = useState(
 		provider?.apiKeyEnv ?? initialInfo?.apiKeyEnv ?? "",
 	);
+	const [installed, setInstalled] = useState<SkillInfo[] | null>(null);
+	const [skillsError, setSkillsError] = useState<string | null>(null);
+
+	useEffect(() => {
+		let live = true;
+		loadSkills()
+			.then((list) => {
+				if (live) setInstalled(list);
+			})
+			.catch((cause) => {
+				if (!live) return;
+				// No sample rows stand in for a failed read; the section says so.
+				setSkillsError(cause instanceof Error ? cause.message : String(cause));
+			});
+		return () => {
+			live = false;
+		};
+	}, [loadSkills]);
+
 	// Key lives only in this field's local state; it is never prefilled and never
 	// written to the shared client state.
 	const [apiKey, setApiKey] = useState("");
@@ -275,6 +300,76 @@ export default function SettingsDialog({
 								autoComplete="off"
 							/>
 						</label>
+
+						<div className="field">
+							<span className="field-label">已安装 Skill</span>
+							{skillsError !== null ? (
+								<span className="field-hint field-error">
+									读取已装 Skill 失败：{skillsError}
+								</span>
+							) : installed === null ? (
+								<span className="field-hint">正在读取已装 Skill…</span>
+							) : installed.length === 0 ? (
+								<span className="field-hint">还没有安装任何 Skill。</span>
+							) : (
+								<table className="preview-table">
+									<thead>
+										<tr>
+											<th>名称</th>
+											<th>包名</th>
+											<th>版本</th>
+											<th>说明</th>
+											<th>操作</th>
+										</tr>
+									</thead>
+									<tbody>
+										{installed.map((skill) => (
+											<tr key={skill.name}>
+												<td>{skill.name}</td>
+												<td>{skill.packageName}</td>
+												<td>{skill.version}</td>
+												<td>{skill.description}</td>
+												<td>
+													<button
+														type="button"
+														className="btn small"
+														disabled
+														title="安装/移除在 CLI 侧完成"
+													>
+														移除
+													</button>
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							)}
+							<div className="field-row">
+								<label className="field">
+									<span className="field-label">安装 Skill</span>
+									<input
+										className="field-input"
+										placeholder="npm 包名或 spec，例如 @acme/skill-blueprint"
+										disabled
+									/>
+								</label>
+								<div className="panel-actions">
+									<button type="button" className="btn small" disabled>
+										安装
+									</button>
+								</div>
+							</div>
+							<span className="field-hint">
+								安装/移除请在 CLI 侧：
+								<code>my-agent skill add &lt;spec&gt;</code> /{" "}
+								<code>my-agent skill remove &lt;name&gt;</code>
+								（此处的按钮本期不可用）
+							</span>
+							<span className="field-hint">
+								安装/移除会立即对所有 Bot 可见；哪些 Bot 能用由各 Bot
+								设置页的勾选决定。
+							</span>
+						</div>
 
 						{error !== null && (
 							<div className="dialog-error" role="alert">

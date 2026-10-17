@@ -507,6 +507,7 @@ export default function App() {
 					theme={theme}
 					onThemeChange={changeTheme}
 					onSave={hub.saveProvider}
+					loadSkills={hub.loadSkills}
 					onClose={hub.closeSettings}
 				/>
 			)}
