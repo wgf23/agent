@@ -6,7 +6,13 @@ import { supportsBotScopedTools as webSupports } from "../../web/src/botScope.js
 // The web build cannot import from src/, so the panel keeps its own copy of
 // this rule. That copy is only safe if it cannot drift, and a comment cannot
 // enforce that — this test can. One list, both call sites.
-const backends: BackendKind[] = ["native", "cli"];
+//
+// The list is derived from a `satisfies Record<BackendKind, true>`, so adding
+// a backend kind fails to compile instead of silently escaping the loop.
+const backends = Object.keys({
+	native: true,
+	cli: true,
+} satisfies Record<BackendKind, true>) as BackendKind[];
 
 describe("bot-scoped tools predicate", () => {
 	it("agrees across the runtime and the web panel for every backend", () => {

@@ -24,6 +24,19 @@ const installed: Skill[] = ["alpha", "beta"].map((name) => ({
 
 let workspace: string;
 
+// The full acceptance path: what the writer stored, run back through the
+// schema the reader uses. A field the reader drops is a bug even when the
+// on-disk JSON looks right, so every write shape asserts through this.
+async function readBackScope(robName: string) {
+	const result = await readProjectConfig(workspace);
+	expect(result.ok).toBe(true);
+	if (!result.ok) throw new Error(result.error);
+	const rob = result.config.robs?.find((entry) => entry.name === robName);
+	expect(rob).toBeDefined();
+	if (rob === undefined) throw new Error(`missing rob ${robName}`);
+	return { raw: rob, visible: visibleSkills(installed, rob) };
+}
+
 beforeEach(async () => {
 	workspace = await makeWorkspace("my-agent-project-");
 });
@@ -241,14 +254,12 @@ describe("addRob skill scope", () => {
 		});
 
 		expect(result).toEqual({ ok: true });
-		const written = JSON.parse(
-			await readFile(join(workspace, "my-agent.json"), "utf8"),
-		);
-		expect(written.robs[0].skills).toEqual([]);
-		expect(written.robs[0].skillsConfigured).toBe(true);
 		// The point of the flag: this reads back as "no skills", not as the
 		// truth table row that hands over everything installed.
-		expect(visibleSkills(installed, written.robs[0])).toEqual([]);
+		const { raw, visible } = await readBackScope("newbot");
+		expect(raw.skills).toEqual([]);
+		expect(raw.skillsConfigured).toBe(true);
+		expect(visible).toEqual([]);
 	});
 
 	it("refuses a skillsConfigured flag without a list", async () => {
@@ -518,12 +529,10 @@ describe("updateRob", () => {
 			skills: [],
 		});
 
-		const written = JSON.parse(
-			await readFile(join(workspace, "my-agent.json"), "utf8"),
-		);
-		expect(written.robs[0].skills).toEqual([]);
-		expect(written.robs[0].skillsConfigured).toBe(true);
-		expect(visibleSkills(installed, written.robs[0])).toEqual([]);
+		const { raw, visible } = await readBackScope("atlas");
+		expect(raw.skills).toEqual([]);
+		expect(raw.skillsConfigured).toBe(true);
+		expect(visible).toEqual([]);
 	});
 
 	it("confirms a non-empty skill list on write", async () => {
@@ -539,19 +548,12 @@ describe("updateRob", () => {
 			skills: ["alpha"],
 		});
 
-		const written = JSON.parse(
-			await readFile(join(workspace, "my-agent.json"), "utf8"),
-		);
-		expect(written.robs[0].skills).toEqual(["alpha"]);
-		expect(written.robs[0].skillsConfigured).toBe(true);
-		expect(visibleSkills(installed, written.robs[0])).toEqual([installed[0]]);
-		// The stored file has to survive the schema on the way back in, not
-		// just the assertions above: a field the reader drops is still a bug.
-		const reread = await readProjectConfig(workspace);
-		expect(reread.ok).toBe(true);
-		if (!reread.ok) return;
-		expect(reread.config.robs?.[0]?.skills).toEqual(["alpha"]);
-		expect(reread.config.robs?.[0]?.skillsConfigured).toBe(true);
+		// Reads back through the schema, not just JSON.parse: a field the
+		// reader drops is a bug even when the file looks right.
+		const { raw, visible } = await readBackScope("atlas");
+		expect(raw.skills).toEqual(["alpha"]);
+		expect(raw.skillsConfigured).toBe(true);
+		expect(visible).toEqual([installed[0]]);
 	});
 
 	it("keeps an explicit skillsConfigured:false as the way back to the default", async () => {
@@ -578,11 +580,9 @@ describe("updateRob", () => {
 			skillsConfigured: false,
 		});
 
-		const written = JSON.parse(
-			await readFile(join(workspace, "my-agent.json"), "utf8"),
-		);
-		expect(written.robs[0].skillsConfigured).toBe(false);
-		expect(visibleSkills(installed, written.robs[0])).toHaveLength(2);
+		const { raw, visible } = await readBackScope("atlas");
+		expect(raw.skillsConfigured).toBe(false);
+		expect(visible).toHaveLength(2);
 	});
 
 	it("round-trips a skill whitelist and MCP selection through the file", async () => {
