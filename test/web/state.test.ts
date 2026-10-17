@@ -6,6 +6,7 @@ import type {
 	SearchResponse,
 	ServerEvent,
 } from "../../shared/protocol";
+import { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS } from "../../src/rob/room.js";
 import {
 	applyAgentEvent,
 	clientReducer,
@@ -468,8 +469,8 @@ const shipIt: RoomInfo = {
 	pending: 0,
 	deliverable: null,
 	limits: {
-		minMembers: 2,
-		maxMembers: 6,
+		minMembers: ROOM_MIN_MEMBERS,
+		maxMembers: ROOM_MAX_MEMBERS,
 		maxRounds: 3,
 		maxMessagesPerRun: 10,
 		maxQueuedSends: 5,

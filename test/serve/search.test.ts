@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { RoomView } from "../../src/rob/room.js";
+import {
+	ROOM_MAX_MEMBERS,
+	ROOM_MIN_MEMBERS,
+	type RoomView,
+} from "../../src/rob/room.js";
 import {
 	MAX_SESSION_MATCHES,
 	matchText,
@@ -53,8 +57,8 @@ function room(name: string, transcript: RoomView["transcript"]): RoomView {
 		pending: 0,
 		deliverable: null,
 		limits: {
-			minMembers: 2,
-			maxMembers: 6,
+			minMembers: ROOM_MIN_MEMBERS,
+			maxMembers: ROOM_MAX_MEMBERS,
 			maxRounds: 3,
 			maxMessagesPerRun: 10,
 			maxQueuedSends: 5,

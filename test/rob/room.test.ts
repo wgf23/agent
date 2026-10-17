@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	type DeliverableOutcome,
+	ROOM_MAX_MEMBERS,
 	ROOM_MAX_STORED_ENTRIES,
+	ROOM_MIN_MEMBERS,
 	ROOM_TURN_TIMEOUT_MS,
 	Room,
 	type RoomDeliverableDraft,
@@ -16,7 +18,7 @@ import {
 } from "../../src/rob/room.js";
 import { newRoomState } from "../../src/rob/room-store.js";
 import type { RobName } from "../../src/rob/types.js";
-import { MemoryRoomLedger, waitFor } from "./helpers.js";
+import { MemoryRoomLedger, memberNames, waitFor } from "./helpers.js";
 
 type TurnAction =
 	| { readonly kind: "post"; readonly texts: readonly string[] }
@@ -306,8 +308,8 @@ describe("Room", () => {
 			pending: 0,
 			deliverable: null,
 			limits: {
-				minMembers: 2,
-				maxMembers: 6,
+				minMembers: ROOM_MIN_MEMBERS,
+				maxMembers: ROOM_MAX_MEMBERS,
 				maxRounds: 3,
 				maxMessagesPerRun: 10,
 				maxQueuedSends: 5,
@@ -1460,13 +1462,35 @@ describe("validateRoomMembers", () => {
 		).toEqual({ status: "ok", members: ["builder", "planner"] });
 	});
 
-	it("rejects member counts above six", () => {
+	it("accepts the full member range and rejects one past it", () => {
+		// Derived, never literal: a hard-coded 20 here would drift the moment
+		// ROOM_MAX_MEMBERS moves, which is exactly what this test guards.
+		const roster = memberNames(ROOM_MAX_MEMBERS + 1);
+		const full = memberNames(ROOM_MAX_MEMBERS);
+		expect(validateRoomMembers(full, roster)).toEqual({
+			status: "ok",
+			members: full,
+		});
 		expect(
-			validateRoomMembers(
-				["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"],
-				["alpha"],
-			),
+			validateRoomMembers(memberNames(ROOM_MAX_MEMBERS - 1), roster),
+		).toEqual({ status: "ok", members: memberNames(ROOM_MAX_MEMBERS - 1) });
+		expect(
+			validateRoomMembers(memberNames(ROOM_MAX_MEMBERS + 1), roster),
 		).toEqual({ status: "rejected", reason: "member_count" });
+	});
+
+	it("rejects a room with too few members", () => {
+		const roster = memberNames(ROOM_MIN_MEMBERS);
+		expect(validateRoomMembers(memberNames(ROOM_MIN_MEMBERS), roster)).toEqual({
+			status: "ok",
+			members: memberNames(ROOM_MIN_MEMBERS),
+		});
+		expect(
+			validateRoomMembers(memberNames(ROOM_MIN_MEMBERS - 1), roster),
+		).toEqual({
+			status: "rejected",
+			reason: "member_count",
+		});
 	});
 
 	it("rejects a repeated member", () => {

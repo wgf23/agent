@@ -18,6 +18,12 @@ import type {
 	TurnHost,
 } from "../../src/rob/types.js";
 
+/** A roster of distinct, schema-valid names. Membership tests need a length,
+ *  not identities, so the names are derived from the count. */
+export function memberNames(count: number): RobName[] {
+	return Array.from({ length: count }, (_, index) => `member-${index}`);
+}
+
 /** The room's persistence port in memory, for tests that do not exercise the
  *  file store (graft 3). */
 export class MemoryRoomLedger implements RoomLedger {

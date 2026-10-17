@@ -10,6 +10,7 @@ import { projectFilePath } from "../../src/config/project-file.js";
 import type { ProviderSettings } from "../../src/config/resolve.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import type { Provider } from "../../src/providers/types.js";
+import { ROOM_MAX_MEMBERS, ROOM_MIN_MEMBERS } from "../../src/rob/room.js";
 import { createRoomStore, newRoomState } from "../../src/rob/room-store.js";
 import { buildServer } from "../../src/serve/server.js";
 import {
@@ -80,8 +81,8 @@ function createHub(
 }
 
 const roomLimits = {
-	minMembers: 2,
-	maxMembers: 6,
+	minMembers: ROOM_MIN_MEMBERS,
+	maxMembers: ROOM_MAX_MEMBERS,
 	maxRounds: 3,
 	maxMessagesPerRun: 10,
 	maxQueuedSends: 5,
@@ -459,7 +460,7 @@ describe("TeamHub", () => {
 		});
 		expect(rejected.status).toBe(400);
 		expect(await rejected.json()).toEqual({
-			error: "A room needs 2 to 6 members.",
+			error: `A room needs ${ROOM_MIN_MEMBERS} to ${ROOM_MAX_MEMBERS} members.`,
 		});
 
 		const badInterrupt = await post("/api/rooms/interrupt", {});

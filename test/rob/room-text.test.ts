@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { RoomEntry, RoomView } from "../../src/rob/room.js";
+import {
+	ROOM_MAX_MEMBERS,
+	ROOM_MIN_MEMBERS,
+	type RoomEntry,
+	type RoomView,
+} from "../../src/rob/room.js";
 import {
 	parseRoomMentions,
 	renderAbsentMembers,
@@ -270,8 +275,8 @@ describe("renderRoomOutcome", () => {
 		pending: 0,
 		deliverable: null,
 		limits: {
-			minMembers: 2,
-			maxMembers: 6,
+			minMembers: ROOM_MIN_MEMBERS,
+			maxMembers: ROOM_MAX_MEMBERS,
 			maxRounds: 3,
 			maxMessagesPerRun: 10,
 			maxQueuedSends: 5,
@@ -325,7 +330,7 @@ describe("renderRoomOutcome", () => {
 			],
 			[
 				{ status: "rejected", reason: "member_count" },
-				"A room needs 2 to 6 members.",
+				`A room needs ${ROOM_MIN_MEMBERS} to ${ROOM_MAX_MEMBERS} members.`,
 			],
 			[
 				{ status: "rejected", reason: "unknown_member" },

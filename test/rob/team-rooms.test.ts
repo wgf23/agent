@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import type { Provider, StreamEvent } from "../../src/providers/types.js";
 import type { TeamEvent } from "../../src/rob/events.js";
-import type { RoomConfig, RoomEvent, RoomState } from "../../src/rob/room.js";
+import {
+	ROOM_MAX_MEMBERS,
+	ROOM_MIN_MEMBERS,
+	type RoomConfig,
+	type RoomEvent,
+	type RoomState,
+} from "../../src/rob/room.js";
 import {
 	createRoomStore,
 	newRoomState,
@@ -68,8 +74,8 @@ const roomReply = (text: string): StreamEvent[] => [
 ];
 
 const ROOM_LIMITS = {
-	minMembers: 2,
-	maxMembers: 6,
+	minMembers: ROOM_MIN_MEMBERS,
+	maxMembers: ROOM_MAX_MEMBERS,
 	maxRounds: 3,
 	maxMessagesPerRun: 10,
 	maxQueuedSends: 5,
