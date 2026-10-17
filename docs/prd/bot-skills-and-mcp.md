@@ -406,6 +406,10 @@
 
 > **更正记录（pm 自纠）**：本表初版把 1、2 两行写成「零调用」，那是 `523ded5` 之前的快照。**leader 指出后我复核，两处均已接线。** 这正是本表要防的错误，发生在写表人身上，一并留痕。
 
+> **§12.8a 补充（2026-10-17，leader 提议、pm 采纳并收紧）**：**引用 PRD 内任何表格作为「现状」前，必须先核该表的表头 HEAD 是否等于当前 HEAD**；不等于则只能按「历史留档」引用，并写明其 HEAD。
+> 本轮已发生 4 起同类错误（按过期快照报缺陷）：`botScope.ts` 缺 `.js`、`file 未创建`、`schema 腿 1/4`、**AC-7「差 4 项」**（后者由 leader 向用户误报，引用的是标着 `HEAD 047dc7f` 的 §12.9 状态表，而实际 HEAD 已是 `ca70bc2` 之后）。
+> **配套硬规则**：状态表标题必须写成「当前状态（**HEAD `<hash>`**）」形式；终判前对每张状态表做一次 HEAD 比对，不一致的表**整表作废重测**，不得逐行挑着用。
+
 **判定规则（进入终判流程）**：任何 AC 的取证，必须同时核 **①生产路径是否调用该函数/分支；②是否有跨层集成用例经过该路径**。仅「有纯函数 + 有单测」**不得记绿**，一律按「用例空转 / 未实现」报。
 **根因**：设计先冻结了接口，实现方按签名写了函数与单测，但接线是第二步 —— 两个步骤之间没有任何自动检查。**缓解**：AC 表格里区分「单测」与「集成/接线」两列，接线列没有证据即视为未完成（本文 §12.9 已按此写法）。
 
@@ -516,3 +520,42 @@
 | `git ls-files docs/prd/` | **6**（非空，规则达标）|
 | 密钥扫描 | `sk-` / `ghp_` / `BEGIN … PRIVATE KEY` / `api_key=` **0 命中** |
 | 遗留 | `M docs/prd/bot-skills-and-mcp.md`（**本文 §15 的自纠内容**，未提交，需一笔 `docs:` 补） |
+
+---
+
+## 16. 子线 B 的交付切分与排期（2026-10-17，pm 裁定）
+
+### 16.1 关键结论：B-6 不必等 B-5
+原计划顺序是「B-4 只读接口 → B-5 写接口 → B-6 Web UI」。**实测后修正**：
+- `PATCH /api/bots` 与 `POST /api/bots` **已能透传三个字段**（`523ded5`，`server.ts:905-915`），`GET /api/bots` **已回显 scope**（`56b8faa`，`team.ts:588-592`）
+- ⇒ **「给 bot 勾选 skill / 启用某个已配置 MCP server」这条主链，写路径已经完整**，只缺「全局候选清单」的读接口（`GET /api/skills`、`GET /api/mcp`）
+- B-5 的四个写接口（从 UI 里装/删 skill、增删 MCP server **定义**）是**便利性增强**，不是主链前置
+
+**因此排期改为**：`B-4（2 个只读接口）→ B-6a（面板勾选 + 已装清单）→ B-5（写接口）→ B-6b（面板内装/删、MCP server 定义编辑）`
+⇒ 用户**最早能看到效果的时点**从「B-5 之后」提前到 **B-4 + B-6a 之后**。
+
+### 16.2 规模估算（供 leader 排期；pm 估算，非承诺）
+| 子线 | 内容 | 规模 |
+|---|---|---|
+| **B-4** | `GET /api/skills`（`discoverSkills()`→`SkillInfo[]`，**不下发 `dir`**，U4）、`GET /api/mcp`（`envKeys` 只回键名） | 小：约 100 行 + 6 用例 |
+| **B-6a** | `BotSettingsPanel` 两个区块（skills 勾选 / mcp 勾选 + dirty 标记）、`SettingsDialog` 已装 skill 清单、`useHub` 2 个方法、`botScope.ts` 接线（CLI backend 灰显 + 「由该 CLI 自管」文案）、**移动端契约不破** | 中：约 350–450 行 + 8–10 用例 |
+| **B-5** | 4 个写接口 + loopback-only 403 + `PUT/DELETE /api/mcp` 必须带 `restartRequired: true` + 无半装回滚复用 `addSkill/removeSkill` | 中：约 200 行 + 10 用例 |
+| **B-6b** | 面板内安装/删除 skill、MCP server 定义增删改 + 「已保存，重启后生效」提示 | 中：约 200 行 + 6 用例 |
+**合计约 3–4 个 dev 日**（不含 review/qa/ci 往来）。**B-4 + B-6a 约 1–1.5 日**，即可交付「手机上看得到效果」的最小闭环。
+
+### 16.3 「本线已交付什么 / 手机能感知什么」——对外口径（终判沿用）
+**已交付（运行时 + API）**：
+1. 配置层：`robs[]` 三个可选字段 + 四态真值表 + `normalizeSkillScope` 单守卫（create/update 共用）
+2. 运行时：每 bot 独立 skill 白名单（系统提示与 `load_skill` **同一 turn 快照**一致）、每 bot MCP 工具过滤（`createRob` 一处）
+3. 协议：`BotDraft` / `BotInfo` 纯追加（`shared/protocol.ts` +14/−0，零删除）
+4. 服务端：`POST/PATCH /api/bots` 原样透传、`GET /api/bots` 回显、写侧归一仅在落盘函数（HTTP 层不做策略）
+5. MCP 安全：notice / connect / dispose 三条路径统一 `redactMcpServer`；`createClient` 测试缝（缺省 `StdioMcpClient`）
+
+**手机 UI 上能感知的：零。** 硬证据：`web/src/botScope.ts` 无任何组件引用（唯一引用是 `test/rob/bot-scope-consistency.test.ts`），web 产物与 `ad3b41a` **逐字节相同**（`index-X8xuyzSI.js` 570,444 B / `index-BzkrIWNV.css` 50,230 B）。
+⇒ **须向用户明说**：本线交付的是**运行时与 API 能力**，面板 UI（灰显、勾选、已装清单）属 B-6，**不是本轮可见成果**；**已发布移动端无需重新分发**。
+**一处运行期行为变更（须进发布说明，§12.10）**：`mcp` 缺省的 bot 从「拿到全部 MCP 工具」变为「零个」（U6 刻意非对称），**非回归**。
+
+**可演示路径（无需等 B-6）**：
+1. `my-agent skill add ./test/fixtures/skill-valid` → `my-agent skill list`（表格含 name/package/version/description/path）—— **当前机器 `~/.config/my-agent/skills` 为空，`skill list` 只会打印 `No skills installed.`**，需先装一个
+2. `my-agent.json` 的 `robs[].skills` / `mcp` 手写后重启 serve，用 `curl /api/bots` 看回显（**当前 12 个 rob 三字段全缺省，`mcpServers` 为空**，故无内容可看）
+3. **不建议**把 1/2 当「效果演示」给用户看 —— 那是配置演示，不是 UI
