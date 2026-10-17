@@ -24,11 +24,18 @@
 `RoomView.limits` 已由 `minMembers: ROOM_MIN_MEMBERS` / `maxMembers: ROOM_MAX_MEMBERS` 构造，
 值导入迁移后**语义不变**；`src/serve/team.ts` 原样透传 `limits: { ...view.limits }`。
 ⇒ **`web/src/**` 本线零改动**，前端不得出现上限字面量；UI 展示只读 API 值（AC-4 的判据）。
+> 房间数据**只经 SSE `GET /api/events` 首帧 `hello` 下发**（`ServerEvent.type === "hello"` 的 `rooms: RoomInfo[]`）；没有 REST `GET /api/rooms`。所有「只读核对」必须照此取数。
 
-## 4. 运维动作：不入库、不改房间语义
+## 4. 运维动作：按「是否被已提交文档引用」分三类
 
-- 一次性脚本（`scripts/room-members.mjs` 等）**不进 commit**；`my-agent.json` / `*.bak-*` 是 untracked 本地配置，不进 commit。
+- **入库（可重复、非破坏性）**：`scripts/room-members.mjs`。`docs/rnd-team.md`（`89e9a12` 已提交）把 `node scripts/room-members.mjs rnd` 写成了房间迁移的标准做法，文档在库而脚本不在库 ⇒ 用户照做会 `MODULE_NOT_FOUND`。它只改一个**已存在**房间的 `members`/`coordinator`/`updatedAt`，先写 `.bak` 兄弟文件、保留 transcript、带 `--dry-run`，可重跑。
+- **不入库（一次性、破坏性）**：本线实际执行的那支运维脚本（备份 → 删 `ppp.json` → 删 6 个 `bots/*.json` → `kill -9` serve → 由 systemd 拉起），只存在于本地 `/tmp`，进 commit 等于把"删数据"固化成仓库能力。
+- **永不入库（本地运行态/工具残留）**：`my-agent.json`、`my-agent.json.bak-*`、`.playwright-mcp/`、`scripts/self-dev/`。
 - 时序按 PRD FR-6：`build` → 停 serve → 改 config / ledger / 备份并删 `bots/*.json` → 启动 → 只读核对。
+- **`room-members.mjs` 入库前须补两条（现脚本没有，属真缺口）**：
+  1. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 **exit 1、不写盘**。理由：脚本裸 `JSON.parse(my-agent.json)`，**不经过** `src/config/project-file.ts:95` 的 `validateRoomMembers`/`validateRoomCoordinator`；把 roster 外成员写进 ledger 后，下次启动会在 `src/rob/team.ts` 的 `seedState` 直接 `throw` —— 那是 `TeamOptions` **构造期**的异常，整个 team 起不来（不只是那个房间），而脚本早已自报 `written`。校验须在写 `.bak`/`.tmp` **之前**做。
+  2. **文档写明「必须先停 serve 再跑」**：`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json` 是进程内存态的落盘点，房间任一写盘都会整份覆盖脚本的修改**且不报任何错**。顺序：停 serve → 跑脚本 → 启动。
+- 分工边界：本线实际运维用 `/tmp` 那支脚本自行用 python 重写 ledger，**不调用 `room-members.mjs`**，两者无耦合 —— 改脚本不得去动 `/tmp` 里已冻结的那支。
 - 设计侧不定义 ledger 的删除语义（无 DELETE 接口 = 删文件），也不改 SSE 事件与 `@` mention 规则。
 
 ## 5. 取证点（交 qa / review）
@@ -37,8 +44,14 @@
 |---|---|
 | AC-1/AC-2 | ① **取值锚**（AC-1 唯一允许的字面值）：`expect(ROOM_MAX_MEMBERS).toBe(20)`，全仓**有且仅有 1 处**；② 边界断言：19/20 通过、21 拒 `reason === "member_count"`、1 拒、2 通过 |
 | AC-3 | **成对**变异探针（单探针无效，见下方注记）：常量改 21 **且** 把 `src` 文案硬编码回旧值 ⇒ 必须红 |
-| AC-4 | `grep -rn "maxMembers" web/src` 无硬编码数字；`GET /api/rooms` 的 `limits.maxMembers === 20` |
+| AC-4 | ① `grep -rn "maxMembers" web/src` 无硬编码数字；② **`GET /api/events` 首帧 `hello`** 的 `rooms[]` 中 `name === "rnd"` 项：`limits.maxMembers === 20`（**没有 `GET /api/rooms` 这个路由**，房间数据只随 SSE `hello` 下行） |
 | AC-5 | 测试 fixture `import { ROOM_MAX_MEMBERS }` 派生；`grep -rn "maxMembers: [0-9]\|to 6 members\|to 8 members" src test web` 零命中 |
+
+> **AC-4 取证面（两条极易假绿的坑，leader 实测）**：
+> ① **`limits.maxMembers` 验不出「8 人」**。它由 `ROOM_MAX_MEMBERS` 派生，与 ledger 内容无关——运维前（rnd 仍 6 人 / coordinator 仍 pm）量到的就是 `20`。
+> ⇒ AC-4 只能证明「线上进程跑的是 cap-20 代码」；**成员表与 coordinator 必须另用 `hello.rooms[name==="rnd"].members` / `.coordinator` 逐名断言**（对应 AC-8），不得拿这个恒真值报绿。
+> ② **只读核对必须落在重启后的进程上**，否则测的是旧进程（旧 dist 也是 20 口径，量出来一样绿）。前置断言：`systemctl show -p MainPID --value my-agent` 与运维前不同（**这是硬判据**），且 `dist/index.js` 内含 `ROOM_MAX_MEMBERS = 20`。`dist` 的 sha256（`1c7500a` 构建时为 `ccb2773a…`）只作**旁证记一笔**：本线源码定稿后它不该再变，但后续线会重建 dist，写死 sha 会误红——故不入 gate。
+> 事件形状（`shared/protocol.ts` `RoomInfo`）：`{ name, members, coordinator, transcript, run, pending, deliverable, limits: { minMembers, maxMembers, maxRounds, maxMessagesPerRun, maxQueuedSends } }`。
 
 > **AC-1 取值锚 vs AC-5「禁裸数字」不是冲突，是白名单**（qa 探针 C 逼出的缺口）：
 > 全仓**只允许 1 行**出现上限字面值 —— `test/rob/room.test.ts` 的 `expect(ROOM_MAX_MEMBERS).toBe(20)`。

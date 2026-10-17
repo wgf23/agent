@@ -81,17 +81,36 @@ rnd 最终成员 = `manager, pm, architect, ui, dev, qa, review, ci`（8 人）�
   - 发言顺序 `manager → pm → architect → ui → dev → qa → review → ci` 保留；`manager` 的入口/调度定位与权限约束**一字不删**。
   - **判据（带引号，避免误红）**：`grep -n '"coordinator"' docs/rnd-team.md` 必须是 `"manager"`；`grep -n 'coordinator（`manager`）' docs/rnd-team.md` 命中 1 行。裸词 `manager` 出现在发言顺序/`@manager` 属预期，**不判红**（dev 提醒的精度问题，采纳）。
 - **AC-7** 运维动作可回滚：执行前把 `my-agent.json`、`~/.local/share/my-agent/rooms/-home-heiwa-my-agent/ppp.json`、`~/.local/share/my-agent/bots/{test,pi-test,opencode,dmtest,aaa,leader}.json` 备份到 `~/.local/share/my-agent/backup-<ts>/`；备份存在且非空。
-- **AC-8** 重启后只读核对（不接受「改文件时说没问题」）：
-  - `rnd.json.members` = 8 人且 coordinator = **`manager`**；API `GET /api/rooms` 的 `limits.maxMembers` = 20；
-  - `ppp.json` 不存在；6 个 bot 的 `bots/*.json` 不存在；`my-agent.json.robs` 不再含这 6 个；
-  - `rnd.json` 能正常新增/移除成员（不再是只读死胡同）。
+- **AC-8** 重启后只读核对（不接受「改文件时说没问题」）。取证载体 = **SSE `GET /api/events` 首帧 `hello`**（本仓**没有** `GET /api/rooms` 路由，实测返回 `{"error":"not found"}`，用它会假红）：
+  - **① 进程已换**：重启后 `systemctl show -p MainPID --value my-agent` 与执行前不同（证明读的是新进程，不是老进程里的内存态）。
+  - **② 成员表逐名相等**：`hello.rooms[]` 中 `name === "rnd"` 项，`members` **按集合逐名等于** `manager, pm, architect, ui, dev, qa, review, ci`（**不得只断言长度 8**——长度相等而名单错会漏），且 `coordinator === "manager"`。
+  - **③ 上限**：同项 `limits.maxMembers === 20`。注意此项由常量派生，**即使成员表没迁也会是 20，不构成迁移证据**，只证明线上进程跑的是 cap-20 代码。
+  - **④ 删除面**：`ppp.json` 不存在；6 个 bot 的 `bots/*.json` 不存在（逐个点名，且**不断言 `bots/` 总数**——`ui`/`manager` 首次发言后会各自新建 store，总数 6→8 属预期）；`my-agent.json.robs` 不再含这 6 个。
+  - **⑤ 可写性**：`rnd.json` 能正常新增/移除成员（不再是只读死胡同）。
+  - 判据之间**互不替代**：② 证迁移、③ 证代码、① 证新鲜度、④⑤ 证删除与可写。
 - **AC-9** 回归：`test/rob/room-text.test.ts`、`test/rob/room.test.ts`、`test/rob/team-rooms.test.ts`、`test/serve/team.test.ts`、`test/serve/search.test.ts`、`test/web/state.test.ts` 全绿；全量 CI 由 ci 实跑报数。
+- **AC-10** `scripts/room-members.mjs` **拒绝非法状态**（写入前置校验；对应 design §4 第 1 条）：
+  - 给定 config 的 `rnd.members` 含一个**不在 `robs` 里**的名字 ⇒ `node scripts/room-members.mjs rnd` **exit ≠ 0**，且该房间 ledger 的**内容与 `mtime` 均不变**（不是"报错但也写了"）。
+  - 给定 `coordinator` **不在 `members` 里** ⇒ 同上（exit ≠ 0、ledger 不变）。
+  - `members` 含重复名，或含 `user`/`system` 这类保留名 ⇒ 同上。
+  - `--dry-run` 走**同一套校验**：非法时 exit ≠ 0（不得 exit 0 + 只打印告警）；合法时 exit 0 且不写任何文件。
+  - 校验必须发生在写 `.bak` / `.tmp` **之前**（非法时连 `.bak` 都不产生）。
+  - **人数上限/下限必须从 `src/rob/room-limits.ts` 取**（正则读源码或等价单一来源），**禁止在 `.mjs` 里写死 `2`/`20`** —— 否则破坏 AC-5 的单值源。
+- **AC-11** `docs/rnd-team.md` **写明迁移时序**（对应 design §4 第 2 条）：
+  - 判据：`grep -n "停 serve\|停止 serve\|先停" docs/rnd-team.md` 命中 ≥1 行，且该行与 `node scripts/room-members.mjs` 的用法**在同一节**（"已有房间需要迁移"）。
+  - 语义要求：必须表达「ledger 是进程内存态的落盘点，房间写盘会整份覆盖脚本结果且不报错」这一因果，而不只是出现"停 serve"四个字。
 
 ## 4. 实现约束（防返工）
 
 1. **不得制造运行时循环依赖**：`room.ts` 值导入 `room-text.ts`；因此 `room-text.ts` 不能反向值导入 `room.ts`。常量需抽到独立模块（如 `src/rob/room-limits.ts`），`room.ts` 保留 re-export 以免破坏既有导入方。
 2. **不碰红线外的东西**：本线允许 `src/rob/room.ts` 与 `src/rob/room-text.ts`（本 PRD 显式签字）。仍零命中：`screenshots/**`、SSE 事件语义、`@` mention 规则。
-3. **不把一次性运维脚本入库**：`scripts/room-members.mjs` 等不进 commit。
+3. **脚本入库口径按「是否被已提交文档引用」区分**（2026-10-17 裁决，修正原「一律不入库」）：
+   - **`scripts/room-members.mjs` 必须入库**：`docs/rnd-team.md:73-80`（已在 `89e9a12` 提交）把它写成了房间迁移的标准做法。文档引用而仓库里没有 = 用户照文档做会 `MODULE_NOT_FOUND`，属真缺陷。它也只做「按 config 同步一个已存在房间的 `members`/`coordinator`/`updatedAt`、先写 `.bak`」，不是破坏性一次性脚本。
+   - **真正的一次性破坏性运维脚本不入库**：本线实际执行的那支（备份 + 删 ppp + 删 6 个 bot store + kill serve）只在本地 `/tmp` 存在，不进 commit。
+   - **`my-agent.json` / `*.bak-*` / `.playwright-mcp/` / `scripts/self-dev/` 永不入库**（本地运行态与工具残留）。
+   - **`scripts/room-members.mjs` 入库前必须补两条**（2026-10-17 裁决，architect 提出、我核实成立）：
+     a. **写入前置校验（fail loud）**：`members ⊆ config.robs` 且 `coordinator ∈ members`，不满足即 exit 1、不写盘。理由：该脚本裸 `JSON.parse(my-agent.json)`，**不过** `src/config/project-file.ts:95` 的 `validateRoomMembers`，若把 roster 外成员写进 ledger，下次启动会在 `src/rob/team.ts` 的 `seedState` 直接 `throw`（房间起不来），而脚本已经打印 `written`。**状态是权威的，写坏的代价远高于早退。**
+     b. **`docs/rnd-team.md` 迁移段必须写明「先停 serve 再跑」**。理由：ledger 是进程内存态的落盘点，房间任一写盘会**整份覆盖**脚本结果且**无任何报错**——与 FR-6 的时序硬约束同源，不写就是文档级假绿。
 4. **提交拆分**：代码与测试一个 commit（可再拆 room/ 与 fixtures），运维动作不进 commit。
 
 ## 5. 风险与已知行为

@@ -726,7 +726,7 @@ sys.exit(1 if bad else 0)
 
 复核时**逐条打勾**，每条给出"怎么验"的机械判据（不靠读感受）。
 
-> **核对基线（§11.9 要求，缺了这张表就是腐坏源）**：基线 = **本文件最后一次提交**（`git log -1 -- docs/design/bot-skills-and-mcp.md` 给出），表内状态**不晚于**该提交，**未提交的 WIP 一律不纳入**。
+> **核对基线（§11.9 要求，缺了这张表就是腐坏源）**：基线 = **本文件最后一次编辑前的 HEAD `3571a89`**（下表状态即以此为基线；改表时重给），表内状态**不晚于**该提交，**未提交的 WIP 一律不纳入**——唯一例外是第 9 项，它按 leader 要求标注「工作区已验、待单独提交」。
 > ⇒ 复核时**先跑这条命令**：与表内判据列不符就以判据列为准重跑，**不要相信"当前状态"列**。（刻意不写死哈希：写死的那份必然过期，见 §11.9。）
 
 | # | 检查项 | 判据 | 当前状态 |
@@ -734,12 +734,12 @@ sys.exit(1 if bad else 0)
 | 1 | **C2 判定顺序** | `src/skills/tool.ts` 的 `execute`：① `SKILL_NAME_PATTERN` 格式校验 ② `allowed !== null && !allowed.includes` 立即 `ok:false`（**discover/read 零调用**）③ 之后才 discover/read | ✅ 已核代码 + spy 单测 |
 | 2 | **C10 单快照** | `src/rob/backend.ts` 的 `run()`：`await options.skills()` **只出现一次**；同一 `skills` 既进 `runAgent({skills})` 又 `.map(s => s.name)` 建 `createLoadSkillTool`；`extraTools` 为**新建数组**（无 push 累积） | ✅ 已核代码 |
 | 3 | **C11' 快照来源** | `createRob` 用 `skillScopeOf(config)`，闭包 `() => resolveBotSkills(scope)`；全文件不得出现 `skillsFor(` 或从 `this.options.robs` 反查 skill 配置 | ✅ 已核 |
-| 4 | **B1 四处真放行** | ① `server.ts` PATCH handler ② `server.ts` POST handler ③ `composite.ts` `toRobConfig` ④ `shared/protocol.ts` 的 `BotDraft` —— 四处都能看到 `skills`/`skillsConfigured`/`mcp` | ⛔ 待步骤 3 |
-| 5 | **无重复归一** | 上述四处 handler/composite **不得**出现 `?? true` 或 `skillsConfigured requires skills`；该字符串只应出现在 `src/config/project-file.ts` | ⛔ 待步骤 3 |
+| 4 | **B1 四处真放行** | ① `server.ts` PATCH handler ② `server.ts` POST handler ③ `composite.ts` `toRobConfig` ④ `shared/protocol.ts` 的 `BotDraft` —— 四处都能看到 `skills`/`skillsConfigured`/`mcp` | ✅ 已核（`523ded5`）：POST 传 `skills/skillsConfigured/mcp` 三键、PATCH 同三键、`toRobConfig` 三个 `if (draft.X !== undefined)`、`BotDraft` 三字段齐全 |
+| 5 | **无重复归一** | 上述四处 handler/composite **不得**出现 `?? true` 或 `skillsConfigured requires skills`；该字符串只应出现在 `src/config/project-file.ts` | ✅ 已核：`grep -rn "requires skills" src/ shared/ web/` 仅 `src/config/project-file.ts` 一处（无重复归一）；`grep -rn "?? true" src/serve/ shared/ web/src/` 仅 `web/src/components/WorkspaceBrowser.tsx` 的 `canSelect?.(cwd) ?? true`，与技能无关，**不计命中** |
 | 6 | **AC-7 过滤接线** | `filterToolsByServers` 在 `createRob` 被调用；三个生产调用点（`tui/index.tsx`、`serve/server.ts`、`cli/team.ts` 各一处 `mcpToolsByServer: mcp.toolsByServer,`）都传 `mcpToolsByServer` | 🟡 已接线（WIP 未提交），代码已核 |
 | 7 | **C4' `undefined` 逃生口** | `mcpToolsByServer === undefined` ⇒ `extraTools` 传**原引用**、不过滤；有值 + `config.mcp` 缺省 ⇒ `[]`（零 MCP 工具，U6） | 🟡 已核，与 §3.2 一致 |
 | 8 | **`servers` 严格断言同步** | 增 `McpServerSummary.tools` 后，`test/mcp/manager.test.ts` 的 `toolCount: 2` 的 `toEqual([{name,toolCount}])` 必须补 `tools`，否则必红 | ⛔ 待修（leader 已派 dev） |
-| 9 | **C12 用例** | bot 存 `skillsConfigured:true` → 切 CLI（配置与解析不变）→ 切回 native（`visibleSkills` 复原） | ⛔ 缺失（leader 已派 dev） |
+| 9 | **C12 用例** | bot 存 `skillsConfigured:true` → 切 CLI（配置与解析不变）→ 切回 native（`visibleSkills` 复原） | ✅ **工作区已验、随下一笔提交入库**：`test/rob/bot-skills-backend-switch.test.ts` 四例 =「keeps skills, skillsConfigured and mcp when the backend becomes cli」/「still applies after switching back to native」/「does not resurrect an empty confirmed list as every skill」（空集=真值表第 3 行）/「leaves an unconfigured bot unconfigured」。实跑 `4 passed`（clean HOME，`3571a89` 工作区） |
 | 10 | **落盘守卫两入口** | `normalizeSkillScope` 被 `writeRob` 与 `writeRobUpdate` 各调一次，且均**在文件 IO 之前** | ✅ 已核（`367f355`） |
 | 11 | **谓词双侧穷举** | `test/rob/bot-scope-consistency.test.ts` 用 `satisfies Record<BackendKind, true>` + `Object.keys` | ✅ 已核 |
 | 12b | **测试缝未外溢** | `createClient` 只出现在 `src/mcp/manager.ts` 的 `ConnectMcpServersInput` 与 `test/mcp/manager.test.ts`；`shared/`、`web/`、HTTP body、配置文件**零出现**；`grep -rn createClient shared/ web/ src/serve/` 应为空 | 已核 |

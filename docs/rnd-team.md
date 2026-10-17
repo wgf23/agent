@@ -67,7 +67,11 @@ MCP 服务器的环境也做了隔离：`HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME
 
 ## 已有房间需要迁移
 
-房间一旦有 ledger（`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json`）就以 ledger 为准，改 `my-agent.json` 不会改一个已经跑过的房间。要让 `my-agent.json` 里新的成员表（8 人，coordinator 为 `manager`）对一个已经跑过的房间生效，执行一次：
+房间一旦有 ledger（`~/.local/share/my-agent/rooms/<workspace-slug>/<room>.json`）就以 ledger 为准，改 `my-agent.json` 不会改一个已经跑过的房间。
+
+> ⚠️ 必须先停掉 serve 再执行。ledger 是 serve **内存态的落盘点**：serve 在跑时，房间只要发生一次写盘，就会用内存里的旧成员表**整份覆盖**本脚本的结果，**且不会报任何错**。顺序是：`systemctl stop my-agent` → 跑本脚本 → 再启动。
+
+要让 `my-agent.json` 里新的成员表（8 人，coordinator 为 `manager`）对一个已经跑过的房间生效，执行一次：
 
 ```bash
 node scripts/room-members.mjs rnd            # 会先写 .bak 备份
