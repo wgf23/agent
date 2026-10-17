@@ -799,14 +799,20 @@ PARAMS: {"properties":{"token":{"description":"Bearer sk-live-QA-DESC-7b1"}}}  �
 3. 拒绝 = **三处都不进**：不 `tools.push`、不写 `toolsByServer[name]`、不写 `servers`（**不是** `toolCount: 0` 的条目）。但 **client 仍留在 `clients` 数组**里交给最终 `dispose()`——拒绝的是可见性不是进程，否则被拒 server 的子进程泄漏（与 §3.3 口径一致）。
 4. 产出一条 notice，且**必须写明是安全策略而非普通连接失败**。**定稿措辞（dev 直接照抄，不要改写）**：
 
+   **三种拒因、三条定稿句（逐字照抄；句子的"原因"部分按拒因三选一，前缀不可改）**：
    ```
-   mcp <server>: refused by security policy — <where> repeats the value of env "<KEY>"
+   ① 命中 env 值      mcp <server>: refused by security policy — <where> repeats the value of env "<KEY>"
+   ② 非法 schema      mcp <server>: refused by security policy — <where> is malformed
+   ③ 外部 $ref        mcp <server>: refused by security policy — <where> points outside the schema
    ```
+   - **选哪条由拒因决定，不由位置决定**：① `rejectKind = "value"`（有 `<KEY>`）；② `rejectKind = "malformed"`（如 `examples` 非数组，§10 L5）；③ `rejectKind = "external-ref"`（规则 3，`$ref` 非 `#` 开头）。
+   - ⚠️ **②③ 里不得为了"格式统一"补一个 `env "<KEY>"`**：那两种情况**根本没有命中的 env 变量**，编一个键名 = 指向不存在的变量，用户会去查一个不存在的配置项。**"补一个最像的"比缺字段更坏**（与 §11.9「禁止为凑格式编造提交号」同一条原则）。
    - `<where>` 只有三个合法取值：`tool name`（工具名命中）、`tool text`（description 命中）、`tool schema`（schema 契约位置命中）。
    - `<KEY>` 是**被命中的 env 键名**（如 `API_KEY`）。多个键命中时取**字典序第一个**（保证输出确定、用例可断言）。
    - **硬约束：notice 只允许出现 env 键名；任何情况下不得出现值，也不得出现 `sanitize` 后的值。** 后者仍派生自密钥，且足以缩小爆破面。因此`redactMcpServer` 在这句上是 **no-op**（句子里本就没有值），**不要**指望它兜底。
    - 不许复述攻击者可控的工具名/工具文本（那是白送注入面），**只给位置 + 键名**。
    - **不得静默拒绝**：被拒 server 会从面板上"消失"，notice 是它唯一可诊断的痕迹。**必须能区分"安全策略拒绝"与"server 崩了"**——用户排错方向完全不同。
+   - **一条 fixture 只构造一种拒因**：同时存在两种拒因时"先命中哪条"取决于遍历顺序，**本设计不承诺该顺序**，用例不得对它下断言（否则断言绑死实现细节）。
 5. 其余 server 继续（沿用"一个 server 失败不影响其他"的既有语义）。
 6. **`description` 脱敏**：交给 `Rob`/`backend` **之前**，把每个 tool 的 `description` 换成 `scan.tools[i].description`（`scan` 已用该 server 的 `config.env ?? {}` 算好，见下方「调用顺序」的 ①→④）。**`manager.ts` 不要另写一遍 `redactMcpServer(description)`**——两处各算一次，迟早只改一处。**只替换文本、不重建对象语义**（name/execute 原样）。未过这一步 = 密钥发给模型，即使 name 干净。
 7. **展示面纵深防御**：写进 `servers[].tools` 前再过一遍 `redactMcpServer`。对被接受的 server 是 no-op（规则 2 已保证），但能兜住判定遗漏。**判定仍以规则 2 为准，不靠脱敏。**
@@ -832,6 +838,10 @@ PARAMS: {"properties":{"token":{"description":"Bearer sk-live-QA-DESC-7b1"}}}  �
    - **"原样"= 值相等，不是同一个对象引用**（**共享可变对象是本条线已实际踩过的坑**）：每个 tool 的 `parameters` 必须是**独立对象树**，任何容器（`properties`/`items`/`$defs`/`enum` 数组）**不得**在 tool 之间、或与模块级常量之间共用引用。判别法：**拿到 `parameters` 的人可以随意改它，且只能影响这一个 tool。**
      具体到空 schema 兜底：**必须每次返回新对象**（工厂函数，如 `src/tools/types.ts:14` 的 `emptyInputSchema()`），**禁止** `{ ...EMPTY_INPUT_SCHEMA }` 这类浅展开或直接复用模块常量——浅展开只复制了顶层、`properties` 仍是同一个对象，一个 tool 改了 `properties` 会污染所有后续 tool。
      这条与「三个调用点必须给同一个答案」不冲突：**形状一致（都答"对象、无属性"）而引用独立**，两件事都要满足。
+   - **重建容器必须能承载任意字符串键，`__proto__` 也不例外**（**这不是理论风险，是本线实测的静默数据损坏**）：
+     `JSON.parse('{"__proto__":{"type":"object"},"a":1}')` 会产出**自有** `__proto__` 键，`Object.entries` 也能看到它；但若把重建结果放进 `{}` 再用 `out[key] = …` 赋值，`__proto__` 会走 `Object.prototype` 的 setter ⇒ **该键既不会成为自有属性（被静默丢弃），又可能把结果对象的原型换掉**。两个后果都违反上一条「逐值相等」：**schema 少了一个属性，工具静默不可用**，而类型检查、`toEqual` 都可能照样通过。
+     ⇒ **落地要求**：重建容器二选一——`Object.create(null)`，或对每个键用 `Object.defineProperty(out, key, {value, enumerable: true, writable: true, configurable: true})`。**禁止**裸 `{}` + `out[key] = …`。同一要求适用于**任何**由外部数据重建对象的点（`properties`/`$defs`/`patternProperties` 的值、`examples` 内的样本对象等），不限顶层。
+     ⇒ **断言方式**：① 键集逐键比对（`Object.keys` / `hasOwnProperty`，**不要只靠 `toEqual`**）；② **原型未被数据顶替**：`Object.getPrototypeOf(out)` 只允许是 `null`（`Object.create(null)` 实现）或 `Object.prototype`（`defineProperty` 实现），**绝不允许等于某个 schema 值对象**。见 §13.6 12d。
    - 处理点：**`scan` 一次算完**（判拒 + 脱敏后的 description/parameters），**结果的"应用"**放在 `mapServerTools` 之后、交给 `Rob`/`backend` 之前。
 
 **调用顺序与责任边界（pm 点名；写死，别让 dev 两处各改一半）**
@@ -1009,6 +1019,7 @@ servers: { leaky: fake({ API_KEY: "sk-live-abc-123", DSN: "abc/def+ghi" }) }
 | 12 | **parameters 深扫（C15 第 5 条）** | ① 仅**自由文本 4 项**（`description`/`title`/`$comment`/`examples[]`）内嵌 secret ⇒ 被接受、这些位置全变 `«redacted»`、`toolDefinition(tool).parameters` 无 secret；② **契约位置 10 项逐一**命中 ⇒ **整 server 拒**（与 §13.3.1 分类表逐字对齐）；③ **嵌套深扫**（`properties.a.properties.b`）；④ 被接受时 `Object.keys(properties)`、`required`、`enum` **逐一原样**（证明未静默弄坏契约）；⑤ **`$ref` 三规则**：内部指针逐字未变、外部引用 ⇒ 拒、`$ref` 字面命中 env 值 ⇒ 拒（4c-2/4c-3/4c-4） |
 | 12b | **下标对齐** | 取用点有 `result.tools.length === infos.length && mapped.tools.length === infos.length` 断言，或按 name 建 `Map` 取（不得依赖隐式下标） |
 | 12c | **对象独立性（不得共享可变容器）** | 同一 server 的多个工具（含无 `inputSchema` 的兜底）⇒ `a.parameters !== b.parameters` 且 `a.parameters.properties !== b.parameters.properties`（**引用比较**）；改 A 的 `properties` 后 B 与模块常量均不变。判据来源：`test/mcp/redaction-parameters.test.ts` 的 `gives each tool its own properties object`。**注意**：这是**契约属性**（永远成立），不是状态 |
+| 12d | **schema 键的完整性与原型安全** | fixture 的 `properties`/`$defs` 用 `JSON.parse` 构造并含键 `__proto__`（值给一个对象）⇒ 被接受时 `Object.keys(parameters.properties)` **包含 `__proto__`**、`hasOwnProperty("__proto__")` 为真、该键的**值与其原值逐值相等**；且 `Object.getPrototypeOf(...)` 为 `null` 或 `Object.prototype`（**不得是 schema 里那个值对象的原型链**）。**假绿坑**：`toEqual` 在两侧都丢键时仍然相等 ⇒ 必须用键集断言；仅断言"没泄漏 secret"也抓不到（丢键与泄漏无关）。 |
 | 13 | **args 不回显** | `GET /api/mcp` 响应里**无 `args` 键**（`Object.keys(row)` 不含 `args`）、有 `argsCount`；配置 `["node","srv.js","--token=ghp_xxx"]` ⇒ `command === "node"`、`argsCount === 2`、响应体不含 `ghp_xxx`。<br>⚠️ **假红坑**：断"不含 args"**不能用** `JSON.stringify(body).includes("args")`——`argsCount` 自身就含子串 `args`；用 `Object.keys` / `not.toHaveProperty`。同理，若实现把整个 `config.command` 数组塞进 `command: string`（`String(cmd)`/`cmd.join(" ")`），类型检查照样过、但 token 原样下发 ⇒ 必须靠 `command === "node"` 这条断言抓 |
 
 ### 13.7 未闭合边界
