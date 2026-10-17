@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readOnlyAuthorize } from "../../src/agent/authorize.js";
 import { manualClock, manualTimer } from "../../src/bot/wake.js";
+import { mapServerTools, parseToolList } from "../../src/mcp/tools.js";
 import { createAllowAll } from "../../src/permissions/allow-all.js";
 import {
 	type ApprovalRequest,
@@ -131,6 +132,8 @@ describe("Team", () => {
 			providerFactory: (rob) => providers[rob.name],
 			workspaceRoot: workspace,
 			authorizerFactory: () => readOnlyAuthorize,
+			// No mcpToolsByServer: this is the compat port. With no grouping
+			// supplied, extraTools passes straight through to every native rob.
 			extraTools: [mcpTool()],
 		});
 
@@ -182,8 +185,17 @@ describe("Team", () => {
 				],
 			]),
 		};
-		const docsTool = mcpToolNamed("mcp__docs__search");
-		const githubTool = mcpToolNamed("mcp__github__issues");
+		const docsTool = mcpServerTools("docs", ["search"])[0];
+		const githubTool = mcpServerTools("github", ["issues"])[0];
+		// Taken from the mapped tools themselves, so the assertions below
+		// compare what the runtime advertises against a name production built.
+		const docsName = docsTool.name;
+		const githubName = githubTool.name;
+		// Pinned literally as well: deriving both sides from production would
+		// agree with itself, so the shape needs one independent statement. This
+		// is what fails if the server half of the name is dropped.
+		expect(docsName).toBe("mcp__docs__search");
+		expect(githubName).toBe("mcp__github__issues");
 		const team = new Team({
 			robs: [
 				{ name: "planner", role: "plan", mcp: ["docs"] },
@@ -215,12 +227,16 @@ describe("Team", () => {
 		const advertised = (name: string) =>
 			providers[name].requests[0].tools.map((tool) => tool.name);
 
-		expect(advertised("planner")).toContain("mcp__docs__search");
-		expect(advertised("planner")).not.toContain("mcp__github__issues");
-		expect(advertised("worker")).toContain("mcp__github__issues");
-		expect(advertised("worker")).not.toContain("mcp__docs__search");
-		expect(advertised("scout")).not.toContain("mcp__docs__search");
-		expect(advertised("scout")).not.toContain("mcp__github__issues");
+		expect(advertised("planner")).toContain(docsName);
+		expect(advertised("planner")).not.toContain(githubName);
+		expect(advertised("worker")).toContain(githubName);
+		expect(advertised("worker")).not.toContain(docsName);
+		// Absence of the two known servers is not enough: a third server added
+		// later would slip past a pair of not.toContain checks. Assert the
+		// whole mcp__ namespace is empty for a bot that enabled nothing.
+		expect(
+			advertised("scout").filter((name) => name.startsWith("mcp__")),
+		).toEqual([]);
 	});
 
 	it("keeps a cli rob out of the extra tools without crashing", async () => {
@@ -548,14 +564,23 @@ describe("Team sessions", () => {
 	});
 });
 
-function mcpToolNamed(name: string): Tool {
-	return {
-		name,
-		description: `${name} tool`,
-		readOnly: true,
-		parameters: { type: "object", properties: {} },
-		execute: async () => ({ ok: true, output: "ok" }),
-	};
+// Tools whose names come from the production mapping (mcpToolName through
+// mapServerTools), not typed by hand: change how a server's tool names are
+// generated and this test fails instead of quietly agreeing with itself.
+function mcpServerTools(server: string, toolNames: string[]): Tool[] {
+	const mapped = mapServerTools({
+		server,
+		client: {
+			initialize: async () => {},
+			listTools: async () => ({ tools: [] }),
+			callTool: async () => ({}),
+			dispose: async () => {},
+		},
+		infos: parseToolList({ tools: toolNames.map((name) => ({ name })) }),
+		existingNames: new Set(),
+	});
+	if (mapped.error !== undefined) throw new Error(mapped.error);
+	return mapped.tools;
 }
 
 function mcpTool(): Tool {

@@ -29,9 +29,12 @@ function fake(env: Record<string, string> = {}): McpServers[string] {
 
 describe("connectMcpServers", () => {
 	it("turns one server's failure into a notice without stopping the others", async () => {
+		const secret = "s3cr3t-mcp-env-value";
 		const result = await connectMcpServers({
 			servers: {
-				good: fake(),
+				// A server with an env value, so the summary has something it
+				// could wrongly carry back. The value reaches only the spawn.
+				good: fake({ MCP_SECRET_TOKEN: secret }),
 				bad: { command: ["/nonexistent-binary"] },
 			},
 			workspaceRoot: process.cwd(),
@@ -56,6 +59,14 @@ describe("connectMcpServers", () => {
 			"mcp__good__read_graph",
 		]);
 		expect(Object.keys(result.toolsByServer).sort()).toEqual(["good"]);
+		// The summary is shaped from mapped names only, which cannot carry an
+		// env value; this pins that rather than trusting it to stay true.
+		expect(JSON.stringify(result.servers)).not.toContain(secret);
+		// toolCount and tools describe the same list, so they must not be able
+		// to drift apart in a later edit.
+		for (const server of result.servers) {
+			expect(server.toolCount).toBe(server.tools.length);
+		}
 	});
 
 	it("disposes every client", async () => {
